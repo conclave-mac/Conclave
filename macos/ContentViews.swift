@@ -938,10 +938,10 @@ struct DebateView: View {
     @ViewBuilder private var statusBadge: some View {
         if debate.isRunning {
             StatusBadge(text: debate.judging ? L("Verdetto in scrittura") : L("In corso"),
-                        symbol: "circle.dotted", tint: Brand.secondaryText, pulse: !reduceMotion)
+                        symbol: "circle.dotted", tint: Brand.amberWarm, pulse: !reduceMotion)
         } else {
             switch debate.status {
-            case "done": StatusBadge(text: L("Completato"), symbol: "checkmark.circle", tint: Brand.secondaryText)
+            case "done": StatusBadge(text: L("Completato"), symbol: "checkmark.circle.fill", tint: Brand.olive)
             case "cancelled": StatusBadge(text: L("Interrotto"), symbol: "stop.circle.fill", tint: .secondary)
             case "interrupted": StatusBadge(text: L("Interrotto: il motore è stato riavviato"), symbol: "exclamationmark.triangle.fill", tint: Brand.warning)
             default: StatusBadge(text: L("Non riuscito"), symbol: "xmark.octagon.fill", tint: Brand.danger)
@@ -1027,11 +1027,11 @@ struct DebateView: View {
     private func verdictBox(_ text: String, by verdictBy: String?, confidence: String?, key: String = "verdict") -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
-                Image(systemName: "checkmark.seal")
+                Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: 17))
-                    .foregroundStyle(Brand.text)
+                    .foregroundStyle(Brand.clay)
                     .frame(width: 36, height: 36)
-                    .background(Circle().fill(Brand.hover))
+                    .background(Circle().fill(Brand.clay.opacity(0.12)))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(L("Verdetto del consiglio"))
@@ -1050,7 +1050,7 @@ struct DebateView: View {
                     StatusBadge(text: c,
                                 symbol: confidence == "alta" ? "checkmark.shield.fill"
                                     : confidence == "media" ? "exclamationmark.shield.fill" : "xmark.shield.fill",
-                                tint: confidence == "alta" ? Brand.secondaryText : confidence == "media" ? Brand.warning : Brand.danger)
+                                tint: confidence == "alta" ? Brand.olive : confidence == "media" ? Brand.amberWarm : Brand.rose)
                         .fixedSize()
                         .help(L("Quanto il giudice ritiene affidabile la risposta: accordo tra i modelli, solidità degli argomenti e punti da verificare."))
                 }
@@ -1551,12 +1551,12 @@ private struct StepMarker: View {
         ZStack {
             switch state {
             case .done:
-                Circle().fill(Brand.hover)
-                Text("\(number)").foregroundStyle(Brand.secondaryText)
+                Circle().fill(Brand.clay.opacity(0.14))
+                Text("\(number)").foregroundStyle(Brand.clay)
             case .current:
                 Circle().fill(Brand.surface)
-                Circle().strokeBorder(Brand.text, lineWidth: 1.5)
-                Text("\(number)").foregroundStyle(Brand.text)
+                Circle().strokeBorder(Brand.clay, lineWidth: 1.5)
+                Text("\(number)").foregroundStyle(Brand.clay)
             case .stopped:
                 Circle().fill(Brand.surface)
                 Circle().strokeBorder(Brand.warning, lineWidth: 1.5)
@@ -1710,10 +1710,11 @@ private struct PhaseStatusLabel: View {
             Text(Self.text(state))
         } icon: {
             Image(systemName: Self.symbol(state))
-                .foregroundStyle(state == .current ? AnyShapeStyle(Brand.text) : AnyShapeStyle(Brand.secondaryText))
+                .foregroundStyle(state == .done ? AnyShapeStyle(Brand.olive)
+                                 : state == .current ? AnyShapeStyle(Brand.amberWarm) : AnyShapeStyle(Brand.secondaryText))
                 .symbolEffect(.pulse, isActive: state == .current && !reduceMotion)
         }
-        .font(Brand.Fonts.smallMedium)
+        .font(Brand.Fonts.small)
     }
 }
 
@@ -1735,8 +1736,8 @@ private struct StatusBadge: View {
         .font(Brand.Fonts.small)
         .padding(.horizontal, 9)
         .padding(.vertical, 4)
-        // Neutro come in Claude: il colore resta solo nell'icona degli stati che chiedono attenzione.
-        .background(Capsule().fill(Brand.hover))
+        // Fondo appena tinto del colore (caldo) dello stato.
+        .background(Capsule().fill(tint.opacity(0.12)))
     }
 }
 
@@ -1749,9 +1750,9 @@ private struct ParticipantTag: View {
         HStack(spacing: 5) {
             Text(letter)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Brand.text)
+                .foregroundStyle(Brand.participant(letter))
                 .frame(width: 16, height: 16)
-                .background(Circle().fill(Brand.selection))
+                .background(Circle().fill(Brand.participant(letter).opacity(0.16)))
             Text(label)
                 .font(Brand.Fonts.small)
                 .foregroundStyle(Brand.secondaryText)
@@ -1816,9 +1817,16 @@ private struct StepsRow: View {
 
     @ViewBuilder private func stepButton(_ s: DebateStep) -> some View {
         let reachable = s.state != .pending && s.state != .notRun && !(s.id == "verdict" && s.state != .done)
-        let label = Label(s.short, systemImage: symbol(s.state))
+        // Testo grigio (nero se in corso); l'icona prende il colore caldo dello stato.
+        let label = Label {
+            Text(s.short)
+                .foregroundStyle(s.state == .current ? AnyShapeStyle(Brand.text) : AnyShapeStyle(Brand.secondaryText))
+        } icon: {
+            Image(systemName: symbol(s.state))
+                .foregroundStyle(s.state == .done ? AnyShapeStyle(Brand.olive)
+                                 : s.state == .current ? AnyShapeStyle(Brand.amberWarm) : AnyShapeStyle(Brand.secondaryText))
+        }
             .font(Brand.Fonts.body)
-            .foregroundStyle(s.state == .current ? AnyShapeStyle(Brand.text) : AnyShapeStyle(Brand.secondaryText))
             .accessibilityLabel("\(s.short), \(PhaseStatusLabel.text(s.state))")
         if reachable {
             Button { go(s.id) } label: { label }
@@ -1912,6 +1920,10 @@ private struct CardView: View {
         VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline) {
+                    // Pallino nel colore del partecipante, lo stesso delle etichette in testa alla discussione.
+                    if let letter = card.title.split(separator: " ").last.map(String.init), letter.count == 1 {
+                        Circle().fill(Brand.participant(letter)).frame(width: 8, height: 8)
+                    }
                     Text(card.title).font(Brand.Fonts.bodyMedium)
                     Spacer(minLength: 6)
                     if let s = card.seconds {

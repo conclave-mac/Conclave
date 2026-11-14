@@ -96,6 +96,26 @@ enum Brand {
             : NSColor(white: 0, alpha: 0.47)
     })
 
+    /// Colori caldi della chat (argilla, ambra, oliva, rosa antico, come la palette di Claude): stati,
+    /// partecipanti e verdetto. Tenui, mai su testo lungo; versioni più chiare nello scuro.
+    private static func warm(_ name: String, _ light: UInt32, _ dark: UInt32) -> Color {
+        func c(_ v: UInt32) -> NSColor {
+            NSColor(srgbRed: CGFloat(v >> 16 & 0xff) / 255, green: CGFloat(v >> 8 & 0xff) / 255, blue: CGFloat(v & 0xff) / 255, alpha: 1)
+        }
+        return Color(nsColor: NSColor(name: name) { a in a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? c(dark) : c(light) })
+    }
+    static let clay = warm("BrandClay", 0xC96442, 0xE08A6A)
+    static let amberWarm = warm("BrandAmberWarm", 0xB97A1E, 0xE3B062)
+    static let olive = warm("BrandOlive", 0x6B7F3A, 0xA9BA70)
+    static let rose = warm("BrandRose", 0xB5524A, 0xDB8A82)
+
+    /// Colore del partecipante dalla sua lettera anonima (A, B, C…): sempre lo stesso per la stessa lettera.
+    static func participant(_ letter: String) -> Color {
+        let palette = [clay, amberWarm, olive, rose]
+        let i = Int(letter.unicodeScalars.first?.value ?? 65) - 65
+        return palette[((i % palette.count) + palette.count) % palette.count]
+    }
+
     /// Scala tipografica unica (misurata su claude.ai): titolo di pagina 22, titolo di sezione 15,
     /// corpo 14, testi piccoli 12. Le viste usano questi, mai .caption/.callout/.headline di sistema.
     enum Fonts {

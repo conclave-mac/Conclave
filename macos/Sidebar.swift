@@ -310,36 +310,14 @@ struct SidebarActionRow: View {
     }
 }
 
-/// Riga della cronologia: domanda su una riga con l'ora piccola a destra; sotto, solo se serve,
+/// Riga della cronologia: titolo su una riga, senza orario (scelta dell'utente); sotto, solo se serve,
 /// lo stato in testo ("In corso", "Non riuscito", "Approfondimento").
-/// Al passaggio del mouse l'ora lascia il posto al pulsante ✕ (scorciatoia, non l'unico modo).
+/// Al passaggio del mouse compare il pulsante ✕ (scorciatoia, non l'unico modo).
 struct DebateRow: View {
     let debate: DebateSummary
     var selected = false
     let onDelete: () -> Void
     @State private var hovering = false
-
-    private static let time: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = AppLanguage.locale
-        f.dateFormat = "HH:mm"
-        return f
-    }()
-
-    private static let day: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = AppLanguage.locale
-        f.dateFormat = "d MMM"
-        return f
-    }()
-
-    /// Ora (oggi e ieri) o giorno, a destra del titolo.
-    private var when: String {
-        guard let date = SidebarModel.date(debate.activity) else { return "" }
-        let cal = Calendar.current
-        return cal.isDateInToday(date) || cal.isDateInYesterday(date)
-            ? Self.time.string(from: date) : Self.day.string(from: date)
-    }
 
     /// Seconda riga facoltativa: stato non ordinario ed eventuale "Approfondimento".
     private var detail: String {
@@ -371,12 +349,6 @@ struct DebateRow: View {
                     if debate.status == "running" {
                         ProgressView().controlSize(.mini)
                             .accessibilityLabel("In corso")
-                            .opacity(hovering ? 0 : 1)
-                    } else if !when.isEmpty {
-                        Text(when)
-                            .font(Brand.Fonts.small)
-                            .monospacedDigit()
-                            .foregroundStyle(Brand.tertiaryText)
                             .opacity(hovering ? 0 : 1)
                     }
                     Button(action: onDelete) {
