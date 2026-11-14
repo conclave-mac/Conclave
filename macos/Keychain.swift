@@ -62,8 +62,15 @@ struct Keychain {
         return KeychainError(status: errSecIO, account: account, detail: text.isEmpty ? String(format: L("errore %d"), Int(code)) : text)
     }
 
-    /// Argomento quotato per l'interprete di `security -i` (quote singole come nella shell).
-    private static func quote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+    /// Argomento tra apici per l'interprete di `security -i`, che non conosce l'escape `'\\''`
+    /// della shell: un argomento con un apice non si può passare (il valore è in base64, quindi
+    /// può capitare solo con servizio, account o etichetta).
+    private static func quote(_ s: String, _ account: String) throws -> String {
+        guard !s.contains("'"), !s.contains("\n") else {
+            throw KeychainError(status: errSecParam, account: account, detail: L("carattere non ammesso"))
+        }
+        return "'" + s + "'"
+    }
 
     /// nil se la voce non esiste.
     func read(_ account: String) throws -> String? {
@@ -84,10 +91,10 @@ struct Keychain {
     /// Crea o aggiorna la voce. Un valore vuoto la cancella.
     func write(_ account: String, _ value: String, label: String? = nil) throws {
         guard !value.isEmpty else { return try delete(account) }
-        var command = ["add-generic-password", "-U", "-s", service, "-a", account,
+        var command = try ["add-generic-password", "-U", "-s", service, "-a", account,
                        "-l", label ?? "Conclave – \(account)",
-                       "-w", Self.base64Prefix + Data(value.utf8).base64EncodedString()].map(Self.quote)
-        if let keychain { command.append(Self.quote(keychain)) }
+                       "-w", Self.base64Prefix + Data(value.utf8).base64EncodedString()].map { try Self.quote($0, account) }
+        if let keychain { command.append(try Self.quote(keychain, account)) }
         let line = command.joined(separator: " ")
         guard line.utf8.count <= Self.maxCommandLength else {
             throw KeychainError(status: errSecParam, account: account, detail: L("valore troppo lungo"))
