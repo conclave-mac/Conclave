@@ -307,7 +307,8 @@ export async function runDebate(
       // Riga TITOLO e riga AFFIDABILITÀ in qualunque ordine: si tolgono entrambe dal verdetto.
       const split = P.splitTitle(r.text);
       const conf = P.splitConfidence(split.verdict);
-      split.verdict = conf.verdict;
+      // Sintesi del dibattito (scritta prima) spostata dopo il verdetto, oltre il separatore.
+      split.verdict = P.splitDebate(conf.verdict);
       // Solo la riga del titolo, niente verdetto: si prova il giudice successivo.
       if (!split.verdict.trim()) throw new Error("verdetto vuoto");
       // Nei turni ≥ 1 il titolo della discussione non cambia.

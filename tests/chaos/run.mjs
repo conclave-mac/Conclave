@@ -1513,6 +1513,7 @@ const DESCR = {
   av: "chat: ricerca sul web in un turno",
   ax: "riga AFFIDABILITÀ (unità)", ay: "confidenza salvata, restituita e nel prompt del giudice",
   az: "giudice senza riga e tempi medi",
+  ba: "sintesi del dibattito dopo il verdetto",
 };
 
 // ---------- verdetto breve: riga AFFIDABILITÀ e tempi medi ----------
@@ -1599,6 +1600,36 @@ SCENARIOS.az = async function az() {
   if (typeof m1?.judgeAvgMs !== "number") wrong.push(`judgeAvgMs ${JSON.stringify(m1?.judgeAvgMs)}`);
   if (wrong.length) return [false, wrong.slice(0, 4).join("; "), secs()];
   return [true, "riga assente → null senza errori, riga tradotta letta, avgMs null/valorizzato, judgeAvgMs", secs()];
+};
+
+// Sintesi del dibattito: il giudice la scrive prima della riga VERDETTO; si salva dopo il verdetto,
+// oltre il separatore. Senza riga (o con una parte vuota) il testo resta tutto verdetto.
+SCENARIOS.ba = async function ba() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const { splitDebate, DEBATE_MARKER: M } = await import("../../src/debate/prompts.ts");
+  const cases = [
+    ["## Su cosa\n- x\n\nVERDETTO\n\n## Risposta\nTesto", `## Risposta\nTesto\n\n${M}\n\n## Su cosa\n- x`],
+    ["## Agreement\n- x\n**VERDICT:**\n## Answer\nText", `## Answer\nText\n\n${M}\n\n## Agreement\n- x`],
+    ["## Su cosa\n- x\n## VERDETTO\n## Risposta\nTesto", `## Risposta\nTesto\n\n${M}\n\n## Su cosa\n- x`],
+    ["## Risposta\nTesto senza riga", "## Risposta\nTesto senza riga"],
+    ["VERDETTO\n## Risposta\nTesto", "## Risposta\nTesto"],
+    ["## Su cosa\n- x\nVERDETTO\n", "## Su cosa\n- x\nVERDETTO\n"],
+    ["## Risposta\nIl verdetto è chiaro.\nVerdetto finale: sì", "## Risposta\nIl verdetto è chiaro.\nVerdetto finale: sì"],
+  ];
+  const wrong = cases.filter(([input, out]) => splitDebate(input) !== out).map(([input]) => JSON.stringify(input.slice(0, 30)));
+  const r = await debate("conv-sintesi", ["ok-a", "ok-b"], 0, "ok-a", 60_000);
+  const bad = expectDone(r, 60);
+  if (bad) return [false, bad, secs()];
+  const v = r.state?.verdict ?? "";
+  if (!v.startsWith("**Risposta di prova**") || !v.includes(`${M}\n\n## Su cosa concordano`) || /^VERDETTO$/m.test(v)) wrong.push("verdetto salvato senza sintesi dopo il separatore");
+  if (doneEvent(r.events)?.verdict !== v) wrong.push("done diverso dal GET");
+  const n = await debate("conv-nodebate", ["ok-a", "ok-b"], 0, "ok-a", 60_000);
+  if (n.state?.status !== "done" || (n.state?.verdict ?? "").includes(M)) wrong.push("giudice senza sintesi: separatore aggiunto");
+  const jp = (await promptsOf("conv-sintesi")).find((p) => p.phase === "verdict");
+  if (!jp?.user.includes("## Errori emersi nel dibattito") || !jp.user.includes("la sola parola VERDETTO")) wrong.push("prompt del giudice senza le sezioni sul dibattito");
+  if (wrong.length) return [false, wrong.slice(0, 4).join("; "), secs()];
+  return [true, `${cases.length} casi di separazione corretti; sintesi salvata dopo il verdetto`, secs()];
 };
 
 // ---------- main ----------

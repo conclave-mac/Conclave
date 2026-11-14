@@ -69,6 +69,8 @@ function okText(model, user) {
   // "confmd" = la scrive tradotta e in grassetto).
   if (user.includes("POSIZIONI FINALI DEI MEMBRI")) {
     const sc = scenarioOf(user);
+    // Come il vero: prima la sintesi del dibattito, poi la riga VERDETTO ("nodebate" = le omette).
+    if (!sc.includes("nodebate")) t = `## Su cosa concordano\n- A e B: il punto principale.\n## Errori emersi nel dibattito\n- B: una cifra sbagliata, poi corretta.\n## Disaccordi irrisolti\n- Nessuno.\n\nVERDETTO\n\n${t}`;
     if (sc.includes("confmd")) t = `**CONFIDENCE:** High\n\n${t}`;
     else if (!sc.includes("noconf")) t = `AFFIDABILITÀ: alta\n\n${t}`;
   }
@@ -154,7 +156,7 @@ async function handle(req, res) {
       return; // non risponde mai
     case "paced": {
       // Per provare l'interfaccia dal vivo: 3–7 s di attesa e una risposta lunga.
-      const t = setTimeout(() => send(res, 200, completion(model, Array(6).fill(okText(model, user)).join("\n\n"))),
+      const t = setTimeout(() => send(res, 200, completion(model, Array(user.includes("POSIZIONI FINALI DEI MEMBRI") ? 1 : 6).fill(okText(model, user)).join("\n\n"))),
         3000 + Math.random() * 4000);
       res.on("close", () => clearTimeout(t));
       return;

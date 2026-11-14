@@ -162,6 +162,13 @@ POSIZIONI FINALI DEI MEMBRI:\n${block(finals)}${init}${crit}
 
 ${titleLine}Poi una riga esattamente in questo formato (la parola AFFIDABILITÀ e i valori restano in italiano, qualunque sia la lingua della domanda):
 AFFIDABILITÀ: alta | media | bassa
+Poi tre sezioni brevi sul dibattito, con i titoli tradotti nella lingua della domanda: ognuna 1–3 punti di al massimo 25 parole, con la lettera delle risposte coinvolte.
+## Su cosa concordano
+## Errori emersi nel dibattito
+Errori di fatto o di ragionamento trovati durante il dibattito: chi li conteneva e se li ha corretti. Se non ce ne sono, una riga che lo dice.
+## Disaccordi irrisolti
+Solo quelli rimasti alla fine. Se non ce ne sono, una riga che lo dice.
+Poi una riga con la sola parola VERDETTO (in italiano, qualunque sia la lingua della domanda).
 Poi queste sezioni, con i titoli tradotti nella lingua della domanda:
 ## Risposta
 In 2–3 frasi la risposta diretta, scritta per chi ha fatto la domanda (non citare le lettere qui); poi, solo se serve, i dettagli in punti brevi. Puoi combinare elementi di più posizioni; se nessuna è convincente, dillo e dai la tua.
@@ -170,7 +177,7 @@ Una tabella Markdown con le colonne | Punto | A | B | C … | (una colonna per o
 ## Da verificare
 Affermazioni incerte o sostenute da una sola risposta, con la lettera. Se c'è la ricerca sul web, i link delle fonti.
 ## Perché questa risposta
-Motivazione breve: gli argomenti decisivi, gli errori emersi (con la lettera della risposta che li conteneva), cosa ha fatto cambiare idea e quali disaccordi restano.`;
+Motivazione breve: gli argomenti decisivi e cosa ha fatto cambiare idea (errori e disaccordi sono già nelle sezioni sul dibattito).`;
 }
 
 // ---- Chat continua: turni dopo il verdetto ----
@@ -272,6 +279,26 @@ export function splitTitle(text: string): { title: string | null; verdict: strin
   const title = m[1].replace(/^["'«“#\s]+|["'»”.\s]+$/g, "").slice(0, 80) || null;
   const verdict = (text.slice(0, m.index) + text.slice(m.index! + m[0].length)).replace(/^\s+/, "");
   return { title, verdict };
+}
+
+/**
+ * Separatore tra verdetto e sintesi del dibattito nel testo salvato. Commento HTML: invisibile nel
+ * Markdown copiato o esportato; l'app lo usa per mostrare la sintesi in un riquadro a parte.
+ */
+export const DEBATE_MARKER = "<!-- dibattito -->";
+
+/**
+ * Il giudice scrive prima le sezioni sul dibattito, poi la riga macchina "VERDETTO" e il verdetto.
+ * Restituisce il testo da salvare: verdetto, DEBATE_MARKER, sintesi. Senza la riga (o con una parte
+ * vuota) il testo resta com'è, tutto verdetto.
+ */
+export function splitDebate(text: string): string {
+  const m = text.match(/^[ \t]*[#>]*[ \t]*\**[ \t]*(?:VERDETTO|VERDICT|VEREDICTO|VEREDITO|URTEIL)[ \t]*\**[ \t]*:?[ \t]*\**[ \t]*$/im);
+  if (!m) return text;
+  const debate = text.slice(0, m.index).trim();
+  const verdict = text.slice(m.index! + m[0].length).trim();
+  if (!debate || !verdict) return verdict || text;
+  return `${verdict}\n\n${DEBATE_MARKER}\n\n${debate}`;
 }
 
 export type Confidence = "alta" | "media" | "bassa" | null;
