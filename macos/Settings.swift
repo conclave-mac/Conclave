@@ -154,24 +154,35 @@ enum KeyStore {
 
     static func isSecret(_ name: String) -> Bool { name.hasSuffix("_KEY") || name.hasSuffix("_TOKEN") }
 
-    /// Tutte le chiavi in una sola voce (JSON nome → valore). Senza Team ID Apple il Portachiavi
-    /// lega la voce alla singola build (partition list `cdhash:`): dopo un aggiornamento chiede
-    /// la password una volta per voce, quindi una voce sola = una sola richiesta ("Sempre").
-    /// La voce non si cancella mai (una build diversa non può: errSecInvalidOwnerEdit), si riscrive.
-    private static let account = "api-keys"
+    /// Tutte le chiavi in una sola voce (JSON nome → valore), scritta con `/usr/bin/security`
+    /// (vedi Keychain.swift): non è legata alla build, gli aggiornamenti non chiedono la password.
+    private static let account = "api-keys-v2"
+    /// Voce delle versioni fino alla 0.2.x, creata con le API dirette e quindi legata alla build
+    /// (partition list `cdhash:`): si legge un'ultima volta e si copia in quella nuova.
+    private static let legacyAccount = "api-keys"
 
-    /// nil se la voce non esiste ancora.
-    private static func stored() throws -> [String: String]? {
-        guard let text = try Keychain.conclave.read(account) else { return nil }
+    private static func decode(_ text: String, _ name: String) throws -> [String: String] {
         guard let dict = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String] else {
-            throw KeychainError(status: errSecDecode, account: account)
+            throw KeychainError(status: errSecDecode, account: name)
         }
         return dict
     }
 
+    /// nil se la voce non esiste ancora.
+    private static func stored() throws -> [String: String]? {
+        if let text = try Keychain.conclave.read(account) { return try decode(text, account) }
+        guard let text = try Keychain.conclave.legacyRead(legacyAccount) else { return nil }
+        let keys = try decode(text, legacyAccount)
+        try store(keys)
+        // Una build diversa da quella che l'ha creata di solito non può cancellarla: resta in
+        // Accesso Portachiavi, inutilizzata.
+        _ = Keychain.conclave.legacyDelete(legacyAccount)
+        return keys
+    }
+
     private static func store(_ keys: [String: String]) throws {
         let data = try JSONSerialization.data(withJSONObject: keys.filter { !$0.value.isEmpty }, options: [.sortedKeys])
-        try Keychain.conclave.write(account, String(decoding: data, as: UTF8.self))
+        try Keychain.conclave.write(account, String(decoding: data, as: UTF8.self), label: "Conclave – API keys")
     }
 
     /// Valori delle variabili indicate. Una chiave rimasta nel `.env` (passaggio al Portachiavi

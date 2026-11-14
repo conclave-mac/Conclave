@@ -516,3 +516,4 @@
 "Velocità: quanti round di critica tra i modelli prima del verdetto" = "Speed: how many critique rounds between the models before the verdict";
 "Quanto il giudice ritiene affidabile la risposta: accordo tra i modelli, solidità degli argomenti e punti da verificare." = "How reliable the judge considers the answer: agreement between the models, strength of the arguments and points to verify.";
 "Round %d — %@" = "Round %d — %@";
+"valore troppo lungo" = "value too long";
