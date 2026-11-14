@@ -639,29 +639,23 @@ struct DebateView: View {
 
                     if debate.isRunning { progressBar.padding(.top, 14) }
 
-                    // Il verdetto è il risultato: viene subito dopo l'intestazione, prima dello svolgimento.
-                    // Una sola riga con un'identità sola per segnaposto e verdetto: con due rami `if/else`
-                    // entrambi con id "phase-verdict" la pila pigra aveva due righe con lo stesso id
-                    // nello stesso aggiornamento e restava bloccata sul segnaposto (e con lei la vista).
-                    if debate.verdict != nil || (debate.isRunning && debate.judging) {
-                        VStack(alignment: .leading, spacing: 0) {
-                            if let v = debate.verdict {
-                                verdictBox(v, by: debate.verdictBy, confidence: debate.confidence)
-                            } else {
-                                // Segnaposto al posto del verdetto: la vista dal vivo sale qui mentre il giudice scrive.
-                                judgingPlaceholder
-                            }
-                        }
-                        .id("phase-verdict")
-                        .padding(.top, 24)
-                    }
-
                     if !debate.phases.isEmpty {
-                        courseHeading.padding(.top, debate.verdict != nil ? 40 : 28)
+                        courseHeading.padding(.top, 28)
                             .padding(.bottom, 16)
                         ForEach(Array(debate.phases.enumerated()), id: \.element.id) { i, p in
                             phaseRows(p, number: i + 1, last: i == debate.phases.count - 1)
                         }
+                    }
+
+                    // Come in una chat, il risultato viene dopo lo svolgimento e prima delle domande di
+                    // seguito: il verdetto, con la sintesi del dibattito in fondo. Una sola riga con un'identità sola
+                    // per segnaposto e verdetto: con due rami `if/else` entrambi con id "phase-verdict" la
+                    // pila pigra aveva due righe con lo stesso id nello stesso aggiornamento e restava
+                    // bloccata sul segnaposto (e con lei la vista).
+                    if debate.verdict != nil || (debate.isRunning && debate.judging) {
+                        result(debate.verdict, by: debate.verdictBy, confidence: debate.confidence, key: "verdict")
+                            .id("phase-verdict")
+                            .padding(.top, 32)
                     }
 
                     // Domande di seguito, in ordine, dopo il dibattito originale.
@@ -705,7 +699,7 @@ struct DebateView: View {
             }
             .onChange(of: sectionKey) {
                 guard watchedLive, following else { return }
-                // Si va al verdetto in cima, non in fondo: niente resnap al termine del dibattito.
+                // Si va all'inizio del risultato, non in fondo: niente resnap al termine del dibattito.
                 if debate.verdict != nil || debate.judging { pinnedBottom = false }
                 Task { @MainActor in
                     // Si attende il layout della nuova sezione prima di scorrere.
@@ -730,8 +724,7 @@ struct DebateView: View {
                 let show = live ? !following : awayFromBottom
                 ZStack {
                 if show {
-                    let up = live && debate.judging
-                    let title = live ? (up ? L("Vai al verdetto") : L("Vai al round in corso")) : L("Vai in fondo")
+                    let title = live ? (debate.judging ? L("Vai al verdetto") : L("Vai al round in corso")) : L("Vai in fondo")
                     Button {
                         if live {
                             following = true
@@ -742,7 +735,7 @@ struct DebateView: View {
                             proxy.scrollTo(Self.endID, anchor: .bottom)
                         }
                     } label: {
-                        Image(systemName: up ? "arrow.up" : "arrow.down")
+                        Image(systemName: "arrow.down")
                             .font(.system(size: Brand.bodySize))
                             .frame(width: 22, height: 22)
                     }
@@ -776,30 +769,21 @@ struct DebateView: View {
           }
           .onChange(of: runningTurn) { old, n in
               if let n { liveTurns.insert(n) }
-              // Turno del consiglio concluso mentre lo si seguiva (agganciati in fondo): si sale al suo
-              // verdetto, poi le fasi sotto si comprimono. Comprimere dopo lo scorrimento tocca solo
-              // righe sotto il verdetto, quindi ciò che si sta leggendo non si sposta.
+              // Turno del consiglio concluso mentre lo si seguiva (agganciati in fondo): si sale all'inizio
+              // del risultato (verdetto e sintesi). Le fasi sopra restano aperte: comprimerle sposterebbe
+              // ciò che si sta leggendo.
               guard n == nil, let o = old, pinnedBottom,
                     let t = debate.turns.first(where: { $0.turn == o }), !t.isQuick, t.verdict != nil else { return }
               pinnedBottom = false
               if reduceMotion { proxy.scrollTo("turn-\(o)-verdict", anchor: .top) }
               else { withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo("turn-\(o)-verdict", anchor: .top) } }
-              Task { @MainActor in
-                  try? await Task.sleep(for: .milliseconds(500))
-                  liveTurns.remove(o)
-              }
           }
-          // Dibattito concluso mentre lo si seguiva: la vista è già sul verdetto (in cima allo
-          // svolgimento); a scorrimento finito le fasi sotto si comprimono, come in un dibattito
-          // aperto dalla cronologia. Chi stava rileggendo un round (sganciato) lo ritrova aperto.
+          // Dibattito concluso mentre lo si seguiva: la vista è già sul risultato, in fondo. Le fasi
+          // sopra restano aperte (comprimerle sposterebbe ciò che si sta leggendo); aperto dalla
+          // cronologia, il dibattito le mostra compresse.
           .onChange(of: debate.isRunning) { was, now in
               guard was, !now, watchedLive, following, debate.verdict != nil else { return }
               pinnedBottom = false
-              Task { @MainActor in
-                  try? await Task.sleep(for: .milliseconds(500))
-                  guard following else { return }
-                  watchedLive = false
-              }
           }
         }
     }
@@ -817,7 +801,7 @@ struct DebateView: View {
         "\(debate.phases.count)-\(debate.judging)-\(debate.verdict != nil)"
     }
 
-    /// Porta all'inizio della sezione più recente: verdetto, round in corso o fondo pagina.
+    /// Porta all'inizio della sezione più recente: risultato (verdetto e sintesi), round in corso o fondo pagina.
     private func scrollToLatest(_ proxy: ScrollViewProxy) {
         let target: String
         let anchor: UnitPoint
@@ -1022,9 +1006,52 @@ struct DebateView: View {
         .surfaceBox(radius: Brand.Radius.panel, stroke: Brand.hairline)
     }
 
+    // MARK: Risultato: sintesi del dibattito e verdetto
+
+    /// Verdetto con la sintesi del dibattito in fondo (se il giudice l'ha scritta), oppure il segnaposto
+    /// mentre il giudice scrive.
+    @ViewBuilder
+    fileprivate func result(_ text: String?, by verdictBy: String?, confidence: String?, key: String) -> some View {
+        if let text {
+            let parts = CouncilStore.verdictParts(text)
+            verdictBox(parts.verdict, debate: parts.debate, by: verdictBy, confidence: confidence, key: key,
+                       copyText: CouncilStore.plainVerdict(text))
+        } else {
+            judgingPlaceholder
+        }
+    }
+
+    /// Su cosa concordano, errori emersi, disaccordi irrisolti: area interna in fondo al verdetto,
+    /// su fondo grigio tenue per distinguerla dalla risposta.
+    private func debateSummary(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "bubble.left.and.bubble.right")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Brand.secondaryText)
+                    .accessibilityHidden(true)
+                Text(L("Il dibattito in breve"))
+                    .font(Brand.Fonts.section)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            .help(L("Cosa è emerso confrontando le risposte: accordi, errori trovati e disaccordi rimasti."))
+            .padding(.horizontal, 18)
+            .padding(.top, 14)
+
+            MarkdownView(text)
+                .frame(maxWidth: 720, alignment: .leading)
+                .padding(.horizontal, 18)
+                .padding(.top, 6)
+                .padding(.bottom, 16)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: Brand.Radius.card, style: .continuous).fill(Brand.hover))
+        .accessibilityElement(children: .contain)
+    }
+
     // MARK: Verdetto: scheda protagonista
 
-    private func verdictBox(_ text: String, by verdictBy: String?, confidence: String?, key: String = "verdict") -> some View {
+    private func verdictBox(_ text: String, debate: String?, by verdictBy: String?, confidence: String?, key: String, copyText: String) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
                 Image(systemName: "checkmark.seal.fill")
@@ -1056,7 +1083,7 @@ struct DebateView: View {
                 }
 
                 Spacer(minLength: 8)
-                actions(text, key: key)
+                actions(copyText, key: key)
             }
             .padding(.horizontal, 22)
             .padding(.vertical, 14)
@@ -1067,7 +1094,14 @@ struct DebateView: View {
                 .frame(maxWidth: 720, alignment: .leading)
                 .padding(.horizontal, 22)
                 .padding(.top, 18)
-                .padding(.bottom, 24)
+                .padding(.bottom, debate == nil ? 24 : 0)
+
+            if let debate {
+                debateSummary(debate)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 22)
+                    .padding(.bottom, 16)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: Brand.Radius.panel, style: .continuous).fill(Brand.verdictSurface))
@@ -1229,27 +1263,21 @@ extension DebateView {
                 turnStatus(t).id("turn-\(n)-status")
             }
         } else {
-            // Turno del consiglio: come il dibattito originale, il verdetto (o il segnaposto mentre il
-            // giudice scrive) viene subito dopo la domanda, lo svolgimento sotto.
+            // Turno del consiglio: come il dibattito originale, lo svolgimento e poi il risultato
+            // (o il segnaposto mentre il giudice scrive).
             let gap: CGFloat = t.phases.isEmpty ? 0 : 28
-            // Segnaposto e verdetto in una sola riga con un solo id (vedi il verdetto del dibattito).
-            if t.verdict != nil || (t.isRunning && t.judging) {
-                VStack(alignment: .leading, spacing: 0) {
-                    if let v = t.verdict {
-                        verdictBox(v, by: t.verdictBy, confidence: t.confidence, key: "turn-\(n)")
-                            .accessibilityElement(children: .contain)
-                            .accessibilityLabel(String(format: L("Verdetto della domanda di seguito %d"), n))
-                    } else {
-                        judgingPlaceholder
-                    }
-                }
-                .id("turn-\(n)-verdict")
-                .padding(.bottom, gap)
-            } else if !t.isRunning || t.phases.isEmpty {
-                turnStatus(t).id("turn-\(n)-status").padding(.bottom, gap)
-            }
             ForEach(Array(t.phases.enumerated()), id: \.element.id) { i, p in
                 phaseRows(p, number: i + 1, last: i == t.phases.count - 1, in: t)
+            }
+            // Segnaposto e verdetto in una sola riga con un solo id (vedi il verdetto del dibattito).
+            if t.verdict != nil || (t.isRunning && t.judging) {
+                result(t.verdict, by: t.verdictBy, confidence: t.confidence, key: "turn-\(n)")
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel(String(format: L("Verdetto della domanda di seguito %d"), n))
+                    .id("turn-\(n)-verdict")
+                    .padding(.top, gap)
+            } else if !t.isRunning || t.phases.isEmpty {
+                turnStatus(t).id("turn-\(n)-status").padding(.top, gap)
             }
         }
     }

@@ -1108,7 +1108,7 @@ final class CouncilStore: ObservableObject {
         if let v = d.verdict {
             out += ["## " + L("Verdetto"), ""]
             if let c = Self.confidenceText(d.confidence) { out += ["_" + c + "_", ""] }
-            out += [v, ""]
+            out += [Self.plainVerdict(v), ""]
         }
         func card(_ c: CardState, _ h: String) {
             out += ["\(h) \(c.title)", ""]
@@ -1131,12 +1131,12 @@ final class CouncilStore: ObservableObject {
             if !t.attachments.isEmpty {
                 out += ["**" + L("Allegati") + ":** " + t.attachments.map { "\($0.name) (\(charsText($0.chars)))" }.joined(separator: ", "), ""]
             }
-            // Come nella vista: prima il verdetto del turno, poi lo svolgimento.
+            // Prima il risultato (verdetto del turno), poi lo svolgimento.
             if let v = t.verdict {
                 out += ["### " + L("Verdetto"), ""]
                 let info = [t.verdictBy.map { String(format: L("Giudice: %@"), $0) }, Self.confidenceText(t.confidence)].compactMap { $0 }
                 if !info.isEmpty { out += ["_" + info.joined(separator: " · ") + "_", ""] }
-                out += [v, ""]
+                out += [Self.plainVerdict(v), ""]
             }
             phases(t.phases, "###")
             if let a = t.answer { card(a, "###") }
@@ -1261,6 +1261,21 @@ extension CouncilStore {
         total += 1
         if d.verdict != nil { done += 1 }
         return (min(done, total), max(total, 1))
+    }
+
+    /// Separatore del motore tra verdetto e sintesi del dibattito (`DEBATE_MARKER` in `prompts.ts`).
+    static let debateMarker = "<!-- dibattito -->"
+
+    /// Verdetto e sintesi del dibattito (nil nei verdetti senza separatore, es. quelli vecchi).
+    static func verdictParts(_ text: String) -> (verdict: String, debate: String?) {
+        guard let r = text.range(of: debateMarker) else { return (text, nil) }
+        let debate = text[r.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+        return (text[..<r.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines), debate.isEmpty ? nil : debate)
+    }
+
+    /// Verdetto da copiare o esportare: il separatore diventa un titolo leggibile.
+    static func plainVerdict(_ text: String) -> String {
+        text.replacingOccurrences(of: debateMarker, with: "---\n\n**" + L("Il dibattito in breve") + "**")
     }
 
     /// "Affidabilità alta/media/bassa" (nil se il giudice non l'ha indicata).
