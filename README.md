@@ -12,7 +12,7 @@ providers you configure. No account, no server, no telemetry.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![macOS 26+](https://img.shields.io/badge/macOS-26%2B-black)
-![Apple Silicon and Intel](https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-black)
+![Apple Silicon and Intel](https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-native-black)
 ![Status: beta](https://img.shields.io/badge/status-beta%202-orange)
 [![Release](https://github.com/peppolone/Conclave/actions/workflows/release.yml/badge.svg)](https://github.com/peppolone/Conclave/actions/workflows/release.yml)
 
@@ -54,7 +54,7 @@ fallbacks when a free model is slow or retired, and no server to run.
 
 ## Requirements
 
-- macOS 26 or later, Apple Silicon or Intel (the app is a universal binary).
+- macOS 26 or later, Apple Silicon or Intel (there is a separate download for each).
 - At least one of:
   - an API key from an OpenAI-compatible provider (several have free tiers, see below);
   - [Claude Code](https://code.claude.com/docs/en/setup) installed and signed in (`claude`) with a
@@ -64,12 +64,17 @@ Node.js is bundled with the app; you do not need to install it.
 
 ## Installation
 
-1. Download `Conclave-<version>.dmg` and `SHA256SUMS.txt` from
-   [Releases](https://github.com/peppolone/Conclave/releases).
+1. Download the DMG for your Mac and `SHA256SUMS.txt` from
+   [Releases](https://github.com/peppolone/Conclave/releases):
+   - `Conclave-<version>-apple-silicon.dmg` for M1 and later;
+   - `Conclave-<version>-intel.dmg` for Intel Macs.
+
+   Not sure? Apple menu ▸ **About This Mac**: a **Chip** line means Apple Silicon, a **Processor**
+   line means Intel.
 2. Optionally verify the download:
 
    ```bash
-   cd ~/Downloads && shasum -a 256 -c SHA256SUMS.txt
+   cd ~/Downloads && shasum -a 256 -c --ignore-missing SHA256SUMS.txt
    ```
 
 3. Open the DMG and drag **Conclave** to **Applications**.
