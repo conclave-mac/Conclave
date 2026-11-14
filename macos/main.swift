@@ -338,6 +338,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         // Prima del motore e delle Impostazioni: le chiavi rimaste nel .env passano al Portachiavi.
         KeyStore.migrateEnvFile()
         _ = AppLanguage.launched
+        // Il motore parte prima della finestra (~1 s per essere pronto): intanto si costruisce l'interfaccia.
+        // I callback arrivano sempre con DispatchQueue.main.async, quindi dopo questo metodo: finestra già pronta.
+        server.onReady = { [weak self] port in
+            guard let self else { return }
+            self.port = port
+            self.engineReady()
+        }
+        server.onCrash = { [weak self] message in self?.showCrash(message) }
+        server.start()
         // Tema salvato (Sistema / Chiaro / Scuro) prima di creare la finestra.
         AppAppearance.apply()
         buildMenu()
@@ -347,13 +356,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         // Primo avvio senza chiavi: apre subito le impostazioni con la guida.
         if !settings.hasAnyKey { settings.show() }
 
-        server.onReady = { [weak self] port in
-            guard let self else { return }
-            self.port = port
-            self.engineReady()
-        }
-        server.onCrash = { [weak self] message in self?.showCrash(message) }
-        server.start()
         Task { await UpdateCheck.run(manual: false, over: window) }
         updateStatusItem()
         NotificationCenter.default.addObserver(forName: MenuBarPreference.changed, object: nil, queue: .main) { [weak self] _ in
