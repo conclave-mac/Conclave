@@ -1,5 +1,5 @@
-# DMG universale (Apple Silicon + Intel in un solo file) e uno per architettura (circa metà peso:
-# Node, che è quasi tutta l'app, c'è una volta sola).
+# Un DMG per architettura, Apple Silicon e Intel (Node è il 95% dell'app: un DMG universale
+# pesava il doppio).
 # - Push su main: controlli + DMG come artifact (ogni commit ha la sua build di prova).
 # - Tag v* (es. v0.1.0): in più crea la GitHub Release con il DMG e i checksum.
 # - Avvio manuale (Actions ▸ Release ▸ Run workflow): come un push.
@@ -50,7 +50,7 @@ jobs:
           echo "VERSION=$V" >> "$GITHUB_ENV"
           echo "Versione: $V"
 
-      - name: Compilazione e DMG (universale, Apple Silicon, Intel)
+      - name: Compilazione e DMG (Apple Silicon, Intel)
         env:
           BUILD_NUMBER: ${{ github.run_number }}
           SIGNING_P12_PASSWORD: ${{ secrets.SIGNING_P12_PASSWORD }}
@@ -60,14 +60,10 @@ jobs:
           # Certificato autofirmato del progetto: stessa identità a ogni versione (Portachiavi).
           export SIGNING_P12="$RUNNER_TEMP/signing.p12"
           printf '%s' "$SIGNING_P12_BASE64" | base64 -D > "$SIGNING_P12"
-          scripts/fetch-node.sh universal "$RUNNER_TEMP/node/node"
-          ARCHS="arm64 x86_64" NODE_BIN="$RUNNER_TEMP/node/node" zsh scripts/build-app.sh
-          # Una sola architettura: lo stesso Node già verificato, ridotto con lipo.
           for a in arm64 x86_64; do
-            lipo "$RUNNER_TEMP/node/node" -thin "$a" -output "$RUNNER_TEMP/node/node-$a"
+            scripts/fetch-node.sh "$a" "$RUNNER_TEMP/node/node-$a"
             ARCHS="$a" NODE_BIN="$RUNNER_TEMP/node/node-$a" OUT_DIR="dist/$a" zsh scripts/build-app.sh
           done
-          scripts/make-dmg.sh dist/Conclave.app "out/Conclave-$VERSION.dmg"
           scripts/make-dmg.sh dist/arm64/Conclave.app "out/Conclave-$VERSION-apple-silicon.dmg"
           scripts/make-dmg.sh dist/x86_64/Conclave.app "out/Conclave-$VERSION-intel.dmg"
           (cd out && shasum -a 256 *.dmg > SHA256SUMS.txt && cat SHA256SUMS.txt)
@@ -103,16 +99,10 @@ jobs:
             done
             hdiutil detach "$MNT" >/dev/null
           }
-          check "Conclave-$VERSION.dmg" "arm64 x86_64"
           check "Conclave-$VERSION-apple-silicon.dmg" "arm64"
           check "Conclave-$VERSION-intel.dmg" "x86_64"
 
       # archive: false → si scarica direttamente il .dmg, senza zip (un solo file per caricamento).
-      - uses: actions/upload-artifact@v7
-        with:
-          path: out/Conclave-${{ env.VERSION }}.dmg
-          archive: false
-          if-no-files-found: error
       - uses: actions/upload-artifact@v7
         with:
           path: out/Conclave-${{ env.VERSION }}-apple-silicon.dmg
