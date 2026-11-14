@@ -485,7 +485,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         window.contentViewController = windowRoot
         // Toolbar unificata: i pulsanti fluttuano su Liquid Glass sopra il contenuto.
         // Identificatore nuovo quando cambia la disposizione predefinita: quella salvata non vale più.
-        let toolbar = NSToolbar(identifier: "MainToolbar2")
+        let toolbar = NSToolbar(identifier: "MainToolbar3")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         // Impostazioni non è di default (HIG): si può aggiungere da Vista ▸ Personalizza la barra strumenti.
@@ -661,12 +661,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         app.addItem(item(L("Apri cartella dati"), #selector(openDataFolder(_:)), ""))
         app.addItem(item(L("Riavvia motore"), #selector(restartServer(_:)), "r", [.command, .shift]))
         app.addItem(.separator())
-        let services = NSMenu(title: L("Servizi"))
-        let servicesItem = NSMenuItem(title: L("Servizi"), action: nil, keyEquivalent: "")
-        servicesItem.submenu = services
-        app.addItem(servicesItem)
-        NSApp.servicesMenu = services
-        app.addItem(.separator())
+        // Niente menu Servizi (scelta dell'utente).
         app.addItem(withTitle: L("Nascondi Conclave"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         app.addItem(withTitle: L("Nascondi altre"), action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
             .keyEquivalentModifierMask = [.command, .option]
@@ -860,37 +855,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
 
     // MARK: Toolbar
 
-    func toolbarDidRemoveItem(_ notification: Notification) {
-        if let item = notification.userInfo?["item"] as? NSToolbarItem, item.itemIdentifier == Self.searchItem { sidebar.detachSearch(item) }
-    }
-
-    private static let searchItem = NSToolbarItem.Identifier("searchDebates")
     private static let newItem = NSToolbarItem.Identifier("newDebate")
     private static let settingsItem = NSToolbarItem.Identifier("settings")
     private static let copyItem = NSToolbarItem.Identifier("copyVerdict")
     private static let exportItem = NSToolbarItem.Identifier("export")
 
-    // A destra: azioni della discussione, spazio fisso, "Nuova discussione" e in fondo la ricerca
-    // (come in Note e Mail: sopra la barra laterale non c'è posto per un campo intero).
+    // A destra solo le azioni della discussione: "Nuova discussione" e "Cerca" stanno in cima
+    // alla barra laterale (scelta dell'utente).
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .flexibleSpace, Self.copyItem, Self.exportItem, .space, Self.newItem, Self.searchItem]
+        [.toggleSidebar, .sidebarTrackingSeparator, .flexibleSpace, Self.copyItem, Self.exportItem]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, Self.searchItem, .sidebarTrackingSeparator, .flexibleSpace, .space,
+        [.toggleSidebar, .sidebarTrackingSeparator, .flexibleSpace, .space,
          Self.copyItem, Self.exportItem, Self.newItem, Self.settingsItem]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
-        // Campo di ricerca di sistema: filtra la cronologia della barra laterale mentre si scrive.
-        if id == Self.searchItem {
-            let search = NSSearchToolbarItem(itemIdentifier: id)
-            search.label = L("Cerca")
-            search.paletteLabel = L("Cerca nelle discussioni")
-            search.toolTip = L("Cerca nelle discussioni (⌘F)")
-            if flag { sidebar.attach(search) }
-            return search
-        }
         let item = NSToolbarItem(itemIdentifier: id)
         // Pulsanti-icona con tooltip; label e paletteLabel per VoiceOver, menu di overflow e Personalizza.
         func symbol(_ name: String, _ description: String) {
@@ -1090,6 +1071,9 @@ struct HelpView: View {
 // Scrivere sullo stdin di un motore già uscito deve dare un errore, non chiudere l'app.
 signal(SIGPIPE, SIG_IGN)
 LegacyMigration.run()
+// macOS 26 aggiunge da solo icone alle voci di menu note (Informazioni, Servizi, Nascondi, Esci…) e rientra
+// le altre voci della sezione; l'utente vuole i menu senza icone. Va registrato prima di creare i menu.
+UserDefaults.standard.register(defaults: ["NSMenuEnableActionImages": false])
 
 MainActor.assumeIsolated {
     let app = NSApplication.shared
