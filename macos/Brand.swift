@@ -65,6 +65,49 @@ enum Brand {
             : NSColor(srgbRed: 0x52 / 255, green: 0x7e / 255, blue: 0xcc / 255, alpha: 0.13)
     })
 
+    /// Testo della chat e della barra laterale: nero al 90% (#000000e6), bianco al 90% nello scuro.
+    static let text = Color(nsColor: NSColor(name: "BrandText") { a in
+        a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 1, alpha: 0.9)
+            : NSColor(white: 0, alpha: 0.9)
+    })
+
+    /// Testo secondario (intestazioni delle sezioni nelle barre laterali): nero al 60%, come Claude.
+    static let secondaryText = Color(nsColor: NSColor(name: "BrandSecondaryText") { a in
+        a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 1, alpha: 0.6)
+            : NSColor(white: 0, alpha: 0.6)
+    })
+
+    /// Fondo della riga sotto il puntatore (barra laterale), grigio neutro come in Claude.
+    static let hover = Color(nsColor: NSColor(name: "BrandHover") { a in
+        a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 1, alpha: 0.08)
+            : NSColor(white: 0, alpha: 0.06)
+    })
+
+    /// Corpo del testo della chat e della barra laterale.
+    static let bodySize: CGFloat = 14
+
+    /// Testo terziario (orari, suggerimenti): nero al 47%, come gli orari di Claude.
+    static let tertiaryText = Color(nsColor: NSColor(name: "BrandTertiaryText") { a in
+        a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 1, alpha: 0.45)
+            : NSColor(white: 0, alpha: 0.47)
+    })
+
+    /// Scala tipografica unica (misurata su claude.ai): titolo di pagina 22, titolo di sezione 15,
+    /// corpo 14, testi piccoli 12. Le viste usano questi, mai .caption/.callout/.headline di sistema.
+    enum Fonts {
+        static let pageTitle = Font.system(size: 22, weight: .semibold)
+        static let section = Font.system(size: 15, weight: .semibold)
+        static let body = Font.system(size: Brand.bodySize)
+        static let bodyMedium = Font.system(size: Brand.bodySize, weight: .medium)
+        static let small = Font.system(size: 12)
+        static let smallMedium = Font.system(size: 12, weight: .medium)
+        static let smallSemibold = Font.system(size: 12, weight: .semibold)
+    }
+
     /// Fondo tenue del verdetto: superficie appena tinta dell'accento.
     static let verdictSurface = Color(nsColor: NSColor(name: "BrandVerdictSurface") { a in
         a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua

@@ -420,18 +420,21 @@ func renderInlineMarkdown(_ raw: String) -> AttributedString {
 
 struct MarkdownView: View {
     let text: String
-    var baseFont: Font = .body
+    var baseFont: Font = .system(size: Brand.bodySize)
     private let blocks: [MarkdownBlock]
     @AppStorage(TextZoom.key) private var zoom = 1.0
 
-    init(_ text: String, baseFont: Font = .body) {
+    init(_ text: String, baseFont: Font = .system(size: Brand.bodySize)) {
         self.text = text
         self.baseFont = baseFont
         self.blocks = cachedMarkdownBlocks(text)
     }
 
     var body: some View {
-        MarkdownBlocksStack(blocks: blocks, baseFont: zoom == 1 ? baseFont : .system(size: NSFont.systemFontSize * zoom))
+        MarkdownBlocksStack(blocks: blocks, baseFont: zoom == 1 ? baseFont : .system(size: Brand.bodySize * zoom))
+            .foregroundStyle(Brand.text)
+            // Interlinea di Claude: 1,4 volte il corpo (14 pt → ~19,6 pt, cioè ~3 pt oltre quella naturale).
+            .lineSpacing(3 * zoom)
             .environment(\.textZoom, zoom)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -444,7 +447,8 @@ private struct MarkdownBlocksStack: View {
 
     var body: some View {
         // Mai pigra: dentro la pila pigra del dibattito una seconda pila pigra sbaglia le altezze.
-        VStack(alignment: .leading, spacing: 8) {
+        // Tra blocchi 0,75 em come in Claude.
+        VStack(alignment: .leading, spacing: 10) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 MarkdownBlockView(block: block, baseFont: baseFont)
             }
@@ -462,10 +466,9 @@ private struct MarkdownBlockView: View {
         case let .heading(level, text):
             Text(renderInlineMarkdown(text))
                 .font(headingFont(level))
-                .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, level <= 2 ? 4 : 0)
+                .padding(.top, 10)
 
         case let .paragraph(text):
             Text(renderInlineMarkdown(text))
@@ -485,7 +488,7 @@ private struct MarkdownBlockView: View {
                     .fill(Color(nsColor: .separatorColor))
                     .frame(width: 2)
                 AnyView(MarkdownBlocksStack(blocks: inner, baseFont: baseFont))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Brand.secondaryText)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .fixedSize(horizontal: false, vertical: true)
@@ -508,12 +511,9 @@ private struct MarkdownBlockView: View {
     }
 
     private func headingFont(_ level: Int) -> Font {
-        // Con il testo ingrandito i titoli crescono nella stessa proporzione (17, 15 e 13 pt di base).
-        if zoom != 1, level <= 3 { return .system(size: [17, 15, 13][max(level, 1) - 1] * zoom, weight: .semibold) }
+        // Con il testo ingrandito i titoli crescono nella stessa proporzione (18, 16 e 14 pt di base).
+        if level <= 3 { return .system(size: [18, 16, 14][max(level, 1) - 1] * zoom, weight: .semibold) }
         switch level {
-        case 1: return .title2.weight(.semibold)
-        case 2: return .title3.weight(.semibold)
-        case 3: return .headline
         default: return baseFont.weight(.semibold)
         }
     }
@@ -527,13 +527,14 @@ private struct MarkdownListView: View {
         let hasOrdered = items.contains { $0.ordered }
         let longest = items.filter { $0.ordered }.map { $0.marker.count }.max() ?? 1
         let markerWidth: CGFloat = hasOrdered ? CGFloat(max(longest, 2)) * 8 + 4 : 12
+        // Tra voci di elenco 0,25 em come in Claude.
         VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(verbatim: item.marker)
                         .font(baseFont)
                         .monospacedDigit()
-                        .foregroundStyle(item.ordered ? .primary : .secondary)
+                        .foregroundStyle(item.ordered ? AnyShapeStyle(Brand.text) : AnyShapeStyle(Brand.secondaryText))
                         .frame(width: markerWidth, alignment: item.ordered ? .trailing : .center)
                     Text(renderInlineMarkdown(item.text))
                         .font(baseFont)

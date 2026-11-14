@@ -22,6 +22,10 @@ struct ContentRoot: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Corpo e colore del testo uguali in chat, barra laterale e Impostazioni; i testi piccoli
+        // (didascalie, note) dichiarano il loro font e colore e restano come sono.
+        .font(Brand.Fonts.body)
+        .foregroundStyle(Brand.text)
         // Lo sfondo di marchio sta sotto tutta la finestra (main.swift): qui niente sfondo opaco.
         .tint(Brand.accent)
     }
@@ -67,7 +71,7 @@ private struct IconButton<Icon: View>: View {
     var body: some View {
         Button(action: action) {
             icon()
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: 14))
                 .frame(width: 30, height: 30)
                 .contentShape(Rectangle())
         }
@@ -93,7 +97,7 @@ private struct HoverIconStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .foregroundStyle(enabled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                .foregroundStyle(enabled ? AnyShapeStyle(Brand.secondaryText) : AnyShapeStyle(Brand.tertiaryText))
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(Color.primary.opacity(configuration.isPressed ? 0.12 : hover && enabled ? 0.06 : 0))
@@ -117,7 +121,7 @@ private struct QuestionCounter: View {
             HStack {
                 Spacer()
                 Text(verbatim: "\(formatCount(n)) / \(formatCount(max))")
-                    .font(.caption.weight(.medium))
+                    .font(Brand.Fonts.smallMedium)
                     .monospacedDigit()
                     .foregroundStyle(n > max ? Brand.danger : Brand.warning)
                     .help(n > max ? overHelp : String(format: L("La domanda può avere al massimo %@ caratteri."), formatCount(max)))
@@ -144,7 +148,7 @@ private struct SendButton: View {
                 } else {
                     Image(systemName: "arrow.up")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(enabled ? AnyShapeStyle(.white) : AnyShapeStyle(.tertiary))
+                        .foregroundStyle(enabled ? AnyShapeStyle(.white) : AnyShapeStyle(Brand.tertiaryText))
                 }
             }
             .frame(width: 32, height: 32)
@@ -288,8 +292,8 @@ struct ComposerView: View {
                 .font(.system(size: 34, weight: .semibold))
                 .accessibilityAddTraits(.isHeader)
             Text("Fai una domanda: più AI ne discutono e un giudice decide.")
-                .font(.title3)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 15))
+                .foregroundStyle(Brand.secondaryText)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -318,8 +322,8 @@ struct ComposerView: View {
             Rectangle().fill(Brand.hairline).frame(height: 1).accessibilityHidden(true)
 
             Text(L("Partecipano"))
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .font(Brand.Fonts.smallSemibold)
+                .foregroundStyle(Brand.secondaryText)
                 .padding(.bottom, -6)
                 .accessibilityHidden(true)
 
@@ -372,6 +376,7 @@ struct ComposerView: View {
             } label: {
                 Label(CouncilStore.roundsLabel(store.rounds), systemImage: "arrow.triangle.2.circlepath")
             }
+            .tint(Brand.text)  // menu neutri come in Claude, non nell'accento
             .help(L("Velocità: quanti round di critica tra i modelli prima del verdetto"))
             .accessibilityLabel(L("Round"))
 
@@ -394,6 +399,7 @@ struct ComposerView: View {
             } label: {
                 Label(String(format: L("Giudice: %@"), store.judgeLabel), systemImage: "checkmark.seal")
             }
+            .tint(Brand.text)  // menu neutri come in Claude, non nell'accento
             .help(L("Chi emette il verdetto"))
             .accessibilityLabel(L("Giudice"))
 
@@ -424,8 +430,8 @@ struct ComposerView: View {
         .menuStyle(.button)
         .buttonStyle(.borderless)
         .menuIndicator(.visible)
-        .font(.callout)
-        .foregroundStyle(.secondary)
+        .font(Brand.Fonts.body)
+        .foregroundStyle(Brand.secondaryText)
         .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -439,7 +445,7 @@ struct ComposerView: View {
                     .fixedSize(horizontal: false, vertical: true)
             } else if !store.canEstimate {
                 Text(store.hint)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Brand.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -451,7 +457,7 @@ struct ComposerView: View {
                             .symbolRenderingMode(.multicolor)
                             .accessibilityHidden(true)
                         Text(verbatim: "\(store.displayName(v)): \(v.problem ?? "")")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Brand.secondaryText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -464,7 +470,7 @@ struct ComposerView: View {
                     .buttonStyle(.link)
             }
         }
-        .font(.caption)
+        .font(Brand.Fonts.small)
     }
 
     /// Valore unico del menu Giudice: "claude:<modello>" oppure "voice:<id>".
@@ -505,8 +511,8 @@ private struct VoiceChipStyle: ToggleStyle {
                         .imageScale(.small)
                 }
             }
-            .font(.callout)
-            .foregroundStyle(on ? AnyShapeStyle(Brand.accent) : AnyShapeStyle(.secondary))
+            .font(Brand.Fonts.body)
+            .foregroundStyle(on ? AnyShapeStyle(Brand.accent) : AnyShapeStyle(Brand.secondaryText))
             .padding(.horizontal, 10)
             .frame(height: 26)
             .background(Capsule().fill(on ? Brand.accent.opacity(0.14) : Color.primary.opacity(0.04)))
@@ -737,7 +743,7 @@ struct DebateView: View {
                         }
                     } label: {
                         Image(systemName: up ? "arrow.up" : "arrow.down")
-                            .font(.body.weight(.semibold))
+                            .font(.system(size: Brand.bodySize))
                             .frame(width: 22, height: 22)
                     }
                     .buttonStyle(.bordered)
@@ -830,7 +836,7 @@ struct DebateView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(debate.displayTitle)
-                    .font(.title2.weight(.semibold))
+                    .font(Brand.Fonts.pageTitle)
                     .lineLimit(2)
                     .textSelection(.enabled)
                     .accessibilityAddTraits(.isHeader)
@@ -862,8 +868,8 @@ struct DebateView: View {
             if !debate.isRunning, !["done", "cancelled"].contains(debate.status),
                debate.statusText != CouncilStore.statusText(debate.status) {
                 Text(debate.statusText)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .font(Brand.Fonts.body)
+                    .foregroundStyle(Brand.secondaryText)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -878,9 +884,9 @@ struct DebateView: View {
     private var questionText: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(debate.question)
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .lineSpacing(2)
+                .font(Brand.Fonts.body)
+                .foregroundStyle(Brand.text)
+                .lineSpacing(3)
                 .lineLimit(questionExpanded || !questionIsLong ? nil : 3)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
@@ -891,7 +897,7 @@ struct DebateView: View {
                     withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { questionExpanded.toggle() }
                 }
                 .buttonStyle(.link)
-                .font(.callout)
+                .font(Brand.Fonts.body)
             }
         }
     }
@@ -903,8 +909,8 @@ struct DebateView: View {
                 Label(m.text, systemImage: m.symbol)
             }
         }
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
+        .font(Brand.Fonts.small)
+        .foregroundStyle(Brand.secondaryText)
         .monospacedDigit()
         .accessibilityElement(children: .combine)
     }
@@ -932,10 +938,10 @@ struct DebateView: View {
     @ViewBuilder private var statusBadge: some View {
         if debate.isRunning {
             StatusBadge(text: debate.judging ? L("Verdetto in scrittura") : L("In corso"),
-                        symbol: "circle.dotted", tint: Brand.accent, pulse: !reduceMotion)
+                        symbol: "circle.dotted", tint: Brand.secondaryText, pulse: !reduceMotion)
         } else {
             switch debate.status {
-            case "done": StatusBadge(text: L("Completato"), symbol: "checkmark.circle.fill", tint: Brand.success)
+            case "done": StatusBadge(text: L("Completato"), symbol: "checkmark.circle", tint: Brand.secondaryText)
             case "cancelled": StatusBadge(text: L("Interrotto"), symbol: "stop.circle.fill", tint: .secondary)
             case "interrupted": StatusBadge(text: L("Interrotto: il motore è stato riavviato"), symbol: "exclamationmark.triangle.fill", tint: Brand.warning)
             default: StatusBadge(text: L("Non riuscito"), symbol: "xmark.octagon.fill", tint: Brand.danger)
@@ -951,7 +957,7 @@ struct DebateView: View {
         let label = debate.judging || current?.id == "verdict" ? debate.statusText : (current?.heading ?? debate.statusText)
         return HStack(alignment: .center, spacing: 16) {
             ProgressView(value: Double(pr.done), total: Double(pr.total)) {
-                Text(label).font(.callout.weight(.medium))
+                Text(label).font(Brand.Fonts.bodyMedium)
             } currentValueLabel: {
                 Text(String(format: L("%d di %d risposte"), pr.done, pr.total)).monospacedDigit()
             }
@@ -986,7 +992,7 @@ struct DebateView: View {
                 }
             } icon: {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .foregroundStyle(copied ? AnyShapeStyle(Brand.success) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(copied ? AnyShapeStyle(Brand.success) : AnyShapeStyle(Brand.secondaryText))
                     .contentTransition(.symbolEffect(.replace))
             }
             IconButton(L("Esporta come Markdown…"), symbol: "arrow.down.doc") {
@@ -994,7 +1000,7 @@ struct DebateView: View {
             }
             ShareLink(item: verdict, subject: Text(debate.displayTitle)) {
                 Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: 14))
                     .frame(width: 30, height: 30)
                     .contentShape(Rectangle())
             }
@@ -1009,11 +1015,11 @@ struct DebateView: View {
         HStack(spacing: 10) {
             ProgressView().controlSize(.small)
             Text(L("Il giudice sta scrivendo il verdetto…"))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Brand.secondaryText)
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .surfaceBox(radius: Brand.Radius.panel, stroke: Brand.accent.opacity(0.28))
+        .surfaceBox(radius: Brand.Radius.panel, stroke: Brand.hairline)
     }
 
     // MARK: Verdetto: scheda protagonista
@@ -1021,19 +1027,19 @@ struct DebateView: View {
     private func verdictBox(_ text: String, by verdictBy: String?, confidence: String?, key: String = "verdict") -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Brand.accent)
+                Image(systemName: "checkmark.seal")
+                    .font(.system(size: 17))
+                    .foregroundStyle(Brand.text)
                     .frame(width: 36, height: 36)
-                    .background(Circle().fill(Brand.selection))
+                    .background(Circle().fill(Brand.hover))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(L("Verdetto del consiglio"))
-                        .font(.title3.weight(.semibold))
+                        .font(Brand.Fonts.section)
                     if let by = verdictBy, !by.isEmpty {
                         Text(String(format: L("Giudice: %@"), by))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .font(Brand.Fonts.small)
+                            .foregroundStyle(Brand.secondaryText)
                     }
                 }
                 .accessibilityElement(children: .combine)
@@ -1044,7 +1050,7 @@ struct DebateView: View {
                     StatusBadge(text: c,
                                 symbol: confidence == "alta" ? "checkmark.shield.fill"
                                     : confidence == "media" ? "exclamationmark.shield.fill" : "xmark.shield.fill",
-                                tint: confidence == "alta" ? Brand.success : confidence == "media" ? Brand.warning : Brand.danger)
+                                tint: confidence == "alta" ? Brand.secondaryText : confidence == "media" ? Brand.warning : Brand.danger)
                         .fixedSize()
                         .help(L("Quanto il giudice ritiene affidabile la risposta: accordo tra i modelli, solidità degli argomenti e punti da verificare."))
                 }
@@ -1065,16 +1071,8 @@ struct DebateView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: Brand.Radius.panel, style: .continuous).fill(Brand.verdictSurface))
-        .overlay(alignment: .top) {
-            // Filo d'accento in cima: distingue il verdetto dalle card dello svolgimento.
-            UnevenRoundedRectangle(topLeadingRadius: Brand.Radius.panel, topTrailingRadius: Brand.Radius.panel, style: .continuous)
-                .fill(LinearGradient(colors: [Brand.softBlue, Brand.softGreen, Brand.softAmber], startPoint: .leading, endPoint: .trailing))
-                .frame(height: 3)
-                .mask(RoundedRectangle(cornerRadius: Brand.Radius.panel, style: .continuous).padding(.bottom, -Brand.Radius.panel))
-                .accessibilityHidden(true)
-        }
         .clipShape(RoundedRectangle(cornerRadius: Brand.Radius.panel, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Brand.Radius.panel, style: .continuous).strokeBorder(Brand.accent.opacity(0.28), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: Brand.Radius.panel, style: .continuous).strokeBorder(Brand.hairline, lineWidth: 1))
         .shadow(color: .black.opacity(0.07), radius: 18, y: 6)
     }
 
@@ -1087,11 +1085,11 @@ struct DebateView: View {
         let count = answers == 1 ? L("1 risposta") : String(format: L("%d risposte"), answers)
         return HStack(alignment: .firstTextBaseline, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(L("Svolgimento")).font(.title3.weight(.semibold))
+                Text(L("Svolgimento")).font(Brand.Fonts.section)
                     .accessibilityAddTraits(.isHeader)
                 Text(scope + " · " + count)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(Brand.Fonts.small)
+                    .foregroundStyle(Brand.secondaryText)
             }
             Spacer(minLength: 8)
             HStack(spacing: 2) {
@@ -1263,11 +1261,11 @@ extension DebateView {
                 ProgressView().controlSize(.small)
             } else {
                 Image(systemName: t.status == "failed" ? "xmark.octagon" : "stop.circle")
-                    .foregroundStyle(t.status == "failed" ? AnyShapeStyle(Brand.danger) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(t.status == "failed" ? AnyShapeStyle(Brand.danger) : AnyShapeStyle(Brand.secondaryText))
                     .accessibilityHidden(true)
             }
             Text(t.isRunning ? t.statusText : (t.status == "done" ? L("Nessuna risposta.") : t.statusText))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Brand.secondaryText)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1289,12 +1287,13 @@ private struct TurnQuestion: View {
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
             Label(kind, systemImage: turn.isQuick ? "bolt" : "person.3")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .font(Brand.Fonts.small)
+                .foregroundStyle(Brand.secondaryText)
                 .accessibilityHidden(true)
             Text(turn.question)
-                .font(.body)
-                .lineSpacing(2)
+                .font(Brand.Fonts.body)
+                .foregroundStyle(Brand.text)
+                .lineSpacing(3)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 14)
@@ -1343,7 +1342,7 @@ private struct FollowupBar: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .font(.caption)
+            .font(Brand.Fonts.small)
             .padding(.horizontal, 6)
         }
         // Larga quanto la colonna della discussione (980 − margini), allineata al verdetto.
@@ -1404,10 +1403,10 @@ private struct FollowupBar: View {
                 if running {
                     Button { Task { await store.cancel() } } label: {
                         ZStack {
-                            Circle().fill(Brand.accent)
+                            Circle().fill(Brand.text)
                             Image(systemName: "stop.fill")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(.white)
+                                .font(.system(size: 12))
+                                .foregroundStyle(Color(nsColor: .textBackgroundColor))
                         }
                         .frame(width: 32, height: 32)
                         .contentShape(Circle())
@@ -1422,8 +1421,8 @@ private struct FollowupBar: View {
                     }
                 }
             }
-            .font(.callout)
-            .foregroundStyle(.secondary)
+            .font(Brand.Fonts.body)
+            .foregroundStyle(Brand.secondaryText)
         }
         .padding(.horizontal, 16)
         .padding(.top, 14)
@@ -1469,13 +1468,13 @@ private struct FollowupBar: View {
             // Pillola sobria: è un'opzione del campo, non deve competere con il pulsante d'invio.
             HStack(spacing: 5) {
                 Image(systemName: council ? "person.3.fill" : "bolt.fill")
-                    .foregroundStyle(Brand.accent)
+                    .foregroundStyle(Brand.text)
                 Text(label)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(Brand.text)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 9))
+                    .foregroundStyle(Brand.secondaryText)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
@@ -1552,12 +1551,12 @@ private struct StepMarker: View {
         ZStack {
             switch state {
             case .done:
-                Circle().fill(Brand.accent)
-                Text("\(number)").foregroundStyle(.white)
+                Circle().fill(Brand.hover)
+                Text("\(number)").foregroundStyle(Brand.secondaryText)
             case .current:
                 Circle().fill(Brand.surface)
-                Circle().strokeBorder(Brand.accent, lineWidth: 2)
-                Text("\(number)").foregroundStyle(Brand.accent)
+                Circle().strokeBorder(Brand.text, lineWidth: 1.5)
+                Text("\(number)").foregroundStyle(Brand.text)
             case .stopped:
                 Circle().fill(Brand.surface)
                 Circle().strokeBorder(Brand.warning, lineWidth: 1.5)
@@ -1565,10 +1564,10 @@ private struct StepMarker: View {
             default:
                 Circle().fill(Brand.surface)
                 Circle().strokeBorder(Brand.hairline, lineWidth: 1.5)
-                Text("\(number)").foregroundStyle(.secondary)
+                Text("\(number)").foregroundStyle(Brand.secondaryText)
             }
         }
-        .font(.system(size: 13, weight: .semibold).monospacedDigit())
+        .font(.system(size: 13).monospacedDigit())
         .frame(width: 28, height: 28)
         .padding(.top, 6)
         .symbolEffect(.pulse, isActive: state == .current && !reduceMotion)
@@ -1595,11 +1594,11 @@ private struct PhaseHeader: View {
 
     private func compactBody(_ c: (title: String, summary: String?)) -> some View {
         var line = AttributedString(c.title)
-        line.font = .headline
+        line.font = Brand.Fonts.body
         if let s = c.summary, !s.isEmpty {
             var rest = AttributedString(": " + s)
-            rest.font = .callout
-            rest.foregroundColor = .secondary
+            rest.font = Brand.Fonts.body
+            rest.foregroundColor = Brand.secondaryText
             line += rest
         }
         return HStack(alignment: .center, spacing: 12) {
@@ -1613,8 +1612,8 @@ private struct PhaseHeader: View {
             }
             if canExpand {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Brand.tertiaryText)
                     .frame(width: 16, height: 22)
                     .accessibilityHidden(true)
             }
@@ -1629,22 +1628,22 @@ private struct PhaseHeader: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(eyebrow)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(Brand.Fonts.small)
+                    .foregroundStyle(Brand.secondaryText)
                 Text(name)
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.primary)
+                    .font(Brand.Fonts.body)
+                    .foregroundStyle(Brand.text)
                     .fixedSize(horizontal: false, vertical: true)
                 if let description {
                     Text(description)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .font(Brand.Fonts.body)
+                        .foregroundStyle(Brand.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let note {
                     Label(note, systemImage: "info.circle")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .font(Brand.Fonts.body)
+                        .foregroundStyle(Brand.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -1655,8 +1654,8 @@ private struct PhaseHeader: View {
                 PhaseStatusLabel(state: state, reduceMotion: reduceMotion)
                 if let meta {
                     Text(meta)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .font(Brand.Fonts.small)
+                        .foregroundStyle(Brand.secondaryText)
                         .monospacedDigit()
                 }
             }
@@ -1665,8 +1664,8 @@ private struct PhaseHeader: View {
 
             if canExpand {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Brand.tertiaryText)
                     .rotationEffect(.degrees(expanded ? 90 : 0))
                     .frame(width: 16, height: 22)
                     .padding(.top, 2)
@@ -1711,11 +1710,10 @@ private struct PhaseStatusLabel: View {
             Text(Self.text(state))
         } icon: {
             Image(systemName: Self.symbol(state))
-                .foregroundStyle(state == .done ? AnyShapeStyle(Brand.success)
-                                 : state == .current ? AnyShapeStyle(Brand.accent) : AnyShapeStyle(.secondary))
+                .foregroundStyle(state == .current ? AnyShapeStyle(Brand.text) : AnyShapeStyle(Brand.secondaryText))
                 .symbolEffect(.pulse, isActive: state == .current && !reduceMotion)
         }
-        .font(.subheadline.weight(.medium))
+        .font(Brand.Fonts.smallMedium)
     }
 }
 
@@ -1728,17 +1726,17 @@ private struct StatusBadge: View {
 
     var body: some View {
         Label {
-            Text(text).foregroundStyle(.primary)
+            Text(text).foregroundStyle(Brand.text)
         } icon: {
             Image(systemName: symbol)
                 .foregroundStyle(tint)
                 .symbolEffect(.pulse, isActive: pulse)
         }
-        .font(.caption.weight(.semibold))
+        .font(Brand.Fonts.small)
         .padding(.horizontal, 9)
         .padding(.vertical, 4)
-        .background(Capsule().fill(tint.opacity(0.12)))
-        .overlay(Capsule().strokeBorder(tint.opacity(0.25), lineWidth: 1))
+        // Neutro come in Claude: il colore resta solo nell'icona degli stati che chiedono attenzione.
+        .background(Capsule().fill(Brand.hover))
     }
 }
 
@@ -1750,13 +1748,13 @@ private struct ParticipantTag: View {
     var body: some View {
         HStack(spacing: 5) {
             Text(letter)
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(Brand.accent)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Brand.text)
                 .frame(width: 16, height: 16)
                 .background(Circle().fill(Brand.selection))
             Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(Brand.Fonts.small)
+                .foregroundStyle(Brand.secondaryText)
                 .lineLimit(1)
         }
         .padding(.leading, 3)
@@ -1793,7 +1791,7 @@ private struct StepsRow: View {
                 if i > 0 {
                     Image(systemName: "chevron.right")
                         .imageScale(.small)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Brand.tertiaryText)
                         .accessibilityHidden(true)
                 }
                 stepButton(s)
@@ -1810,7 +1808,7 @@ private struct StepsRow: View {
                     Label(String(format: L("Fase %d di %d · %@"), currentIndex + 1, steps.count, s.short), systemImage: symbol(s.state))
                 }
                 .buttonStyle(.plain)
-                .font(.callout.weight(.semibold))
+                .font(Brand.Fonts.body)
                 .help(L("Vai alla fase"))
             }
         }
@@ -1819,8 +1817,8 @@ private struct StepsRow: View {
     @ViewBuilder private func stepButton(_ s: DebateStep) -> some View {
         let reachable = s.state != .pending && s.state != .notRun && !(s.id == "verdict" && s.state != .done)
         let label = Label(s.short, systemImage: symbol(s.state))
-            .font(s.state == .current ? .callout.weight(.semibold) : .callout)
-            .foregroundStyle(s.state == .current ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+            .font(Brand.Fonts.body)
+            .foregroundStyle(s.state == .current ? AnyShapeStyle(Brand.text) : AnyShapeStyle(Brand.secondaryText))
             .accessibilityLabel("\(s.short), \(PhaseStatusLabel.text(s.state))")
         if reachable {
             Button { go(s.id) } label: { label }
@@ -1914,17 +1912,17 @@ private struct CardView: View {
         VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(card.title).font(.headline)
+                    Text(card.title).font(Brand.Fonts.bodyMedium)
                     Spacer(minLength: 6)
                     if let s = card.seconds {
                         Text(String(format: "%.1f s", locale: AppLanguage.locale, s))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .font(Brand.Fonts.small)
+                            .foregroundStyle(Brand.secondaryText)
                             .monospacedDigit()
                     }
                 }
                 if let m = card.usedModel {
-                    Text(m).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                    Text(m).font(Brand.Fonts.small).foregroundStyle(Brand.secondaryText).textSelection(.enabled)
                 }
             }
             .accessibilityElement(children: .combine)
@@ -1936,7 +1934,7 @@ private struct CardView: View {
                 } icon: {
                     Image(systemName: "arrow.triangle.2.circlepath")
                 }
-                .font(.caption)
+                .font(Brand.Fonts.small)
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.fill.quaternary))
@@ -1952,34 +1950,34 @@ private struct CardView: View {
                     } icon: {
                         Image(systemName: "forward")
                     }
-                    .font(.body)
-                    .foregroundStyle(.secondary)
+                    .font(Brand.Fonts.body)
+                    .foregroundStyle(Brand.secondaryText)
                     .textSelection(.enabled)
                 } else if card.id.hasPrefix("research") {
                     Label {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Ricerca sul web non riuscita").fontWeight(.semibold)
-                            Text(err).foregroundStyle(.secondary)
-                            Text("Il dibattito continua senza i risultati della ricerca.").foregroundStyle(.secondary)
+                            Text("Ricerca sul web non riuscita")
+                            Text(err).foregroundStyle(Brand.secondaryText)
+                            Text("Il dibattito continua senza i risultati della ricerca.").foregroundStyle(Brand.secondaryText)
                         }
                         .fixedSize(horizontal: false, vertical: true)
                     } icon: {
                         Image(systemName: "exclamationmark.triangle").foregroundStyle(Brand.warning)
                     }
-                    .font(.body)
+                    .font(Brand.Fonts.body)
                     .textSelection(.enabled)
                 } else {
                     Label {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Non ha risposto").fontWeight(.semibold)
-                            Text(err).foregroundStyle(.secondary)
-                            Text("Il dibattito continua senza questo modello.").foregroundStyle(.secondary)
+                            Text("Non ha risposto")
+                            Text(err).foregroundStyle(Brand.secondaryText)
+                            Text("Il dibattito continua senza questo modello.").foregroundStyle(Brand.secondaryText)
                         }
                         .fixedSize(horizontal: false, vertical: true)
                     } icon: {
                         Image(systemName: "xmark.octagon").foregroundStyle(Brand.danger)
                     }
-                    .font(.body)
+                    .font(Brand.Fonts.body)
                     .textSelection(.enabled)
                 }
             } else if running {
@@ -1988,7 +1986,7 @@ private struct CardView: View {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.small)
                         Text(secs.map { String(format: L("In attesa · %d s"), $0) } ?? L("In attesa"))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Brand.secondaryText)
                             .monospacedDigit()
                     }
                     .accessibilityElement(children: .ignore)
@@ -1996,7 +1994,7 @@ private struct CardView: View {
                 }
             } else {
                 Label("Nessuna risposta: il dibattito si è fermato prima.", systemImage: "stop.circle")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Brand.secondaryText)
             }
         }
         .padding(14)

@@ -37,9 +37,10 @@ final class SidebarModel: ObservableObject {
     var onExport: ((Int) -> Void)?
     var onNew: (() -> Void)?
     var onSettings: (() -> Void)?
-    /// Campo di ricerca nativo della toolbar, per portarci il fuoco con ⌘F.
-    private weak var searchItem: NSSearchToolbarItem?
-    private var searchDelegate: SearchFieldDelegate?
+    /// Ricerca aperta nella barra laterale (riga "Cerca" diventata campo).
+    @Published var searching = false
+    /// Cresce a ogni richiesta di fuoco (⌘F o clic su "Cerca").
+    @Published var searchFocusRequest = 0
     private var searchTask: Task<Void, Never>?
 
     init(port: @escaping () -> Int) { self.port = port }
@@ -78,35 +79,19 @@ final class SidebarModel: ObservableObject {
         pendingDelete = d
     }
 
-    /// Collega il campo di ricerca della toolbar: digitando la lista si filtra.
-    func attach(_ item: NSSearchToolbarItem) {
-        let d = SearchFieldDelegate(model: self)
-        item.searchField.placeholderString = L("Cerca nelle discussioni")
-        item.searchField.setAccessibilityLabel(L("Cerca nelle discussioni"))
-        item.searchField.sendsSearchStringImmediately = true
-        item.searchField.stringValue = query  // un campo rimesso nella toolbar mostra il filtro attivo
-        item.searchField.target = d
-        item.searchField.action = #selector(SearchFieldDelegate.changed(_:))
-        item.searchField.delegate = d
-        searchItem = item
-        searchDelegate = d
+    /// ⌘F o clic su "Cerca": apre il campo di ricerca della barra laterale e ci porta il fuoco.
+    func focusSearch() {
+        searching = true
+        searchFocusRequest += 1
     }
 
-    /// Il campo è stato tolto dalla toolbar: la lista non deve restare filtrata senza un campo per svuotarla.
-    func detachSearch(_ item: NSToolbarItem) {
-        guard item === searchItem else { return }  // spostato: il nuovo campo è già collegato
-        searchItem = nil
-        searchDelegate = nil
+    /// Chiude la ricerca: la lista non deve restare filtrata senza un campo per svuotarla.
+    func endSearch() {
+        searching = false
         guard !query.isEmpty else { return }
         query = ""
         reload()
     }
-
-    /// ⌘F: fuoco nel campo di ricerca della toolbar.
-    func focusSearch() { searchItem?.beginSearchInteraction() }
-
-    /// Esc a campo vuoto: toglie il fuoco dal campo (con del testo Esc lo svuota, come di sistema).
-    fileprivate func endSearch() { searchItem?.endSearchInteraction() }
 
     func delete(_ id: Int) {
         Task {
@@ -158,33 +143,18 @@ final class SidebarModel: ObservableObject {
     }
 }
 
-/// Delegato del campo di ricerca della toolbar (NSSearchToolbarItem).
-@MainActor
-final class SearchFieldDelegate: NSObject, NSSearchFieldDelegate {
-    private unowned let model: SidebarModel
-    init(model: SidebarModel) { self.model = model }
-
-    @objc func changed(_ sender: NSSearchField) {
-        guard sender.stringValue != model.query else { return }
-        model.query = sender.stringValue
-        model.queryChanged()
-    }
-
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
-        guard sel == #selector(NSResponder.cancelOperation(_:)), model.query.isEmpty else { return false }
-        model.endSearch()
-        return true
-    }
-}
-
 struct SidebarView: View {
     @ObservedObject var model: SidebarModel
+    /// Riga sotto il puntatore: fondo grigio arrotondato come in Claude.
+    @State private var hovered: Int?
 
     var body: some View {
         VStack(spacing: 0) {
             SidebarActionRow(title: L("Nuova discussione"), systemImage: "square.and.pencil",
                              help: L("Inizia una nuova discussione (⌘N)")) { model.onNew?() }
-                .padding(.horizontal, 10).padding(.top, 6).padding(.bottom, 4)
+                .padding(.horizontal, 10).padding(.top, 6)
+            SidebarSearchRow(model: model)
+                .padding(.horizontal, 10).padding(.top, 2).padding(.bottom, 4)
 
             List(selection: Binding(get: { model.selected }, set: { id in
                 // La lista riassegna la stessa selezione quando si aggiorna: va aperta solo
@@ -194,17 +164,21 @@ struct SidebarView: View {
                 if let id { model.onOpen?(id) }
             })) {
                 ForEach(model.groups, id: \.title) { group in
-                    Section(group.title) {
+                    Section {
                         ForEach(group.items) { d in
                             DebateRow(debate: d, selected: model.selected == d.id) { model.requestDelete(d.id) }
                                 .tag(d.id)
                                 // Selezione nel colore del marchio al posto dell'accento di sistema.
                                 .listRowBackground(
                                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(model.selected == d.id ? Brand.selection : .clear)
+                                        .fill(model.selected == d.id ? Brand.selection
+                                              : hovered == d.id ? Brand.hover : .clear)
                                         .padding(.horizontal, 10)
                                 )
                                 .background(SystemHighlightRemover())
+                                .onHover { inside in
+                                    if inside { hovered = d.id } else if hovered == d.id { hovered = nil }
+                                }
                                 // Solo le azioni più probabili, distruttive in fondo, niente scorciatoie.
                                 .contextMenu {
                                     if d.status == "done" {
@@ -214,6 +188,8 @@ struct SidebarView: View {
                                     Button("Elimina", role: .destructive) { model.requestDelete(d.id) }
                                 }
                         }
+                    } header: {
+                        SidebarSectionHeader(title: group.title)
                     }
                 }
             }
@@ -232,17 +208,12 @@ struct SidebarView: View {
             // Convenzione Mac: ⌫ sulla discussione selezionata la elimina (con conferma).
             .onDeleteCommand { model.requestDelete() }
         }
-        // Barra fissa in fondo (come nelle app di chat): marchio a sinistra, Impostazioni a destra.
+        // Barra fissa in fondo: solo l'ingranaggio delle Impostazioni, a sinistra (scelta dell'utente).
         // Nessuno sfondo opaco: resta sul vetro della barra laterale di sistema.
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
                 Divider()
                 HStack(spacing: 8) {
-                    CouncilLogo(size: 18)
-                    Text("Conclave")
-                        .font(.callout.weight(.semibold))
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
                     Button { model.onSettings?() } label: {
                         Image(systemName: "gearshape")
                             .font(.system(size: 14))
@@ -252,7 +223,9 @@ struct SidebarView: View {
                     .buttonStyle(.borderless)
                     .help("Impostazioni (⌘,)")
                     .accessibilityLabel("Impostazioni")
+                    Spacer(minLength: 0)
                 }
+                .foregroundStyle(Brand.text)
                 .padding(.horizontal, 14).padding(.vertical, 8)
             }
         }
@@ -273,6 +246,40 @@ struct SidebarView: View {
     }
 }
 
+/// Intestazione di gruppo delle barre laterali ("Oggi", "Preferenze"): 12 pt, nero al 60%, come Claude.
+struct SidebarSectionHeader: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Brand.secondaryText)
+    }
+}
+
+/// Riga "Cerca": al clic (o con ⌘F) diventa il campo di ricerca, che filtra mentre si scrive.
+/// Esc svuota il campo e, se è già vuoto, chiude la ricerca; si chiude anche perdendo il fuoco a campo vuoto.
+struct SidebarSearchRow: View {
+    @ObservedObject var model: SidebarModel
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        if model.searching {
+            BrandSearchField(text: $model.query, prompt: L("Cerca"), focus: $focused, onEscapeEmpty: model.endSearch)
+                .onChange(of: model.query) { model.queryChanged() }
+                // Il fuoco va dato quando il campo è già nella finestra: in onAppear andrebbe perso.
+                .task(id: model.searchFocusRequest) {
+                    try? await Task.sleep(for: .milliseconds(50))
+                    focused = true
+                }
+                .onChange(of: focused) { if !focused && model.query.isEmpty { model.endSearch() } }
+        } else {
+            SidebarActionRow(title: L("Cerca"), systemImage: "magnifyingglass",
+                             help: L("Cerca nelle discussioni (⌘F)")) { model.focusSearch() }
+        }
+    }
+}
+
 /// Riga d'azione in cima alla barra laterale (icona + testo), evidenziata al passaggio del mouse.
 struct SidebarActionRow: View {
     let title: String
@@ -286,14 +293,16 @@ struct SidebarActionRow: View {
             HStack(spacing: 8) {
                 Image(systemName: systemImage)
                     .frame(width: 18)
-                    .foregroundStyle(Brand.accent)
                 Text(title)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 8).padding(.vertical, 5)
+            // Testo e icona come le righe della cronologia: 14 pt, stesso colore.
+            .font(Brand.Fonts.body)
+            .foregroundStyle(Brand.text)
+            .padding(.horizontal, 8).padding(.vertical, 7)
             .contentShape(Rectangle())
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color.primary.opacity(hovering ? 0.07 : 0)))
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(hovering ? Brand.hover : .clear))
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
@@ -352,7 +361,8 @@ struct DebateRow: View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(debate.displayTitle)
-                    .fontWeight(selected ? .medium : .regular)
+                    .font(Brand.Fonts.body)  // mai in grassetto, nemmeno selezionata (come Claude)
+                    .foregroundStyle(Brand.text)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -364,15 +374,15 @@ struct DebateRow: View {
                             .opacity(hovering ? 0 : 1)
                     } else if !when.isEmpty {
                         Text(when)
-                            .font(.caption)
+                            .font(Brand.Fonts.small)
                             .monospacedDigit()
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Brand.tertiaryText)
                             .opacity(hovering ? 0 : 1)
                     }
                     Button(action: onDelete) {
                         Image(systemName: "xmark.circle.fill")
                             .symbolRenderingMode(.hierarchical)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Brand.secondaryText)
                     }
                     .buttonStyle(.plain)
                     .help("Elimina")
@@ -385,11 +395,12 @@ struct DebateRow: View {
             }
             if !detail.isEmpty {
                 Text(detail)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(Brand.Fonts.small)
+                    .foregroundStyle(Brand.secondaryText)
                     .lineLimit(1)
             }
         }
+        // Con il margine della lista dà righe a passo 34 pt, come Claude.
         .padding(.vertical, 1)
         .contentShape(Rectangle())
         .help(debate.question)

@@ -218,19 +218,19 @@ struct AttachmentChip: View {
                 } else if item.truncated {
                     Image(systemName: "scissors").foregroundStyle(Brand.warning)
                 } else {
-                    Image(systemName: item.kind.symbol).foregroundStyle(Brand.accent)
+                    Image(systemName: item.kind.symbol).foregroundStyle(Brand.text)
                 }
             }
             .frame(width: 16)
             .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 0) {
                 Text(item.name)
-                    .font(.callout)
+                    .font(Brand.Fonts.body)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(item.error != nil ? AnyShapeStyle(Brand.danger) : AnyShapeStyle(.secondary))
+                    .font(Brand.Fonts.small)
+                    .foregroundStyle(item.error != nil ? AnyShapeStyle(Brand.danger) : AnyShapeStyle(Brand.secondaryText))
                     .lineLimit(1)
                     .monospacedDigit()
             }
@@ -242,7 +242,7 @@ struct AttachmentChip: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Brand.secondaryText)
             .help(L("Togli l'allegato"))
             .accessibilityLabel(String(format: L("Togli %@"), item.name))
         }
@@ -298,16 +298,16 @@ struct AttachmentTag: View {
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: meta.kind.symbol)
-                .foregroundStyle(Brand.accent)
+                .foregroundStyle(Brand.text)
                 .accessibilityHidden(true)
             Text(meta.name)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Text(charsText(meta.chars))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Brand.secondaryText)
                 .monospacedDigit()
         }
-        .font(.caption)
+        .font(Brand.Fonts.small)
         .padding(.horizontal, 8)
         .frame(height: 22)
         .background(Capsule().fill(Color.primary.opacity(0.04)))

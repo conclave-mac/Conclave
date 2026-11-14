@@ -413,7 +413,7 @@ struct TestResultView: View {
         case .testing:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text("Verifica in corso: provo i modelli…").foregroundStyle(.secondary)
+                Text("Verifica in corso: provo i modelli…").foregroundStyle(Brand.secondaryText)
             }
         case .ok(let m): line(m, "checkmark.circle.fill", Brand.success)
         case .warn(let m): line(m, "exclamationmark.triangle.fill", Brand.warning)
@@ -453,7 +453,7 @@ struct SettingsPage<Content: View>: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 32) {
                 Text(title)
-                    .font(.title2.weight(.semibold))
+                    .font(Brand.Fonts.pageTitle)
                     .accessibilityAddTraits(.isHeader)
                 content
             }
@@ -461,6 +461,9 @@ struct SettingsPage<Content: View>: View {
             .padding(.top, 16)
             .padding(.bottom, 28)
             .frame(maxWidth: .infinity, alignment: .leading)
+            // Stesso corpo e colore della chat (vedi ContentRoot).
+            .font(Brand.Fonts.body)
+            .foregroundStyle(Brand.text)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -484,23 +487,24 @@ struct SettingsSection<Accessory: View, Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(title).font(.headline).accessibilityAddTraits(.isHeader)
+                // Titolo di sezione come in Claude: 15 pt semibold.
+                Text(title).font(Brand.Fonts.section).accessibilityAddTraits(.isHeader)
                 Spacer(minLength: 8)
-                accessory.font(.callout).foregroundStyle(.secondary)
+                accessory.font(Brand.Fonts.body).foregroundStyle(Brand.secondaryText)
                     .lineLimit(1).fixedSize()
             }
             .padding(.bottom, 6)
             Group(subviews: content) { rows in
                 ForEach(rows) { row in
                     row
-                        .padding(.vertical, 12)
+                        .padding(.vertical, 14)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if row.id != rows.last?.id { SettingsHairline() }
                 }
             }
             if let footer {
                 Text(footer)
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(Brand.Fonts.small).foregroundStyle(Brand.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 8)
             }
@@ -528,7 +532,7 @@ struct SettingsRow<Control: View>: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 if detail == nil {
                     // Etichetta breve: sempre su una riga, mai spezzata a metà parola.
                     Text(label).lineLimit(1).fixedSize()
@@ -537,7 +541,7 @@ struct SettingsRow<Control: View>: View {
                 }
                 if let detail {
                     Text(detail)
-                        .font(.callout).foregroundStyle(.secondary)
+                        .font(Brand.Fonts.body).foregroundStyle(Brand.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -711,7 +715,7 @@ struct ProviderSection: View {
                     }
                     .labelsHidden()
                     .textFieldStyle(.roundedBorder)
-                    .font(.body.monospaced())
+                    .font(.system(size: 13, design: .monospaced))
                     .frame(minWidth: 200, maxWidth: 260)
                     Button(showKey ? L("Nascondi") : L("Mostra")) { showKey.toggle() }
                         .help(showKey ? L("Nascondi la chiave") : L("Mostra la chiave per controllarla"))
@@ -729,12 +733,12 @@ struct ProviderSection: View {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(guide.steps.enumerated()), id: \.offset) { i, step in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(verbatim: "\(i + 1).").monospacedDigit().foregroundStyle(.secondary)
+                            Text(verbatim: "\(i + 1).").monospacedDigit().foregroundStyle(Brand.secondaryText)
                             Text(step).fixedSize(horizontal: false, vertical: true)
                         }
                     }
                     Text(guide.note)
-                        .font(.callout).foregroundStyle(.secondary)
+                        .font(Brand.Fonts.body).foregroundStyle(Brand.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                     Link(destination: guide.url) {
                         Label(String(format: L("Apri la pagina delle chiavi di %@"), guide.name), systemImage: "arrow.up.right.square")
@@ -761,13 +765,13 @@ struct SettingsView: View {
             SettingsPage(L("Chiavi API")) {
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: "gift")
-                        .font(.title2)
-                        .foregroundStyle(Brand.success)
+                        .font(.system(size: 18))
+                        .foregroundStyle(Brand.text)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Puoi usare Conclave gratis").font(.headline)
+                        Text("Puoi usare Conclave gratis").font(Brand.Fonts.section)
                         Text("Claude non chiede chiavi se hai installato Claude Code con un abbonamento Claude (facoltativo). Gemini, Groq e OpenRouter danno chiavi gratuite, senza carta di credito: con queste il consiglio ha già più voci. Incolla una chiave, premi “Verifica”, poi “Salva e attiva”.")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Brand.secondaryText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -793,13 +797,13 @@ struct SettingsView: View {
                 }
 
                 Text("Le chiavi restano solo su questo Mac, nel Portachiavi di macOS (voci “Conclave – …” in Accesso Portachiavi).")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(Brand.Fonts.small).foregroundStyle(Brand.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             SettingsBar {
                 Text(String(format: L("%d di %d provider configurati"), model.configuredCount, model.providers.count))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Brand.secondaryText)
                 if let error = ui.keysError {
                     Text(error).foregroundStyle(Brand.danger).lineLimit(1).textSelection(.enabled)
                 }
@@ -833,14 +837,14 @@ struct AboutPage: View {
             HStack(spacing: 16) {
                 CouncilLogo(size: 64)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Conclave").font(.title3.weight(.semibold))
-                    Text(String(format: L("Versione %@"), version)).foregroundStyle(.secondary).textSelection(.enabled)
+                    Text("Conclave").font(Brand.Fonts.section)
+                    Text(String(format: L("Versione %@"), version)).foregroundStyle(Brand.secondaryText).textSelection(.enabled)
                 }
             }
             .accessibilityElement(children: .combine)
 
             Text("Più modelli di intelligenza artificiale discutono la tua domanda in round, si criticano a vicenda e un giudice emette il verdetto. Chiavi e discussioni restano su questo Mac.")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Brand.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
 
             SettingsSection(L("Collegamenti")) {
@@ -922,10 +926,11 @@ final class SettingsNav: ObservableObject {
 struct SettingsSidebar: View {
     @ObservedObject var nav: SettingsNav
     @State private var query = ""
+    @State private var hovered: SettingsTab?
 
     var body: some View {
         VStack(spacing: 0) {
-            NativeSearchField(text: $query, prompt: L("Cerca"))
+            BrandSearchField(text: $query, prompt: L("Cerca"))
                 .padding(.horizontal, 10)
                 .padding(.top, 4)
                 .padding(.bottom, 6)
@@ -933,23 +938,37 @@ struct SettingsSidebar: View {
                 ForEach(settingsGroups, id: \.title) { group in
                     let tabs = group.tabs.filter { $0.matches(query) }
                     if !tabs.isEmpty {
-                        Section(group.title) {
+                        Section {
                             ForEach(tabs) { t in
-                                Label(t.title, systemImage: t.symbol)
+                                // Come la barra laterale principale: 14 pt, icona del colore del testo.
+                                // Colonna dell'icona fissa: testi allineati anche con simboli larghi (Modelli).
+                                Label {
+                                    Text(t.title)
+                                } icon: {
+                                    Image(systemName: t.symbol).frame(width: 20)
+                                }
+                                    .font(Brand.Fonts.body)
+                                    .foregroundStyle(Brand.text)
+                                    .padding(.vertical, 4)
                                     .tag(t)
-                                    .listItemTint(.fixed(Brand.accent))
+                                    .listItemTint(.fixed(Brand.text))
                                     .listRowBackground(
                                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                            .fill(nav.tab == t ? Brand.selection : .clear)
+                                            .fill(nav.tab == t ? Brand.selection : hovered == t ? Brand.hover : .clear)
                                             .padding(.horizontal, 10)
                                     )
                                     .background(SystemHighlightRemover())
+                                    .onHover { inside in
+                                        if inside { hovered = t } else if hovered == t { hovered = nil }
+                                    }
                             }
+                        } header: {
+                            SidebarSectionHeader(title: group.title)
                         }
                     }
                 }
                 if !SettingsTab.allCases.contains(where: { $0.matches(query) }) {
-                    Text("Nessun risultato").foregroundStyle(.secondary)
+                    Text("Nessun risultato").foregroundStyle(Brand.secondaryText)
                 }
             }
             .listStyle(.sidebar)
@@ -975,8 +994,8 @@ struct SettingsDetail: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // Lo sfondo di marchio sta sotto tutta la finestra (anche dietro la barra laterale).
-        .tint(Brand.accent)
+        // Niente .tint esplicito: i pulsanti restano neutri (testo scuro, come Claude); interruttori e
+        // pulsante principale prendono comunque l'accento da AccentColor.
     }
 }
 
