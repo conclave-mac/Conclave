@@ -27,9 +27,11 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/server"
 echo "→ Compilazione Swift (${ARCHS[*]})"
 # Tutti i file Swift dell'app.
 SOURCES=("${(@f)$(ls "$ROOT"/macos/*.swift)}")
+# Senza -j il driver compila i file uno alla volta (86 s invece di 32 su un i7 del 2014).
+JOBS="$(sysctl -n hw.ncpu)"
 SLICES=()
 for a in "${ARCHS[@]}"; do
-  xcrun swiftc -O -target "$a-apple-macos26.0" "${SOURCES[@]}" -o "$TMP/Conclave-$a" -framework AppKit
+  xcrun swiftc -O -j"$JOBS" -target "$a-apple-macos26.0" "${SOURCES[@]}" -o "$TMP/Conclave-$a" -framework AppKit
   SLICES+=("$TMP/Conclave-$a")
 done
 lipo -create "${SLICES[@]}" -output "$APP/Contents/MacOS/Conclave"
