@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-14
+
+### Changed
+- Separate downloads for Apple Silicon (~44 MB) and Intel (~47 MB) instead of one universal DMG (~89 MB):
+  the bundled Node.js runtime is almost all of the app, so each Mac now downloads only its own.
+  Installed app size is halved too.
+- Faster launch: the engine starts while the window is being built and no longer waits for the login
+  shell to report its `PATH` (read once, then refreshed in the background). The app is ready about
+  0.6–0.8 s sooner on a 2014 Intel Mac.
+
 ## [0.2.0] - 2026-11-14 — Beta 2
 
 ### Added
@@ -73,6 +83,7 @@ versions.
 - Data folder `0700`, files `0600`; atomic writes for settings and health cache.
 - Claude CLI run without tools, MCP servers or user settings, and stopped on shutdown.
 
-[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/peppolone/Conclave/releases/tag/v0.2.1
 [0.2.0]: https://github.com/peppolone/Conclave/releases/tag/v0.2.0
 [0.1.0]: https://github.com/peppolone/Conclave/releases/tag/v0.1.0
