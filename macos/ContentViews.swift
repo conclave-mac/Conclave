@@ -707,6 +707,16 @@ struct DebateView: View {
                     scrollToLatest(proxy)
                 }
             }
+            // Con il campo di seguito sotto, il testo sfuma verso il basso invece di essere tagliato di netto.
+            .mask {
+                VStack(spacing: 0) {
+                    Color.black
+                    if store.canFollowUp(debate) {
+                        LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .top, endPoint: .bottom)
+                            .frame(height: 28)
+                    }
+                }
+            }
             // Come nella chat di Claude: un pulsante rotondo con la freccia, in basso al centro,
             // compare quando non si è in fondo (dal vivo: quando ci si è sganciati).
             .overlay(alignment: .bottom) {
@@ -1336,9 +1346,10 @@ private struct FollowupBar: View {
             .font(.caption)
             .padding(.horizontal, 6)
         }
-        .frame(maxWidth: 760)
+        // Larga quanto la colonna della discussione (980 − margini), allineata al verdetto.
+        .frame(maxWidth: 924)
         .padding(.horizontal, 28)
-        .padding(.top, 8)
+        .padding(.top, 4)
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity)
         .onAppear {
@@ -1455,11 +1466,26 @@ private struct FollowupBar: View {
             .pickerStyle(.inline)
             .labelsHidden()
         } label: {
-            Label(label, systemImage: council ? "person.3" : "bolt")
+            // Pillola sobria: è un'opzione del campo, non deve competere con il pulsante d'invio.
+            HStack(spacing: 5) {
+                Image(systemName: council ? "person.3.fill" : "bolt.fill")
+                    .foregroundStyle(Brand.accent)
+                Text(label)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(Color.primary.opacity(0.05)))
+            .overlay(Capsule().strokeBorder(Brand.hairline, lineWidth: 1))
+            .contentShape(Capsule())
         }
         .menuStyle(.button)
-        .buttonStyle(.borderless)
-        .menuIndicator(.visible)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .fixedSize()
         .disabled(running)
         .help(council
