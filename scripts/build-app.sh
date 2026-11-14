@@ -7,13 +7,14 @@
 #                       (predefinita: quella di questo Mac)
 #   VERSION=1.2.3       versione dell'app (predefinita: quella di package.json)
 #   NODE_BIN=<file>      binario di Node da includere, con le stesse architetture (scripts/fetch-node.sh)
+#   OUT_DIR=<cartella>   dove creare Conclave.app (predefinita: dist/)
 #   SIGNING_P12=<file>   certificato di firma del progetto (predefinito ~/.config/conclave/signing.p12)
 #   SIGNING_P12_PASSWORD password del .p12 (predefinita: ~/.config/conclave/signing.pass)
 #                       Senza certificato la firma è ad-hoc (in CI è un errore, salvo ALLOW_ADHOC=1).
 set -euo pipefail
 
 ROOT="${0:A:h:h}"
-APP="$ROOT/dist/Conclave.app"
+APP="${OUT_DIR:-$ROOT/dist}/Conclave.app"
 ARCHS=(${=ARCHS:-$(uname -m)})
 VERSION="${VERSION:-$(node -p 'require(process.argv[1]).version' "$ROOT/package.json")}"
 BUILD="${BUILD_NUMBER:-1}"
