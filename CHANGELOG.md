@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-14 — Beta 2
+
 ### Added
 - Continue the conversation in the same debate after the verdict: quick answer from the judge or another
   model, or call the council again. Replaces "Follow up" debates.
@@ -22,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Live updates no longer go silent while a slow judge is writing (SSE keep-alive).
+- The verdict appears as soon as a live debate ends, and the follow-up field stays editable.
+- Follow-up turns that fail without a final event are closed instead of staying "in progress";
+  web search skips Claude when it is unavailable.
 
 ## [0.1.0] - 2026-11-11 — Beta 1
 
@@ -68,4 +73,6 @@ versions.
 - Data folder `0700`, files `0600`; atomic writes for settings and health cache.
 - Claude CLI run without tools, MCP servers or user settings, and stopped on shutdown.
 
+[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/peppolone/Conclave/releases/tag/v0.2.0
 [0.1.0]: https://github.com/peppolone/Conclave/releases/tag/v0.1.0
