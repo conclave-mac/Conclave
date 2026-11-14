@@ -134,6 +134,11 @@ final class ServerController {
     /// Cambia a ogni start/stop: un avvio ancora in preparazione (lettura del PATH) superato da
     /// un riavvio non deve lanciare un secondo motore.
     private var generation = 0
+    /// PATH letto l'ultima volta dalla shell di login: il motore parte subito con quello invece di
+    /// aspettare `zsh -ilc` (~0,9 s), e la shell si rilegge in background una volta per sessione.
+    /// Il PATH aggiornato vale dal prossimo avvio del motore (come per una nuova finestra di Terminale).
+    private static let pathKey = "LoginShellPath"
+    private var pathRefreshed = false
 
     var onReady: ((Int) -> Void)?
     var onCrash: ((String) -> Void)?
@@ -141,12 +146,6 @@ final class ServerController {
     /// Le app avviate dal Finder non ereditano il PATH della shell (nvm, ~/.local/bin):
     /// lo si legge una volta dalla shell di login dell'utente.
     private static func loginPath() -> String {
-        let home = NSHomeDirectory()
-        var fallback = ["\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
-        let nvm = URL(fileURLWithPath: "\(home)/.nvm/versions/node")
-        if let versions = try? FileManager.default.contentsOfDirectory(atPath: nvm.path) {
-            for v in versions.sorted(by: >) { fallback.insert("\(nvm.path)/\(v)/bin", at: 0) }
-        }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/zsh")
         p.arguments = ["-ilc", "echo __PATH__$PATH"]
@@ -161,9 +160,23 @@ final class ServerController {
             if p.isRunning { p.terminate() }
             let text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             if let line = text.split(separator: "\n").last(where: { $0.hasPrefix("__PATH__") }) {
-                return String(line.dropFirst(8)) + ":" + fallback.joined(separator: ":")
+                let shell = String(line.dropFirst(8))
+                UserDefaults.standard.set(shell, forKey: pathKey)
+                return shell + ":" + fallbackPath()
             }
         } catch {}
+        return fallbackPath()
+    }
+
+    /// Cartelle dove di solito stanno `node` e `claude`, rilette a ogni avvio (costa poco): con il
+    /// PATH salvato si trova anche una CLI installata o spostata qui dopo l'ultima lettura della shell.
+    private static func fallbackPath() -> String {
+        let home = NSHomeDirectory()
+        var fallback = ["\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+        let nvm = URL(fileURLWithPath: "\(home)/.nvm/versions/node")
+        if let versions = try? FileManager.default.contentsOfDirectory(atPath: nvm.path) {
+            for v in versions.sorted(by: >) { fallback.insert("\(nvm.path)/\(v)/bin", at: 0) }
+        }
         return fallback.joined(separator: ":")
     }
 
@@ -181,12 +194,23 @@ final class ServerController {
         portFound = false
         generation += 1
         let generation = generation
+        let saved = UserDefaults.standard.string(forKey: Self.pathKey)
+        let refresh = saved != nil && !pathRefreshed
+        if refresh { pathRefreshed = true }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            let path = Self.loginPath()
+            var path = saved.map { $0 + ":" + Self.fallbackPath() } ?? Self.loginPath()
             // Le versioni scaricate (DMG) includono Node 24 in Contents/MacOS; in sviluppo si usa quello del PATH.
             let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/node").path
-            let node = FileManager.default.isExecutableFile(atPath: bundled) ? bundled : Self.find("node", in: path)
+            var node = FileManager.default.isExecutableFile(atPath: bundled) ? bundled : Self.find("node", in: path)
+            // Node tolto dalla cartella salvata (es. versione di nvm rimossa): si rilegge subito la shell.
+            if node == nil, saved != nil {
+                path = Self.loginPath()
+                node = Self.find("node", in: path)
+            }
+            if refresh {
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5) { _ = Self.loginPath() }
+            }
             guard let node else {
                 DispatchQueue.main.async { self.onCrash?(L("Node.js non trovato. Installalo (es. con nvm) e riapri l'app.")) }
                 return
