@@ -21,3 +21,7 @@ CLAUDE.local.md
 /CLAUDE.md
 /docs/*
 !/docs/screenshots/
+
+# Skill per Claude Code: solo in locale
+/.claude/skills/
+/skills-lock.json
