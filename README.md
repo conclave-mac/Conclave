@@ -13,7 +13,7 @@ providers you configure. No account, no server, no telemetry.
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![macOS 26+](https://img.shields.io/badge/macOS-26%2B-black)
 ![Apple Silicon and Intel](https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-black)
-![Status: beta](https://img.shields.io/badge/status-beta%201-orange)
+![Status: beta](https://img.shields.io/badge/status-beta%202-orange)
 [![Release](https://github.com/peppolone/Conclave/actions/workflows/release.yml/badge.svg)](https://github.com/peppolone/Conclave/actions/workflows/release.yml)
 
 ![Composer](docs/screenshots/composer.png)
