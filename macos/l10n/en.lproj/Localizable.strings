@@ -63,7 +63,7 @@
 "Automatico (consigliato)" = "Automatic (recommended)";
 "Avvia" = "Start";
 "Avvia il dibattito" = "Start the debate";
-"Avvia il dibattito (⌘↩)" = "Start the debate (⌘↩)";
+"Avvia il dibattito (↩)" = "Start the debate (↩)";
 "Avviare una discussione" = "Starting a Discussion";
 "Avvio del consiglio…" = "Starting the council…";
 "Avvio del motore…" = "Starting the engine…";
@@ -90,7 +90,7 @@
 "Chiusura" = "Closing";
 "Chiusura · %@" = "Closing · %@";
 "Ciao, nottambulo" = "Hello, night owl";
-"Circa %d chiamate ai modelli + 1 verdetto · ⌘↩ per avviare" = "About %d model calls + 1 verdict · ⌘↩ to start";
+"Circa %d chiamate ai modelli + 1 verdetto · ↩ per avviare" = "About %d model calls + 1 verdict · ↩ to start";
 "Claude funziona se hai Claude Code con un abbonamento Claude. Per gli altri modelli aggiungi una chiave gratuita di Gemini, Groq o OpenRouter in Impostazioni (⌘,)." = "Claude works if you have Claude Code with a Claude subscription. For the other models, add a free Gemini, Groq or OpenRouter key in Settings (⌘,).";
 "Claude non chiede chiavi se hai installato Claude Code con un abbonamento Claude (facoltativo). Gemini, Groq e OpenRouter danno chiavi gratuite, senza carta di credito: con queste il consiglio ha già più voci. Incolla una chiave, premi “Verifica”, poi “Salva e attiva”." = "Claude needs no keys if you’ve installed Claude Code with a Claude subscription (optional). Gemini, Groq and OpenRouter give free keys, no credit card required: with these the council already has several voices. Paste a key, click “Verify”, then “Save and Activate”.";
 "Clicca “Create API key”; se lo chiede, scegli o crea un progetto." = "Click “Create API key”; if asked, choose or create a project.";
@@ -322,7 +322,7 @@
 "Scegli almeno 2 partecipanti cliccandoci sopra." = "Choose at least 2 participants by clicking them.";
 "Scegli il piano gratuito “Experiment” (chiede di verificare il numero di telefono)." = "Choose the free “Experiment” plan (it asks you to verify your phone number).";
 "Scelta automatica all'avvio" = "Automatic selection at startup";
-"Scrivi la domanda, scegli almeno due partecipanti, i round e il giudice, poi premi Avvia (⌘↩)." = "Write the question, choose at least two participants, the rounds and the judge, then press Start (⌘↩).";
+"Scrivi la domanda, scegli almeno due partecipanti, i round e il giudice, poi premi ↩ o Avvia." = "Write the question, choose at least two participants, the rounds and the judge, then press ↩ or Start.";
 "Scuro" = "Dark";
 "Scuro: sempre scuro, anche se macOS è chiaro." = "Dark: always dark, even if macOS is light.";
 "Se qualcosa non va" = "If Something Goes Wrong";
@@ -485,7 +485,7 @@
 "il consiglio ridiscute" = "the council debates again";
 "Chiedi ancora qualcosa su questa discussione…" = "Ask something else about this discussion…";
 "Invia la domanda" = "Send Question";
-"Invia la domanda (⌘↩)" = "Send the question (⌘↩)";
+"Invia la domanda (↩)" = "Send the question (↩)";
 "Prima di rispondere un modello cerca sul web informazioni aggiornate." = "Before answering, a model searches the web for up-to-date information.";
 "Rilancia il consiglio" = "Ask the Council Again";
 "Risposta rapida: %@" = "Quick answer: %@";

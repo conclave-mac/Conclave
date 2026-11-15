@@ -1042,7 +1042,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
 struct HelpView: View {
     private let topics: [(String, String)] = [
         (L("Come funziona"), L("Più modelli rispondono alla stessa domanda, si criticano a vicenda per il numero di round scelto e rivedono la propria posizione. Alla fine il giudice scrive il verdetto.")),
-        (L("Avviare una discussione"), L("Scrivi la domanda, scegli almeno due partecipanti, i round e il giudice, poi premi Avvia (⌘↩).")),
+        (L("Avviare una discussione"), L("Scrivi la domanda, scegli almeno due partecipanti, i round e il giudice, poi premi ↩ o Avvia.")),
         (L("Chiavi API"), L("Claude funziona se hai Claude Code con un abbonamento Claude. Per gli altri modelli aggiungi una chiave gratuita di Gemini, Groq o OpenRouter in Impostazioni (⌘,).")),
         (L("Cronologia"), L("Le discussioni restano nella barra laterale. Cerca con ⌘F, elimina con ⌫ o con il clic destro.")),
         (L("Se qualcosa non va"), L("Usa Conclave ▸ Riavvia motore (⇧⌘R) oppure Aiuto ▸ Mostra registro del motore.")),

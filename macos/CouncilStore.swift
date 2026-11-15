@@ -437,7 +437,7 @@ final class CouncilStore: ObservableObject {
         if voices.filter({ !$0.isClaude }).isEmpty { return L("Nessuna chiave gratuita configurata: aggiungila nelle Impostazioni (⌘,).") }
         let n = orderedSelection.count
         if n < 2 { return L("Scegli almeno 2 partecipanti cliccandoci sopra.") }
-        return String(format: L("Circa %d chiamate ai modelli + 1 verdetto · ⌘↩ per avviare"), estimatedCalls)
+        return String(format: L("Circa %d chiamate ai modelli + 1 verdetto · ↩ per avviare"), estimatedCalls)
     }
 
     var subtitle: String {

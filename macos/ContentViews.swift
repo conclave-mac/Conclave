@@ -131,7 +131,7 @@ private struct QuestionCounter: View {
     }
 }
 
-/// Pulsante rotondo d'invio con la freccia (⌘↩); rotella mentre si invia.
+/// Pulsante rotondo d'invio con la freccia (↩ nel campo, ⌘↩ ovunque); rotella mentre si invia.
 private struct SendButton: View {
     let enabled: Bool
     let busy: Bool
@@ -159,6 +159,25 @@ private struct SendButton: View {
         .keyboardShortcut(.return, modifiers: .command)
         .help(help)
         .accessibilityLabel(label)
+    }
+}
+
+/// Invio come nella chat di Claude: ↩ invia, ⇧↩ o ⌥↩ vanno a capo. ⌘↩ resta al pulsante d'invio.
+private struct SubmitOnReturn: ViewModifier {
+    let action: () -> Void
+
+    func body(content: Content) -> some View {
+        content.onKeyPress(.return, phases: .down) { press in
+            if press.modifiers.contains(.command) { return .ignored }
+            if !press.modifiers.isDisjoint(with: [.shift, .option]) {
+                // Nel campo AppKit ⇧↩ chiude la modifica e seleziona tutto: l'a capo va inserito qui,
+                // nel punto del cursore, come fa ⌥↩.
+                NSApp.sendAction(#selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)), to: nil, from: nil)
+                return .handled
+            }
+            action()
+            return .handled
+        }
     }
 }
 
@@ -309,6 +328,7 @@ struct ComposerView: View {
                 .lineLimit(3...12)
                 .lineSpacing(2)
                 .focused($focused)
+                .modifier(SubmitOnReturn { Task { await store.start() } })
                 .accessibilityLabel(L("Domanda"))
 
             if !store.attachments.isEmpty {
@@ -350,7 +370,7 @@ struct ComposerView: View {
                 SendButton(enabled: store.canStart, busy: store.starting, label: L("Avvia il dibattito"),
                            help: store.questionTooLong
                                ? String(format: L("La domanda supera il limite di %@ caratteri: accorciala per avviare il dibattito."), formatCount(AttachmentLimits.maxQuestion))
-                               : store.attachmentProblem ?? L("Avvia il dibattito (⌘↩)")) {
+                               : store.attachmentProblem ?? L("Avvia il dibattito (↩)")) {
                     Task { await store.start() }
                 }
             }
@@ -611,12 +631,10 @@ struct DebateView: View {
     @State private var expanded: [String: Bool] = [:]
     /// Verdetto appena copiato ("verdict" o "turn-<n>"), per la spunta sul pulsante.
     @State private var copiedKey: String?
-    /// Domande di seguito viste dal vivo: le loro fasi restano aperte anche a turno concluso.
-    @State private var liveTurns: Set<Int>
     /// Domanda lunga mostrata per intero nell'intestazione.
     @State private var questionExpanded = false
-    /// Dibattito seguito dal vivo: i round restano aperti anche quando arriva il verdetto,
-    /// così la posizione di lettura non cambia.
+    /// Dibattito seguito dal vivo: a ogni round la vista scende alla nuova sezione e al verdetto
+    /// le fasi si compattano.
     @State private var watchedLive: Bool
     /// true finché si segue il dibattito dal vivo (l'utente non ha scorso in su per rileggere).
     @State private var following = true
@@ -628,6 +646,9 @@ struct DebateView: View {
     /// ogni cambio di altezza del contenuto riporta subito in fondo ("resnap"). Serve perché la
     /// pila pigra stima le altezze delle righe non ancora costruite e il primo salto può sbagliare.
     @State private var pinnedBottom = false
+    /// Fino a questo istante gli spostamenti della vista sono di uno scorrimento animato del programma,
+    /// non dell'utente (vedi la rotella in `onScrollGeometryChange`).
+    @State private var programmaticUntil = Date.distantPast
     /// Larghezza della colonna del contenuto: decide le card per riga.
     @State private var contentWidth: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -639,11 +660,13 @@ struct DebateView: View {
         self.debate = debate
         self.saveFile = saveFile
         _watchedLive = State(initialValue: debate.isRunning)
-        _liveTurns = State(initialValue: Set(debate.turns.filter(\.isRunning).map(\.turn)))
     }
 
     /// Domanda di seguito in corso, se c'è.
     private var runningTurn: Int? { debate.turns.last(where: \.isRunning)?.turn }
+
+    /// Dibattito originale in corso (non una domanda di seguito): lo scorrimento lo guida `sectionKey`.
+    private var liveOriginal: Bool { debate.isRunning && runningTurn == nil }
 
     private var steps: [DebateStep] { store.steps(debate) }
 
@@ -715,23 +738,33 @@ struct DebateView: View {
             .onScrollGeometryChange(for: ScrollMetrics.self) { g in
                 ScrollMetrics(offset: g.contentOffset.y,
                               distance: max(0, g.contentSize.height - g.visibleRect.maxY),
-                              height: g.contentSize.height)
+                              height: g.contentSize.height,
+                              overshoot: g.visibleRect.maxY - g.contentSize.height > 2)
             } action: { old, new in
                 let away = new.distance > 300
                 if away != awayFromBottom { awayFromBottom = away }
-                if userScrolling {
+                // La rotella del mouse non ha fasi di scorrimento (`userScrolling` resta false): uno
+                // spostamento a contenuto invariato e fuori dagli scorrimenti del programma è comunque
+                // dell'utente. Senza, il resnap riportava in fondo a ogni scatto e la vista restava bloccata.
+                let wheel = new.height == old.height && new.offset != old.offset && Date() >= programmaticUntil
+                if userScrolling || wheel {
                     if new.offset < old.offset - 2 { following = false; pinnedBottom = false }
                     else if new.distance <= 2 { following = true; pinnedBottom = true }
-                } else if pinnedBottom, !debate.isRunning, new.distance > 2 || new.height != old.height {
+                } else if new.overshoot && !old.overshoot
+                            || pinnedBottom && !liveOriginal && (new.distance > 2 || new.height != old.height) {
                     // Resnap di Claude: agganciati in fondo, si resta in fondo anche quando le
-                    // righe appena costruite hanno un'altezza diversa da quella stimata.
-                    proxy.scrollTo(Self.endID, anchor: .bottom)
+                    // righe appena costruite hanno un'altezza diversa da quella stimata. Lo stesso
+                    // se la vista è finita oltre la fine del contenuto (righe più corte della stima:
+                    // la discussione restava vuota dopo una domanda di seguito). Durante le domande
+                    // di seguito la discussione risulta in corso: il resnap vale anche lì.
+                    jumpToEnd(proxy)
                 }
             }
             .onChange(of: sectionKey) {
-                guard watchedLive, following else { return }
+                // L'arrivo del verdetto lo gestisce `onChange(of: debate.verdict != nil)`.
+                guard watchedLive, following, debate.verdict == nil else { return }
                 // Si va all'inizio del risultato, non in fondo: niente resnap al termine del dibattito.
-                if debate.verdict != nil || debate.judging { pinnedBottom = false }
+                if debate.judging { pinnedBottom = false }
                 Task { @MainActor in
                     // Si attende il layout della nuova sezione prima di scorrere.
                     try? await Task.sleep(for: .milliseconds(80))
@@ -766,7 +799,7 @@ struct DebateView: View {
                         } else {
                             // Come `scrollToBottom` di Claude: salto immediato e aggancio.
                             pinnedBottom = true
-                            proxy.scrollTo(Self.endID, anchor: .bottom)
+                            jumpToEnd(proxy)
                         }
                     } label: {
                         Image(systemName: "arrow.down")
@@ -798,26 +831,28 @@ struct DebateView: View {
               pinnedBottom = true
               Task { @MainActor in
                   try? await Task.sleep(for: .milliseconds(60))
-                  proxy.scrollTo(Self.endID, anchor: .bottom)
+                  jumpToEnd(proxy)
               }
           }
-          .onChange(of: runningTurn) { old, n in
-              if let n { liveTurns.insert(n) }
-              // Turno del consiglio concluso mentre lo si seguiva (agganciati in fondo): si sale all'inizio
-              // del risultato (verdetto e sintesi). Le fasi sopra restano aperte: comprimerle sposterebbe
-              // ciò che si sta leggendo.
-              guard n == nil, let o = old, pinnedBottom,
-                    let t = debate.turns.first(where: { $0.turn == o }), !t.isQuick, t.verdict != nil else { return }
+          // Arrivato il verdetto (scelta dell'utente): le fasi del dibattito si compattano da sole e
+          // la vista va all'inizio del risultato. Una fase si riapre con un clic sull'intestazione.
+          .onChange(of: debate.verdict != nil) { had, has in
+              // Solo dal vivo: aperta dalla cronologia la discussione ha già le fasi compresse.
+              guard !had, has, watchedLive else { return }
+              collapsePhases(debate.phases, prefix: "")
               pinnedBottom = false
-              if reduceMotion { proxy.scrollTo("turn-\(o)-verdict", anchor: .top) }
-              else { withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo("turn-\(o)-verdict", anchor: .top) } }
+              scrollToResult("phase-verdict", proxy)
           }
-          // Dibattito concluso mentre lo si seguiva: la vista è già sul risultato, in fondo. Le fasi
-          // sopra restano aperte (comprimerle sposterebbe ciò che si sta leggendo); aperto dalla
-          // cronologia, il dibattito le mostra compresse.
-          .onChange(of: debate.isRunning) { was, now in
-              guard was, !now, watchedLive, following, debate.verdict != nil else { return }
-              pinnedBottom = false
+          // Lo stesso per il verdetto di un turno del consiglio; nella risposta rapida si compattano solo
+          // le fasi (la ricerca) e la vista resta agganciata in fondo mentre arriva il testo.
+          .onChange(of: debate.turns.map { $0.verdict != nil || $0.answer?.text != nil }) { old, new in
+              // Solo turni già presenti prima (arrivati dal vivo), non quelli caricati aprendo la discussione.
+              for (i, t) in debate.turns.enumerated() where i < old.count && i < new.count && new[i] && !old[i] {
+                  collapsePhases(t.phases, prefix: "turn-\(t.turn)-")
+                  guard !t.isQuick, t.verdict != nil else { continue }
+                  pinnedBottom = false
+                  scrollToResult("turn-\(t.turn)-verdict", proxy)
+              }
           }
         }
     }
@@ -828,6 +863,8 @@ struct DebateView: View {
         var offset: CGFloat
         var distance: CGFloat
         var height: CGFloat
+        /// La parte visibile va oltre la fine del contenuto.
+        var overshoot: Bool
     }
 
     /// Cambia a ogni nuovo round, all'inizio del giudizio e all'arrivo del verdetto.
@@ -842,8 +879,39 @@ struct DebateView: View {
         if debate.verdict != nil || debate.judging { target = "phase-verdict"; anchor = .top }
         else if let last = debate.phases.last { target = "phase-\(last.id)"; anchor = .top }
         else { target = Self.endID; anchor = .bottom }
+        programmaticUntil = Date().addingTimeInterval(0.6)
         if reduceMotion { proxy.scrollTo(target, anchor: anchor) }
         else { withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(target, anchor: anchor) } }
+    }
+
+    /// Salto immediato in fondo, segnato come scorrimento del programma: non sgancia dal fondo
+    /// anche se la vista sale (correzione di una posizione oltre la fine del contenuto).
+    private func jumpToEnd(_ proxy: ScrollViewProxy) {
+        programmaticUntil = Date().addingTimeInterval(0.3)
+        proxy.scrollTo(Self.endID, anchor: .bottom)
+    }
+
+    /// Fasi compattate all'arrivo del risultato: si tolgono le scelte di apertura, così vale il
+    /// predefinito (chiuse quando c'è il risultato).
+    private func collapsePhases(_ phases: [PhaseState], prefix: String) {
+        let apply = {
+            for p in phases {
+                expanded[prefix + p.id] = nil
+                store.expandedPhases[debate.id]?[prefix + p.id] = nil
+            }
+        }
+        if reduceMotion { apply() } else { withAnimation(.easeOut(duration: 0.25)) { apply() } }
+    }
+
+    /// Dopo la compattazione delle fasi, all'inizio del risultato (verdetto e sintesi).
+    private func scrollToResult(_ id: String, _ proxy: ScrollViewProxy) {
+        Task { @MainActor in
+            // Si attende il layout delle fasi compresse prima di scorrere.
+            try? await Task.sleep(for: .milliseconds(320))
+            programmaticUntil = Date().addingTimeInterval(0.6)
+            if reduceMotion { proxy.scrollTo(id, anchor: .top) }
+            else { withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(id, anchor: .top) } }
+        }
     }
 
     // MARK: Intestazione: stato, domanda, dettagli, partecipanti
@@ -1250,10 +1318,9 @@ struct DebateView: View {
 
     // MARK: Round
 
-    /// Fase aperta? Scelta dell'utente o, in mancanza, aperta dal vivo o finché manca il risultato.
+    /// Fase aperta? Scelta dell'utente o, in mancanza, aperta finché manca il risultato.
     private func isExpanded(_ key: String, in t: DebateState? = nil) -> Bool {
-        let fallback = t.map { liveTurns.contains($0.turn) || $0.isRunning || ($0.verdict == nil && $0.answer?.text == nil) }
-            ?? (watchedLive || debate.verdict == nil)
+        let fallback = t.map { $0.verdict == nil && $0.answer?.text == nil } ?? (debate.verdict == nil)
         return expanded[key] ?? store.expandedPhases[debate.id]?[key] ?? fallback
     }
 
@@ -1509,6 +1576,7 @@ private struct FollowupBar: View {
                 .lineLimit(1...8)
                 .lineSpacing(2)
                 .focused($focused)
+                .modifier(SubmitOnReturn { Task { await store.sendFollowup() } })
                 .accessibilityLabel(L("Domanda di seguito"))
 
             if !store.followupAttachments.isEmpty {
@@ -1587,7 +1655,7 @@ private struct FollowupBar: View {
             .accessibilityLabel(L("Interrompi"))
         } else {
             SendButton(enabled: store.canSendFollowup, busy: store.sendingFollowup, label: L("Invia la domanda"),
-                       help: store.followupProblem(debate) ?? L("Invia la domanda (⌘↩)")) {
+                       help: store.followupProblem(debate) ?? L("Invia la domanda (↩)")) {
                 Task { await store.sendFollowup() }
             }
         }
