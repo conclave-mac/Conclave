@@ -198,10 +198,12 @@ struct SidebarView: View {
             .overlay {
                 if model.loaded && model.items.isEmpty {
                     if model.query.trimmingCharacters(in: .whitespaces).isEmpty {
-                        ContentUnavailableView("Nessuna discussione", systemImage: "bubble.left.and.bubble.right",
-                                               description: Text("Le discussioni avviate compaiono qui."))
+                        SidebarEmptyState(title: L("Nessuna discussione"), systemImage: "bubble.left.and.bubble.right",
+                                          description: L("Le discussioni avviate compaiono qui."))
                     } else {
-                        ContentUnavailableView.search(text: model.query)
+                        SidebarEmptyState(title: L("Nessun risultato"), systemImage: "magnifyingglass",
+                                          description: String(format: L("Nessuna discussione contiene «%@»."),
+                                                              model.query.trimmingCharacters(in: .whitespaces)))
                     }
                 }
             }
@@ -243,6 +245,33 @@ struct SidebarView: View {
         guard let q = model.pendingDelete?.displayTitle else { return L("Eliminare la discussione?") }
         let short = q.count > 60 ? String(q.prefix(60)) + "…" : q
         return String(format: L("Eliminare la discussione «%@»?"), short)
+    }
+}
+
+/// Stato vuoto della barra laterale: compatto, nella scala del marchio. `ContentUnavailableView` usa un
+/// titolo da 22 pt in grassetto che in una colonna di 220 pt va a capo e pesa più della finestra.
+struct SidebarEmptyState: View {
+    let title: String
+    let systemImage: String
+    let description: String
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.system(size: 22))
+                .foregroundStyle(Brand.tertiaryText)
+                .padding(.bottom, 2)
+                .accessibilityHidden(true)
+            Text(title)
+                .font(Brand.Fonts.bodyMedium)
+                .foregroundStyle(Brand.secondaryText)
+            Text(description)
+                .font(Brand.Fonts.small)
+                .foregroundStyle(Brand.secondaryText)
+        }
+        .multilineTextAlignment(.center)
+        .padding(.horizontal, 20)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -389,6 +418,18 @@ struct SystemHighlightRemover: NSViewRepresentable {
     final class Finder: NSView {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            removeHighlight()
+            // Alla prima apertura la riga entra nella finestra prima che la tabella la adotti:
+            // senza questo secondo tentativo il primo clic mostrava la selezione blu di sistema.
+            DispatchQueue.main.async { [weak self] in self?.removeHighlight() }
+        }
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            removeHighlight()
+        }
+
+        private func removeHighlight() {
             var v: NSView? = superview
             while let cur = v, !(cur is NSTableView) { v = cur.superview }
             if let t = v as? NSTableView, t.selectionHighlightStyle != .none { t.selectionHighlightStyle = .none }

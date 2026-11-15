@@ -240,6 +240,7 @@
 "Nel consiglio" = "In the council";
 "Nessun provider configurato. Aggiungi una chiave gratuita nel pannello “Chiavi API”." = "No provider configured. Add a free key in the “API Keys” pane.";
 "Nessun risultato" = "No Results";
+"Nessuna discussione contiene «%@»." = "No discussion contains “%@”.";
 "Nessuna chiave" = "No key";
 "Nessuna chiave gratuita configurata: aggiungila nelle Impostazioni (⌘,)." = "No free key configured: add one in Settings (⌘,).";
 "Nessuna discussione" = "No Discussions";
