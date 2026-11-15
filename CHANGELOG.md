@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-15 — Beta 3
+
+### Added
+- "The debate at a glance" below the verdict: what the models agree on, errors found during the debate and
+  disagreements left open.
+
+### Changed
+- API Keys settings rebuilt: one row per provider with its status in words; opening a row shows three numbered
+  steps (open the provider's site, paste the key, check it). Detailed instructions stay folded away.
+- Settings window title follows the open pane; no repeated page titles.
+- Visual review for macOS 26: no white band under the toolbar (content now scrolls beneath it), composer and
+  follow-up controls wrap cleanly in narrow windows, round numbers in the debate timeline, clearer Markdown
+  headings, tables and code, branded engine start and error page, theme picker with labels, more readable
+  accent in dark mode.
+
+### Fixed
+- "Search the web" no longer looks switched on when no model can search.
+- The question is shown once in the debate header until the judge writes a title.
+- Sidebar no longer shows the blue system selection on the first click.
+
 ## [0.2.1] - 2026-11-14
 
 ### Changed
@@ -83,7 +103,8 @@ versions.
 - Data folder `0700`, files `0600`; atomic writes for settings and health cache.
 - Claude CLI run without tools, MCP servers or user settings, and stopped on shutdown.
 
-[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/peppolone/Conclave/releases/tag/v0.3.0
 [0.2.1]: https://github.com/peppolone/Conclave/releases/tag/v0.2.1
 [0.2.0]: https://github.com/peppolone/Conclave/releases/tag/v0.2.0
 [0.1.0]: https://github.com/peppolone/Conclave/releases/tag/v0.1.0
