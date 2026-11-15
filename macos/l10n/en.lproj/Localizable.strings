@@ -85,7 +85,7 @@
 "Chiave inserita" = "Key entered";
 "Chiave non valida" = "Invalid key";
 "Chiavi API" = "API Keys";
-"Chiavi, scelta dei modelli e cronologia delle discussioni" = "Keys, model selection and discussion history";
+"Scelta dei modelli e cronologia delle discussioni" = "Model selection and discussion history";
 "Chiudi" = "Close";
 "Chiusura" = "Closing";
 "Chiusura · %@" = "Closing · %@";
@@ -202,7 +202,7 @@
 "L'app usa solo i modelli gratuiti, quelli con “:free” nel nome. Senza credito le richieste al giorno sono poche e alcuni modelli sono lenti." = "The app only uses free models, the ones with “:free” in their name. Without credit there are few requests per day and some models are slow.";
 "La chiave funziona." = "The key works.";
 "La nuova lingua si applica al riavvio di Conclave." = "The new language takes effect when Conclave restarts.";
-"Le chiavi restano solo su questo Mac, nel Portachiavi di macOS (voci “Conclave – …” in Accesso Portachiavi)." = "Keys stay only on this Mac, in the macOS Keychain (“Conclave – …” items in Keychain Access).";
+"Le chiavi restano solo su questo Mac, nel Portachiavi di macOS (voce “Conclave – API keys” in Accesso Portachiavi)." = "Keys stay only on this Mac, in the macOS Keychain (item “Conclave – API keys” in Keychain Access).";
 "Portachiavi, voce %@: %@" = "Keychain, item %@: %@";
 "Le discussioni avviate compaiono qui." = "Discussions you start appear here.";
 "Le discussioni restano nella barra laterale. Cerca con ⌘F, elimina con ⌫ o con il clic destro." = "Discussions stay in the sidebar. Search with ⌘F, delete with ⌫ or by right-clicking.";

@@ -608,18 +608,15 @@ struct GeneralPage: View {
         SettingsPage(L("Generale")) {
             SettingsSection(L("Aspetto")) {
                 SettingsRow(L("Tema"), detail: appearanceDetail) {
+                    // Etichette a parole, non solo icone; larghezza propria, allineato a destra come gli altri controlli.
                     Picker(L("Tema"), selection: $appearance) {
                         ForEach(AppAppearance.allCases) { a in
-                            Label(a.title, systemImage: a.symbol)
-                                .labelStyle(.iconOnly)
-                                .help(a.title)
-                                .tag(a)
+                            Text(a.title).tag(a)
                         }
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    .frame(width: 132)
-                    .help(L("Tema") + ": " + appearance.title)
+                    .fixedSize()
                 }
             }
             SettingsSection(L("Lingua")) {
@@ -807,7 +804,7 @@ struct SettingsView: View {
                     }
                 }
 
-                Text("Le chiavi restano solo su questo Mac, nel Portachiavi di macOS (voci “Conclave – …” in Accesso Portachiavi).")
+                Text("Le chiavi restano solo su questo Mac, nel Portachiavi di macOS (voce “Conclave – API keys” in Accesso Portachiavi).")
                     .font(Brand.Fonts.small).foregroundStyle(Brand.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -864,7 +861,7 @@ struct AboutPage: View {
                         Label("Apri su GitHub", systemImage: "arrow.up.right.square")
                     }
                 }
-                SettingsRow(L("Cartella dati"), detail: L("Chiavi, scelta dei modelli e cronologia delle discussioni")) {
+                SettingsRow(L("Cartella dati"), detail: L("Scelta dei modelli e cronologia delle discussioni")) {
                     Button("Mostra nel Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting([Paths.dataDir])
                     }
@@ -893,7 +890,7 @@ enum SettingsTab: Int, CaseIterable, Identifiable {
         switch self {
         case .general: "gearshape"
         case .keys: "key"
-        case .models: "person.3"
+        case .models: "person.2"  // person.3 è più largo della colonna da 20 pt e sporgeva a sinistra
         case .about: "info.circle"
         }
     }
@@ -952,7 +949,7 @@ struct SettingsSidebar: View {
                         Section {
                             ForEach(tabs) { t in
                                 // Come la barra laterale principale: 14 pt, icona del colore del testo.
-                                // Colonna dell'icona fissa: testi allineati anche con simboli larghi (Modelli).
+                                // Colonna dell'icona fissa da 20 pt: testi allineati; i simboli devono starci (niente person.3).
                                 Label {
                                     Text(t.title)
                                 } icon: {

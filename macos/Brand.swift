@@ -206,14 +206,6 @@ enum AppAppearance: String, CaseIterable, Identifiable {
         }
     }
 
-    var symbol: String {
-        switch self {
-        case .system: "desktopcomputer"
-        case .light: "sun.max"
-        case .dark: "moon"
-        }
-    }
-
     static var current: AppAppearance {
         AppAppearance(rawValue: UserDefaults.standard.string(forKey: key) ?? "") ?? .system
     }
