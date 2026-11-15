@@ -49,6 +49,31 @@ enum UpdateCheck {
         return Release(version: version, notes: j["body"] as? String ?? "", page: page)
     }
 
+    /// Note della release in testo semplice per l'avviso. Toglie le parti che GitHub genera da sé
+    /// (`--generate-notes`: "Full Changelog", "What's Changed", "by @utente in <link>") e i segni
+    /// Markdown, che `NSAlert` mostrerebbe così come sono. Vuoto se non resta niente di utile.
+    static func readableNotes(_ raw: String) -> String {
+        var out: [String] = []
+        for var line in raw.components(separatedBy: .newlines) {
+            line = line.trimmingCharacters(in: .whitespaces)
+            let lower = line.lowercased()
+            if line.isEmpty || lower.contains("full changelog") || lower.hasPrefix("## what's changed")
+                || lower.hasPrefix("## new contributors") || lower.contains("made their first contribution") { continue }
+            // "* fix qualcosa by @utente in https://github.com/…/pull/12" → "fix qualcosa"
+            if let r = line.range(of: #" by @[\w-]+ in https?://\S+$"#, options: .regularExpression) {
+                line.removeSubrange(r)
+            }
+            line = line.replacingOccurrences(of: #"\[([^\]]*)\]\([^)]*\)"#, with: "$1", options: .regularExpression)
+            line = line.replacingOccurrences(of: #"https?://\S+"#, with: "", options: .regularExpression)
+            line = line.replacingOccurrences(of: #"\*\*|__|`"#, with: "", options: .regularExpression)
+            line = line.replacingOccurrences(of: #"^#+\s*"#, with: "", options: .regularExpression)
+            line = line.replacingOccurrences(of: #"^[*-]\s+"#, with: "• ", options: .regularExpression)
+            line = line.trimmingCharacters(in: .whitespaces)
+            if !line.isEmpty, line != "•" { out.append(line) }
+        }
+        return out.joined(separator: "\n")
+    }
+
     /// Ultima versione pubblicata; nil se non ce n'è ancora nessuna.
     static func latest() async throws -> Release? {
         var req = URLRequest(url: api, timeoutInterval: 15)
@@ -94,7 +119,7 @@ enum UpdateCheck {
 
         let alert = NSAlert()
         alert.messageText = String(format: L("È disponibile Conclave %@"), release.version)
-        let notes = release.notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        let notes = readableNotes(release.notes)
         alert.informativeText = String(format: L("Hai la versione %@."), current)
             + (notes.isEmpty ? "" : "\n\n" + (notes.count > 600 ? String(notes.prefix(600)) + "…" : notes))
         // Verbo specifico: il pulsante apre la pagina del download, non scarica da solo.
