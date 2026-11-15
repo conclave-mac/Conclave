@@ -97,7 +97,8 @@ enum UpdateCheck {
         let notes = release.notes.trimmingCharacters(in: .whitespacesAndNewlines)
         alert.informativeText = String(format: L("Hai la versione %@."), current)
             + (notes.isEmpty ? "" : "\n\n" + (notes.count > 600 ? String(notes.prefix(600)) + "…" : notes))
-        alert.addButton(withTitle: L("Scarica"))
+        // Verbo specifico: il pulsante apre la pagina del download, non scarica da solo.
+        alert.addButton(withTitle: L("Apri la pagina del download"))
         alert.addButton(withTitle: L("Più tardi"))
         alert.addButton(withTitle: L("Salta questa versione"))
         let handle = { (r: NSApplication.ModalResponse) in
@@ -119,6 +120,7 @@ enum UpdateCheck {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = text
+        alert.addButton(withTitle: L("Chiudi"))
         alert.runModal()
     }
 }

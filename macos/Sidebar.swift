@@ -218,7 +218,7 @@ struct SidebarView: View {
                 HStack(spacing: 8) {
                     Button { model.onSettings?() } label: {
                         Image(systemName: "gearshape")
-                            .font(.system(size: 14))
+                            .font(Brand.Fonts.body)
                             .frame(width: 26, height: 26)
                             .contentShape(Rectangle())
                     }
@@ -281,8 +281,9 @@ struct SidebarSectionHeader: View {
 
     var body: some View {
         Text(title)
-            .font(.system(size: 12, weight: .medium))
+            .font(Brand.Fonts.smallMedium)
             .foregroundStyle(Brand.secondaryText)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -322,6 +323,7 @@ struct SidebarActionRow: View {
             HStack(spacing: 8) {
                 Image(systemName: systemImage)
                     .frame(width: 18)
+                    .accessibilityHidden(true)
                 Text(title)
                 Spacer(minLength: 0)
             }
@@ -406,6 +408,10 @@ struct DebateRow: View {
         .contentShape(Rectangle())
         .help(debate.question)
         .onHover { hovering = $0 }
+        // VoiceOver: un solo elemento "titolo, stato" con l'azione Elimina (il ✕ è visibile solo al mouse).
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(detail.isEmpty ? debate.displayTitle : "\(debate.displayTitle), \(detail)")
+        .accessibilityAction(named: Text("Elimina discussione"), onDelete)
     }
 }
 

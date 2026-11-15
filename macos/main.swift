@@ -315,7 +315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
     /// Contenuto nativo SwiftUI (composer e dibattito).
     private var content: NSView!
     private var loading: NSView!
-    private var status: NSTextField!
+    private let engineStatus = EngineStatusModel()
     private let server = ServerController()
     private lazy var settings = SettingsWindowController(port: { [weak self] in self?.port ?? 0 })
     private lazy var sidebar = SidebarModel(port: { [weak self] in self?.port ?? 0 })
@@ -399,15 +399,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
             self?.verdictReady(title: L("Verdetto pronto"), body: q.count > 80 ? String(q.prefix(80)) + "…" : q)
         }
 
-        status = NSTextField(labelWithString: L("Avvio del consiglio…"))
-        status.textColor = .secondaryLabelColor
-        let spinner = NSProgressIndicator()
-        spinner.style = .spinning
-        spinner.startAnimation(nil)
-        let stack = NSStackView(views: [spinner, status])
-        stack.orientation = .vertical
-        stack.spacing = 12
-        loading = stack
+        // Avvio ed errore del motore: vista SwiftUI con i token di marchio (testo e azioni nella vista).
+        engineStatus.onRetry = { [weak self] in self?.restartServer(nil) }
+        engineStatus.onShowLog = { [weak self] in self?.openLog(nil) }
+        loading = NSHostingView(rootView: EngineStatusView(model: engineStatus))
 
         // Area del contenuto: i controlli restano nella safe area sotto la toolbar, il vetro resta alla navigazione.
         let container = NSView()
@@ -423,8 +418,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
             // e il testo che scorre passa sotto i pulsanti su vetro.
             content.topAnchor.constraint(equalTo: container.topAnchor),
             content.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            loading.centerXAnchor.constraint(equalTo: safe.centerXAnchor),
-            loading.centerYAnchor.constraint(equalTo: safe.centerYAnchor),
+            loading.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
+            loading.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
+            loading.topAnchor.constraint(equalTo: safe.topAnchor),
+            loading.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
         let contentVC = NSViewController()
         contentVC.view = container
@@ -560,9 +557,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         let recent = sidebar.query.trimmingCharacters(in: .whitespaces).isEmpty ? sidebar.items.prefix(5) : []
         if !recent.isEmpty {
             menu.addItem(.separator())
-            let header = NSMenuItem(title: L("Recenti"), action: nil, keyEquivalent: "")
-            header.isEnabled = false
-            menu.addItem(header)
+            // Intestazione di sezione nativa: più chiara di una voce grigia disabilitata.
+            menu.addItem(NSMenuItem.sectionHeader(title: L("Recenti")))
             for d in recent {
                 let i = item(Self.short(d.displayTitle, 48), #selector(openRecent(_:)), "")
                 i.tag = d.id
@@ -639,16 +635,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         content.isHidden = true
         store.engineStopped()
         loading.isHidden = false
-        status.stringValue = L("Motore non attivo")
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = L("Conclave non riesce a funzionare")
-        alert.informativeText = message
-        alert.addButton(withTitle: L("Riprova"))
-        alert.addButton(withTitle: L("Esci"))
-        alert.beginSheetModal(for: window) { [weak self] r in
-            if r == .alertFirstButtonReturn { self?.restartServer(nil) } else { NSApp.terminate(nil) }
-        }
+        // L'errore sta nella pagina, con le azioni per uscirne (Riprova, registro): niente foglio sopra.
+        engineStatus.state = .failed(message)
+        NSAccessibility.post(element: window as Any, notification: .announcementRequested,
+                             userInfo: [.announcement: L("Conclave non riesce a funzionare"),
+                                        .priority: NSAccessibilityPriorityLevel.high.rawValue])
     }
 
     // MARK: Menu
@@ -999,6 +990,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         w.title = L("Aiuto di Conclave")
         w.isReleasedWhenClosed = false
         w.contentView = NSHostingView(rootView: HelpView())
+        w.minSize = NSSize(width: 380, height: 300)
+        w.backgroundColor = NSColor(Brand.canvas)
         w.center()
         helpWindow = w
         w.makeKeyAndOrderFront(nil)
@@ -1025,7 +1018,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         content.isHidden = true
         store.engineStopped()
         loading.isHidden = false
-        status.stringValue = L("Riavvio del motore…")
+        engineStatus.state = .loading(L("Riavvio del motore…"))
         port = 0
         server.stop()
         server.start()
@@ -1060,14 +1053,75 @@ struct HelpView: View {
             VStack(alignment: .leading, spacing: 16) {
                 ForEach(topics, id: \.0) { t in
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(t.0).font(.headline)
-                        Text(t.1).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Text(t.0)
+                            .font(Brand.Fonts.section)
+                            .foregroundStyle(Brand.text)
+                            .accessibilityAddTraits(.isHeader)
+                        Text(t.1)
+                            .font(Brand.Fonts.body)
+                            .foregroundStyle(Brand.secondaryText)
+                            .lineSpacing(3)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .background(Brand.canvas)
+    }
+}
+
+/// Stato della pagina di avvio: caricamento (con messaggio) o errore del motore (con azioni).
+@MainActor
+final class EngineStatusModel: ObservableObject {
+    enum State: Equatable { case loading(String), failed(String) }
+    @Published var state: State = .loading(L("Avvio del consiglio…"))
+    var onRetry: (() -> Void)?
+    var onShowLog: (() -> Void)?
+}
+
+/// Pagina mostrata al posto del contenuto finché il motore non risponde: spinner nativo e testo
+/// nella scala tipografica del marchio; se il motore non parte, spiega cosa è successo e offre le azioni.
+struct EngineStatusView: View {
+    @ObservedObject var model: EngineStatusModel
+
+    var body: some View {
+        VStack(spacing: 14) {
+            switch model.state {
+            case .loading(let text):
+                ProgressView().controlSize(.regular)
+                Text(verbatim: text)
+                    .font(Brand.Fonts.body)
+                    .foregroundStyle(Brand.secondaryText)
+            case .failed(let message):
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 28))
+                    .foregroundStyle(Brand.warning)
+                    .accessibilityHidden(true)
+                Text("Conclave non riesce a funzionare")
+                    .font(Brand.Fonts.pageTitle)
+                    .foregroundStyle(Brand.text)
+                    .accessibilityAddTraits(.isHeader)
+                Text(verbatim: message)
+                    .font(Brand.Fonts.body)
+                    .foregroundStyle(Brand.secondaryText)
+                    .lineSpacing(3)
+                    .multilineTextAlignment(.center)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: 440)
+                HStack(spacing: 10) {
+                    Button("Mostra registro del motore") { model.onShowLog?() }
+                    Button("Riprova") { model.onRetry?() }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                }
+                .controlSize(.large)
+                .padding(.top, 6)
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
