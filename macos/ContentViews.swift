@@ -851,12 +851,18 @@ struct DebateView: View {
             statusBadge
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(debate.displayTitle)
-                    .font(Brand.Fonts.pageTitle)
-                    .lineLimit(2)
-                    .textSelection(.enabled)
-                    .accessibilityAddTraits(.isHeader)
-                questionText
+                // Senza il titolo del giudice (dibattito in corso, discussioni vecchie) il titolo sarebbe
+                // solo l'inizio della domanda, ripetuta subito sotto: si mostra la domanda una volta, come titolo.
+                if let title = debate.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+                    Text(title)
+                        .font(Brand.Fonts.pageTitle)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                        .accessibilityAddTraits(.isHeader)
+                    questionText(font: Brand.Fonts.body)
+                } else {
+                    questionText(font: Brand.Fonts.section, isHeader: true)
+                }
             }
 
             if !debate.attachments.isEmpty {
@@ -897,10 +903,12 @@ struct DebateView: View {
         debate.question.count > 240 || debate.question.filter(\.isNewline).count > 2
     }
 
-    private var questionText: some View {
+    private func questionText(font: Font, isHeader: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(debate.question)
-                .font(Brand.Fonts.body)
+                .font(font)
+                // Solo il testo è l'intestazione, non il pulsante "Mostra tutta la domanda".
+                .accessibilityAddTraits(isHeader ? .isHeader : [])
                 .foregroundStyle(Brand.text)
                 .lineSpacing(3)
                 .lineLimit(questionExpanded || !questionIsLong ? nil : 3)
