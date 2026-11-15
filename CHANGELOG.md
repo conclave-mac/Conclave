@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-15 — Beta 4
+
+### Changed
+- Warmer, more modern look: warm paper background in light mode and warm graphite in dark mode, warm sidebars
+  (main window and Settings) and a soft warm selection instead of blue.
+- History is a single list, without "Today", "Yesterday" and other date groups, and without the old
+  "Follow-up" label.
+- New start-screen lines about the council, depending on the time of day.
+- Folding sections ("Detailed instructions", "Show the models") open by clicking their title, not only the arrow.
+- Release notes come from this changelog.
+
+### Fixed
+- The update notice no longer shows raw GitHub text ("Full Changelog" links, Markdown symbols).
+
 ## [0.3.0] - 2026-11-15 — Beta 3
 
 ### Added
@@ -103,7 +117,8 @@ versions.
 - Data folder `0700`, files `0600`; atomic writes for settings and health cache.
 - Claude CLI run without tools, MCP servers or user settings, and stopped on shutdown.
 
-[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/peppolone/Conclave/releases/tag/v0.4.0
 [0.3.0]: https://github.com/peppolone/Conclave/releases/tag/v0.3.0
 [0.2.1]: https://github.com/peppolone/Conclave/releases/tag/v0.2.1
 [0.2.0]: https://github.com/peppolone/Conclave/releases/tag/v0.2.0
