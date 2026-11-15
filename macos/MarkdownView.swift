@@ -406,6 +406,18 @@ func renderInlineMarkdown(_ raw: String) -> AttributedString {
                 if scheme != "http" && scheme != "https" { unsafe.append(range) }
             }
             for range in unsafe { result[range].link = nil }
+            // Link nel colore del marchio e sottolineati (non solo colore); codice inline su fondo tenue.
+            var links: [Range<AttributedString.Index>] = []
+            for (link, range) in result.runs[\.link] where link != nil { links.append(range) }
+            for range in links {
+                result[range].foregroundColor = Brand.accent
+                result[range].underlineStyle = .single
+            }
+            var codes: [Range<AttributedString.Index>] = []
+            for (intent, range) in result.runs[\.inlinePresentationIntent] where intent?.contains(.code) == true {
+                codes.append(range)
+            }
+            for range in codes { result[range].backgroundColor = Brand.hover }
             // Le immagini non vengono caricate: resta solo il testo alternativo.
             result.imageURL = nil
         } else {
@@ -468,7 +480,11 @@ private struct MarkdownBlockView: View {
                 .font(headingFont(level))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 10)
+                // Più aria prima del titolo che dopo: il titolo regge il blocco che segue.
+                .padding(.top, level == 1 ? 14 : level == 2 ? 10 : 6)
+                .padding(.bottom, -2)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityHeading(accessibilityLevel(level))
 
         case let .paragraph(text):
             Text(renderInlineMarkdown(text))
@@ -485,8 +501,8 @@ private struct MarkdownBlockView: View {
         case let .quote(inner):
             HStack(alignment: .top, spacing: 8) {
                 RoundedRectangle(cornerRadius: 1, style: .continuous)
-                    .fill(Color(nsColor: .separatorColor))
-                    .frame(width: 2)
+                    .fill(Brand.secondaryText.opacity(0.35))
+                    .frame(width: 3)
                 AnyView(MarkdownBlocksStack(blocks: inner, baseFont: baseFont))
                     .foregroundStyle(Brand.secondaryText)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -499,22 +515,33 @@ private struct MarkdownBlockView: View {
                 Text(verbatim: text)
                     .font(baseFont.monospaced())
                     .fixedSize(horizontal: true, vertical: true)
-                    .padding(8)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5))
+            .background(Brand.hover, in: RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous).strokeBorder(Brand.hairline, lineWidth: 1))
 
         case .rule:
-            Divider().padding(.vertical, 4)
+            Rectangle().fill(Brand.hairline).frame(height: 1).padding(.vertical, 6)
+                .accessibilityHidden(true)
         }
     }
 
+    /// Nelle risposte i titoli non superano mai l'intestazione di card e verdetto (`Brand.Fonts.section`,
+    /// 15 pt): # e ## a 15 pt semibold, ### e oltre come il corpo (semibold); la gerarchia la dà
+    /// la spaziatura. Con il testo ingrandito crescono nella stessa proporzione.
     private func headingFont(_ level: Int) -> Font {
-        // Con il testo ingrandito i titoli crescono nella stessa proporzione (18, 16 e 14 pt di base).
-        if level <= 3 { return .system(size: [18, 16, 14][max(level, 1) - 1] * zoom, weight: .semibold) }
+        if level <= 2 { return .system(size: 15 * zoom, weight: .semibold) }
+        return .system(size: Brand.bodySize * zoom, weight: .semibold)
+    }
+
+    private func accessibilityLevel(_ level: Int) -> AccessibilityHeadingLevel {
         switch level {
-        default: return baseFont.weight(.semibold)
+        case 1: return .h1
+        case 2: return .h2
+        case 3: return .h3
+        default: return .h4
         }
     }
 }
@@ -522,11 +549,12 @@ private struct MarkdownBlockView: View {
 private struct MarkdownListView: View {
     let items: [MarkdownListItem]
     let baseFont: Font
+    @Environment(\.textZoom) private var zoom
 
     var body: some View {
         let hasOrdered = items.contains { $0.ordered }
         let longest = items.filter { $0.ordered }.map { $0.marker.count }.max() ?? 1
-        let markerWidth: CGFloat = hasOrdered ? CGFloat(max(longest, 2)) * 8 + 4 : 12
+        let markerWidth: CGFloat = hasOrdered ? (CGFloat(max(longest, 2)) * 8 + 4) * zoom : 14 * zoom
         // Tra voci di elenco 0,25 em come in Claude.
         VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
@@ -541,7 +569,7 @@ private struct MarkdownListView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.leading, CGFloat(item.level) * 20)
+                .padding(.leading, CGFloat(item.level) * 20 * zoom)
             }
         }
     }
@@ -610,9 +638,9 @@ private struct MarkdownTableView: View {
                     cellView(cell, width: widths[col], header: true)
                 }
             }
-            .background(.fill.quaternary)
+            .background(Brand.hover)
             ForEach(Array(rows.enumerated()), id: \.offset) { i, row in
-                Rectangle().fill(Color(nsColor: .gridColor)).frame(height: 0.5)
+                Rectangle().fill(Brand.hairline).frame(height: 1)
                     .gridCellUnsizedAxes(.horizontal)   // il divisore non allarga la tabella
                 GridRow {
                     ForEach(Array(row.enumerated()), id: \.offset) { col, cell in
@@ -622,15 +650,14 @@ private struct MarkdownTableView: View {
                 .background(rowBackground(i))
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Color(nsColor: .gridColor), lineWidth: 0.5))
+        .clipShape(RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous).strokeBorder(Brand.hairline, lineWidth: 1))
     }
 
-    /// Righe alternate (colori di sistema) solo per tabelle lunghe, dove aiutano a seguire la riga.
+    /// Righe alternate (token Brand) solo per tabelle lunghe, dove aiutano a seguire la riga.
     private func rowBackground(_ i: Int) -> Color {
-        let colors = NSColor.alternatingContentBackgroundColors
-        guard rows.count > 4, colors.count > 1 else { return .clear }
-        return Color(nsColor: colors[i % 2])
+        guard rows.count > 4, i % 2 == 1 else { return .clear }
+        return Brand.hover.opacity(0.5)
     }
 
     private func cellView(_ text: String, width: CGFloat, header: Bool) -> some View {
@@ -639,7 +666,8 @@ private struct MarkdownTableView: View {
             .fontWeight(header ? .semibold : nil)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.vertical, 5)
+            .accessibilityAddTraits(header ? .isHeader : [])
             // Ogni cella riempie l'altezza della riga: sfondi di riga uniformi.
             .frame(width: width, alignment: .leading)
             .frame(maxHeight: .infinity, alignment: .topLeading)

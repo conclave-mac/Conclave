@@ -33,6 +33,15 @@ enum AttachmentKind: String {
         }
     }
 
+    /// Nome breve del tipo, sempre visibile nel gettone (l'etichetta lunga resta nel suggerimento).
+    var shortLabel: String {
+        switch self {
+        case .pdf: return L("PDF")
+        case .text: return L("Testo")
+        case .image: return L("Immagine")
+        }
+    }
+
     var label: String {
         switch self {
         case .pdf: return L("PDF")
@@ -205,7 +214,7 @@ struct AttachmentChip: View {
     private var detail: String {
         if item.loading { return item.kind == .text ? L("lettura…") : L("riconoscimento del testo…") }
         if let e = item.error { return e }
-        return charsText(item.chars) + (item.truncated ? " · " + L("troncato") : "")
+        return item.kind.shortLabel + " · " + charsText(item.chars) + (item.truncated ? " · " + L("troncato") : "")
     }
 
     var body: some View {
@@ -231,7 +240,8 @@ struct AttachmentChip: View {
                 Text(detail)
                     .font(Brand.Fonts.small)
                     .foregroundStyle(item.error != nil ? AnyShapeStyle(Brand.danger) : AnyShapeStyle(Brand.secondaryText))
-                    .lineLimit(1)
+                    .lineLimit(item.error != nil ? 2 : 1)
+                    .fixedSize(horizontal: false, vertical: true)
                     .monospacedDigit()
             }
             .frame(maxWidth: 220, alignment: .leading)
@@ -243,20 +253,22 @@ struct AttachmentChip: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(Brand.secondaryText)
-            .help(L("Togli l'allegato"))
+            .help(String(format: L("Togli %@"), item.name))
             .accessibilityLabel(String(format: L("Togli %@"), item.name))
         }
         .padding(.leading, 8)
         .padding(.trailing, 4)
         .padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous).fill(Color.primary.opacity(0.04)))
+        .background(RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous).fill(Brand.hover))
         .overlay(RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous)
             .strokeBorder(item.error != nil ? Brand.danger.opacity(0.5) : item.truncated ? Brand.warning.opacity(0.6) : Brand.hairline, lineWidth: 1))
         .help(item.truncated
               ? String(format: L("Il file era più lungo di %@ caratteri: è stato troncato."), formatCount(AttachmentLimits.maxChars))
               : item.error ?? item.kind.label)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(item.name), \(item.kind.label), \(detail)")
+        .accessibilityLabel(item.error != nil
+            ? String(format: L("Errore: %@"), "\(item.name), \(detail)")
+            : "\(item.name), \(item.kind.label), \(detail)")
     }
 }
 
@@ -303,18 +315,18 @@ struct AttachmentTag: View {
             Text(meta.name)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Text(charsText(meta.chars))
+            Text(meta.kind.shortLabel + " · " + charsText(meta.chars))
                 .foregroundStyle(Brand.secondaryText)
                 .monospacedDigit()
         }
         .font(Brand.Fonts.small)
         .padding(.horizontal, 8)
         .frame(height: 22)
-        .background(Capsule().fill(Color.primary.opacity(0.04)))
+        .background(Capsule().fill(Brand.hover))
         .overlay(Capsule().strokeBorder(Brand.hairline, lineWidth: 1))
-        .help(meta.kind.label)
+        .help(meta.name + " — " + meta.kind.label)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(String(format: L("Allegato: %@, %@"), meta.name, charsText(meta.chars)))
+        .accessibilityLabel(String(format: L("Allegato: %@, %@, %@"), meta.name, meta.kind.label, charsText(meta.chars)))
     }
 }
 

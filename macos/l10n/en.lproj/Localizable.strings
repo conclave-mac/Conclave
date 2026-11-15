@@ -523,3 +523,6 @@
 "carattere non ammesso" = "character not allowed";
 "Prova %@" = "Test %@";
 "Apri la pagina del download" = "Open Download Page";
+"Immagine" = "Image";
+"Errore: %@" = "Error: %@";
+"Allegato: %@, %@, %@" = "Attachment: %@, %@, %@";
