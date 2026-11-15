@@ -263,13 +263,13 @@ struct ComposerView: View {
     private var hasOtherVoices: Bool { store.voices.contains { !$0.isClaude } }
     private var troubled: [VoiceInfo] { store.voices.filter { $0.problem != nil } }
 
-    /// Saluto secondo l'ora del giorno.
+    /// Invito secondo l'ora del giorno, sul tema del consiglio (non i saluti di Claude).
     private var greeting: String {
         switch Calendar.current.component(.hour, from: .now) {
-        case 5..<13: return L("Buongiorno")
-        case 13..<18: return L("Buon pomeriggio")
-        case 18..<24: return L("Buonasera")
-        default: return L("Ciao, nottambulo")
+        case 5..<13: return L("Cosa mettiamo ai voti stamattina?")
+        case 13..<18: return L("Su cosa ci confrontiamo oggi?")
+        case 18..<24: return L("Una questione per stasera?")
+        default: return L("Il consiglio non dorme mai")
         }
     }
 
