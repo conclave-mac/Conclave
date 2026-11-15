@@ -39,30 +39,32 @@ enum Brand {
             : NSColor(srgbRed: 0xc4 / 255, green: 0x5c / 255, blue: 0x58 / 255, alpha: 1)
     })
 
-    /// Tinte morbide dei tre membri del logo, per aloni e filo del verdetto.
-    static let softBlue = Color(red: 0xa9 / 255, green: 0xc0 / 255, blue: 0xf2 / 255)
-    static let softGreen = Color(red: 0xa6 / 255, green: 0xdd / 255, blue: 0xc0 / 255)
-    static let softAmber = Color(red: 0xf4 / 255, green: 0xd3 / 255, blue: 0x9b / 255)
-
-    /// Fondo del contenuto: carta leggermente fredda in chiaro, blu notte in scuro.
+    /// Fondo del contenuto: carta calda in chiaro, grafite calda in scuro.
     static let canvas = Color(nsColor: NSColor(name: "BrandCanvas") { a in
         a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 0x12 / 255, green: 0x16 / 255, blue: 0x24 / 255, alpha: 1)
-            : NSColor(srgbRed: 0xf7 / 255, green: 0xf8 / 255, blue: 0xfc / 255, alpha: 1)
+            ? NSColor(srgbRed: 0x1f / 255, green: 0x1e / 255, blue: 0x1c / 255, alpha: 1)
+            : NSColor(srgbRed: 0xf8 / 255, green: 0xf5 / 255, blue: 0xef / 255, alpha: 1)
+    })
+
+    /// Velo caldo delle barre laterali sopra il vetro di sistema: un tono appena più scuro del fondo.
+    static let sidebarTint = Color(nsColor: NSColor(name: "BrandSidebarTint") { a in
+        a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0x19 / 255, green: 0x18 / 255, blue: 0x16 / 255, alpha: 0.85)
+            : NSColor(srgbRed: 0xf0 / 255, green: 0xeb / 255, blue: 0xe2 / 255, alpha: 0.9)
     })
 
     /// Superficie dei riquadri (composer, card, verdetto) sopra il fondo.
     static let surface = Color(nsColor: NSColor(name: "BrandSurface") { a in
         a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 0x1b / 255, green: 0x21 / 255, blue: 0x33 / 255, alpha: 1)
-            : .white
+            ? NSColor(srgbRed: 0x2a / 255, green: 0x28 / 255, blue: 0x25 / 255, alpha: 1)
+            : NSColor(srgbRed: 0xff / 255, green: 0xfe / 255, blue: 0xfb / 255, alpha: 1)
     })
 
-    /// Fondo della riga selezionata (barra laterale, elenchi): accento del marchio, tenue.
+    /// Fondo della riga selezionata (barra laterale, elenchi): marrone caldo tenue, intonato al fondo.
     static let selection = Color(nsColor: NSColor(name: "BrandSelection") { a in
         a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 0x9d / 255, green: 0xbb / 255, blue: 0xec / 255, alpha: 0.22)
-            : NSColor(srgbRed: 0x52 / 255, green: 0x7e / 255, blue: 0xcc / 255, alpha: 0.13)
+            ? NSColor(srgbRed: 0xe8 / 255, green: 0xd8 / 255, blue: 0xc4 / 255, alpha: 0.14)
+            : NSColor(srgbRed: 0x6b / 255, green: 0x4a / 255, blue: 0x2b / 255, alpha: 0.12)
     })
 
     /// Testo della chat e della barra laterale: nero al 90% (#000000e6), bianco al 90% nello scuro.
@@ -131,8 +133,8 @@ enum Brand {
     /// Fondo tenue del verdetto: superficie appena tinta dell'accento.
     static let verdictSurface = Color(nsColor: NSColor(name: "BrandVerdictSurface") { a in
         a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 0x1e / 255, green: 0x26 / 255, blue: 0x3d / 255, alpha: 1)
-            : NSColor(srgbRed: 0xfb / 255, green: 0xfc / 255, blue: 1, alpha: 1)
+            ? NSColor(srgbRed: 0x2e / 255, green: 0x2b / 255, blue: 0x27 / 255, alpha: 1)
+            : NSColor(srgbRed: 0xfd / 255, green: 0xfb / 255, blue: 0xf6 / 255, alpha: 1)
     })
 
     // Raggi comuni (pt).
@@ -144,7 +146,7 @@ enum Brand {
     static let hairline = Color(nsColor: NSColor(name: "BrandHairline") { a in
         a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? NSColor(white: 1, alpha: 0.10)
-            : NSColor(srgbRed: 0x14 / 255, green: 0x1b / 255, blue: 0x2e / 255, alpha: 0.10)
+            : NSColor(srgbRed: 0x2b / 255, green: 0x22 / 255, blue: 0x14 / 255, alpha: 0.10)
     })
 }
 
@@ -171,20 +173,19 @@ struct CouncilLogo: View {
     }
 }
 
-/// Sfondo dell'app: tinta del marchio con tre aloni molto tenui nei colori del logo.
+/// Sfondo dell'app: carta calda con due aloni molto tenui, argilla e ambra.
 /// Statico (nessuna animazione) e senza vetro: resta nel livello del contenuto.
 struct BrandBackground: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        let o = scheme == .dark ? 0.16 : 0.10
+        let o = scheme == .dark ? 0.07 : 0.08
         GeometryReader { g in
             let r = max(g.size.width, g.size.height)
             ZStack {
                 Brand.canvas
-                RadialGradient(colors: [Brand.softBlue.opacity(o), .clear], center: UnitPoint(x: 0.85, y: 0), startRadius: 0, endRadius: r * 0.6)
-                RadialGradient(colors: [Brand.softGreen.opacity(o * 0.8), .clear], center: UnitPoint(x: 0, y: 1), startRadius: 0, endRadius: r * 0.5)
-                RadialGradient(colors: [Brand.softAmber.opacity(o * 0.7), .clear], center: UnitPoint(x: 1, y: 1), startRadius: 0, endRadius: r * 0.4)
+                RadialGradient(colors: [Brand.clay.opacity(o), .clear], center: UnitPoint(x: 0.85, y: 0), startRadius: 0, endRadius: r * 0.6)
+                RadialGradient(colors: [Brand.amberWarm.opacity(o * 0.8), .clear], center: UnitPoint(x: 0, y: 1), startRadius: 0, endRadius: r * 0.5)
             }
         }
         .ignoresSafeArea()

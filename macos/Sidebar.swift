@@ -13,7 +13,6 @@ struct DebateSummary: Decodable, Identifiable, Equatable {
     let created_at: String
     /// Ultima attività (una domanda di seguito la aggiorna); assente con motori vecchi.
     let updated_at: String?
-    let parent_id: Int?
     /// Affidabilità del verdetto ("alta", "media", "bassa"); assente con motori vecchi.
     let confidence: String?
     var displayTitle: String { debateTitle(title, question: question) }
@@ -102,45 +101,6 @@ final class SidebarModel: ObservableObject {
             reload()
         }
     }
-
-    // Raggruppamento per data, come in Note e Mail.
-    private static let parser: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone(identifier: "UTC")
-        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        return f
-    }()
-
-    private static let monthFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = AppLanguage.locale
-        f.dateFormat = "LLLL yyyy"
-        return f
-    }()
-
-    static func date(_ s: String) -> Date? { parser.date(from: s) }
-
-    var groups: [(title: String, items: [DebateSummary])] {
-        let cal = Calendar.current
-        let today = cal.startOfDay(for: .now)
-        var order: [String] = []
-        var map: [String: [DebateSummary]] = [:]
-        for d in items {
-            let date = Self.date(d.activity) ?? .distantPast
-            let days = cal.dateComponents([.day], from: cal.startOfDay(for: date), to: today).day ?? .max
-            let title: String
-            if days <= 0 { title = L("Oggi") }
-            else if days == 1 { title = L("Ieri") }
-            else if days < 7 { title = L("Ultimi 7 giorni") }
-            else if days < 30 { title = L("Ultimi 30 giorni") }
-            else if date == .distantPast { title = L("Precedenti") }
-            else { title = Self.monthFormatter.string(from: date) }
-            if map[title] == nil { order.append(title) }
-            map[title, default: []].append(d)
-        }
-        return order.map { ($0, map[$0]!) }
-    }
 }
 
 struct SidebarView: View {
@@ -163,34 +123,28 @@ struct SidebarView: View {
                 model.selected = id
                 if let id { model.onOpen?(id) }
             })) {
-                ForEach(model.groups, id: \.title) { group in
-                    Section {
-                        ForEach(group.items) { d in
-                            DebateRow(debate: d, selected: model.selected == d.id) { model.requestDelete(d.id) }
-                                .tag(d.id)
-                                // Selezione nel colore del marchio al posto dell'accento di sistema.
-                                .listRowBackground(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(model.selected == d.id ? Brand.selection
-                                              : hovered == d.id ? Brand.hover : .clear)
-                                        .padding(.horizontal, 10)
-                                )
-                                .background(SystemHighlightRemover())
-                                .onHover { inside in
-                                    if inside { hovered = d.id } else if hovered == d.id { hovered = nil }
-                                }
-                                // Solo le azioni più probabili, distruttive in fondo, niente scorciatoie.
-                                .contextMenu {
-                                    if d.status == "done" {
-                                        Button("Esporta come Markdown…") { model.onExport?(d.id) }
-                                        Divider()
-                                    }
-                                    Button("Elimina", role: .destructive) { model.requestDelete(d.id) }
-                                }
+                ForEach(model.items) { d in
+                    DebateRow(debate: d, selected: model.selected == d.id) { model.requestDelete(d.id) }
+                        .tag(d.id)
+                        // Selezione nel colore del marchio al posto dell'accento di sistema.
+                        .listRowBackground(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(model.selected == d.id ? Brand.selection
+                                      : hovered == d.id ? Brand.hover : .clear)
+                                .padding(.horizontal, 10)
+                        )
+                        .background(SystemHighlightRemover(selected: model.selected == d.id))
+                        .onHover { inside in
+                            if inside { hovered = d.id } else if hovered == d.id { hovered = nil }
                         }
-                    } header: {
-                        SidebarSectionHeader(title: group.title)
-                    }
+                        // Solo le azioni più probabili, distruttive in fondo, niente scorciatoie.
+                        .contextMenu {
+                            if d.status == "done" {
+                                Button("Esporta come Markdown…") { model.onExport?(d.id) }
+                                Divider()
+                            }
+                            Button("Elimina", role: .destructive) { model.requestDelete(d.id) }
+                        }
                 }
             }
             .listStyle(.sidebar)
@@ -275,7 +229,7 @@ struct SidebarEmptyState: View {
     }
 }
 
-/// Intestazione di gruppo delle barre laterali ("Oggi", "Preferenze"): 12 pt, nero al 60%, come Claude.
+/// Intestazione di gruppo delle barre laterali ("Preferenze", "Consiglio"): 12 pt, nero al 60%, come Claude.
 struct SidebarSectionHeader: View {
     let title: String
 
@@ -342,7 +296,7 @@ struct SidebarActionRow: View {
 }
 
 /// Riga della cronologia: titolo su una riga, senza orario (scelta dell'utente); sotto, solo se serve,
-/// lo stato in testo ("In corso", "Non riuscito", "Approfondimento").
+/// lo stato in testo ("In corso", "Non riuscito").
 /// Al passaggio del mouse compare il pulsante ✕ (scorciatoia, non l'unico modo).
 struct DebateRow: View {
     let debate: DebateSummary
@@ -350,7 +304,7 @@ struct DebateRow: View {
     let onDelete: () -> Void
     @State private var hovering = false
 
-    /// Seconda riga facoltativa: stato non ordinario ed eventuale "Approfondimento".
+    /// Seconda riga facoltativa: stato non ordinario.
     private var detail: String {
         var parts: [String] = []
         switch debate.status {
@@ -360,7 +314,6 @@ struct DebateRow: View {
         case "interrupted": parts.append(L("Interrotto"))
         default: break
         }
-        if debate.parent_id != nil { parts.append(L("Approfondimento")) }
         // Solo l'affidabilità bassa, l'unica che chiede attenzione: la cronologia resta pulita.
         if debate.status == "done", debate.confidence == "bassa" { parts.append(L("Affidabilità bassa")) }
         return parts.joined(separator: " · ")
@@ -417,9 +370,17 @@ struct DebateRow: View {
 
 /// Toglie l'evidenziazione di sistema (accento blu) dalla tabella che contiene la riga:
 /// la selezione resta funzionante (frecce, ⌫) ma la disegna la riga nel colore del marchio.
+/// `selected` fa ripetere il controllo a ogni cambio di selezione: senza gruppi nella lista la riga
+/// può entrare nella finestra prima della tabella e il primo clic tornava blu.
 struct SystemHighlightRemover: NSViewRepresentable {
+    var selected = false
+
     func makeNSView(context: Context) -> NSView { Finder() }
-    func updateNSView(_ v: NSView, context: Context) {}
+    func updateNSView(_ v: NSView, context: Context) {
+        guard let f = v as? Finder else { return }
+        f.removeHighlight()
+        DispatchQueue.main.async { [weak f] in f?.removeHighlight() }
+    }
 
     final class Finder: NSView {
         override func viewDidMoveToWindow() {
@@ -435,10 +396,20 @@ struct SystemHighlightRemover: NSViewRepresentable {
             removeHighlight()
         }
 
-        private func removeHighlight() {
+        func removeHighlight() {
             var v: NSView? = superview
-            while let cur = v, !(cur is NSTableView) { v = cur.superview }
-            if let t = v as? NSTableView, t.selectionHighlightStyle != .none { t.selectionHighlightStyle = .none }
+            while let cur = v, !(cur is NSTableView) {
+                // Ogni riga copia lo stile della tabella quando nasce: la prima della lista nasce
+                // prima che lo si cambi sulla tabella e restava blu.
+                if let row = cur as? NSTableRowView, row.selectionHighlightStyle != .none { row.selectionHighlightStyle = .none }
+                v = cur.superview
+            }
+            if let t = v as? NSTableView {
+                if t.selectionHighlightStyle != .none { t.selectionHighlightStyle = .none }
+                t.enumerateAvailableRowViews { row, _ in
+                    if row.selectionHighlightStyle != .none { row.selectionHighlightStyle = .none }
+                }
+            }
         }
     }
 }

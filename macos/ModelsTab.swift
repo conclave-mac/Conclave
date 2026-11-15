@@ -690,8 +690,8 @@ struct ModelsTab: View {
                         .fixedSize()
                 }
             }
-            DisclosureGroup(f.items.count == 1 ? L("Mostra il modello") : String(format: L("Mostra i %d modelli"), f.items.count),
-                            isExpanded: Binding(
+            WideDisclosure(title: f.items.count == 1 ? L("Mostra il modello") : String(format: L("Mostra i %d modelli"), f.items.count),
+                           isExpanded: Binding(
                 get: { ui.modelsExpanded.contains("\(model.provider)/\(f.id)") },
                 set: { on in
                     let k = "\(model.provider)/\(f.id)"

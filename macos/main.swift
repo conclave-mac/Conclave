@@ -439,7 +439,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         sidebar.onExport = { [weak self] id in self?.exportDiscussion(id) }
         sidebar.onNew = { [weak self] in self?.newDebate(nil) }
         sidebar.onSettings = { [weak self] in self?.openSettings(nil) }
-        sidebarItem = NSSplitViewItem(sidebarWithViewController: NSHostingController(rootView: SidebarView(model: sidebar)))
+        sidebarItem = NSSplitViewItem(sidebarWithViewController: NSHostingController(rootView: SidebarView(model: sidebar).background(Brand.sidebarTint.ignoresSafeArea())))
         sidebarItem.minimumThickness = 220
         sidebarItem.maximumThickness = 380
         sidebarItem.canCollapse = true

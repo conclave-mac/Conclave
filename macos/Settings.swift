@@ -687,6 +687,25 @@ struct GeneralPage: View {
 
 /// Riga di un provider, come gli account in Impostazioni di Sistema: nome, cosa sblocca e stato a parole;
 /// il pulsante a destra apre sotto i tre passi per aggiungere o cambiare la chiave.
+/// Sezione richiudibile che si apre cliccando anche il titolo, non solo la freccetta
+/// (il `DisclosureGroup` di sistema su macOS reagisce solo al triangolo).
+struct WideDisclosure<Content: View>: View {
+    let title: String
+    @Binding var isExpanded: Bool
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded, content: content) {
+            Button { withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() } } label: {
+                Text(title)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
 struct ProviderKeyRow: View {
     let guide: ProviderGuide
     /// Aperta finché l'utente non sceglie (la prima chiave consigliata che manca, per partire subito).
@@ -696,6 +715,7 @@ struct ProviderKeyRow: View {
 
     private var expanded: Bool { ui.guideOpen[guide.id] ?? openByDefault }
     private var showKey: Bool { ui.shownKeys.contains(guide.id) }
+    @State private var detailsOpen = false
     private var test: TestState { model.tests[guide.id] ?? .idle }
     private var hasKey: Bool { model.hasKey(guide.id) }
 
@@ -801,7 +821,7 @@ struct ProviderKeyRow: View {
                     if test != .idle { TestResultView(state: test) }
                 }
             }
-            DisclosureGroup("Istruzioni dettagliate") {
+            WideDisclosure(title: L("Istruzioni dettagliate"), isExpanded: $detailsOpen) {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(guide.steps.enumerated()), id: \.offset) { i, step in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -1044,7 +1064,7 @@ struct SettingsSidebar: View {
                                             .fill(nav.tab == t ? Brand.selection : hovered == t ? Brand.hover : .clear)
                                             .padding(.horizontal, 10)
                                     )
-                                    .background(SystemHighlightRemover())
+                                    .background(SystemHighlightRemover(selected: nav.tab == t))
                                     .onHover { inside in
                                         if inside { hovered = t } else if hovered == t { hovered = nil }
                                     }
@@ -1111,7 +1131,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // comunque delle modifiche non salvate nell'altra.
         let close: () -> Void = { [weak self] in self?.window?.performClose(nil) }
 
-        let sidebarVC = NSHostingController(rootView: SettingsSidebar(nav: nav).rebuildOnAppearanceChange())
+        let sidebarVC = NSHostingController(rootView: SettingsSidebar(nav: nav).background(Brand.sidebarTint.ignoresSafeArea()).rebuildOnAppearanceChange())
         let detailVC = NSHostingController(rootView: SettingsDetail(nav: nav, keys: model, models: models, ui: ui, close: close).rebuildOnAppearanceChange())
         // Solo il vincolo di dimensione massima: con [] la vista SwiftUI resta fuori da Auto Layout
         // e alla prima apertura gli interruttori comparivano senza pomello; con il predefinito
