@@ -269,8 +269,8 @@
 "Ogni modello legge le risposte anonime degli altri e ne indica errori e punti deboli." = "Each model reads the others' anonymous answers and points out errors and weak spots.";
 "Ogni modello risponde alla domanda da solo, senza vedere le risposte degli altri." = "Each model answers the question on its own, without seeing the others' answers.";
 "Ogni modello rivede la propria risposta tenendo conto delle critiche ricevute." = "Each model revises its own answer based on the critiques it received.";
-"Ogni voce è una famiglia di modelli. Con “Automatico” l'app usa la variante migliore che risponde e tiene le altre come riserva. “Partecipa di default” la preseleziona nelle nuove discussioni." = "Each voice is a family of models. With “Automatic” the app uses the best variant that responds and keeps the others as fallbacks. “Takes part by default” preselects it in new discussions.";
-"Partecipa di default" = "Takes part by default";
+"Ogni voce è una famiglia di modelli. Con “Automatico” l'app usa la variante migliore che risponde e tiene le altre come riserva. “Preselezionata” la include nelle nuove discussioni." = "Each voice is a family of models. With “Automatic” the app uses the best variant that responds and keeps the others as fallbacks. “Preselected” includes it in new discussions.";
+"Preselezionata" = "Preselected";
 "Partecipano" = "Participants";
 "Partecipanti" = "Participants";
 "Per avere GPT gratis non serve questa chiave: GPT-OSS, il modello open di OpenAI, è disponibile gratis con Groq, Cerebras o OpenRouter." = "You don’t need this key to use GPT for free: GPT-OSS, OpenAI’s open model, is available for free with Groq, Cerebras or OpenRouter.";
@@ -521,3 +521,4 @@
 "Round %d — %@" = "Round %d — %@";
 "valore troppo lungo" = "value too long";
 "carattere non ammesso" = "character not allowed";
+"Prova %@" = "Test %@";

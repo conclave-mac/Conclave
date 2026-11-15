@@ -2,6 +2,7 @@
 // Informazioni) e a destra la pagina scelta, con sezioni e righe etichetta / controllo.
 
 import AppKit
+import Combine
 import SwiftUI
 
 // MARK: - Guide dei provider
@@ -450,7 +451,7 @@ struct SettingsHairline: View {
     }
 }
 
-/// Pagina delle Impostazioni: titolo grande e sezioni una sotto l'altra, il contenuto scorre.
+/// Pagina delle Impostazioni: sezioni una sotto l'altra, il contenuto scorre; il titolo è quello della finestra.
 struct SettingsPage<Content: View>: View {
     let title: String
     @ViewBuilder var content: Content
@@ -462,10 +463,8 @@ struct SettingsPage<Content: View>: View {
 
     var body: some View {
         ScrollView {
+            // Il titolo della pagina sta nella barra della finestra (SettingsWindowController): qui non si ripete.
             VStack(alignment: .leading, spacing: 32) {
-                Text(title)
-                    .font(Brand.Fonts.pageTitle)
-                    .accessibilityAddTraits(.isHeader)
                 content
             }
             .padding(.horizontal, 32)
@@ -477,6 +476,8 @@ struct SettingsPage<Content: View>: View {
             .foregroundStyle(Brand.text)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(title)
     }
 }
 
@@ -559,7 +560,13 @@ struct SettingsRow<Control: View>: View {
             .frame(minWidth: 140, alignment: .leading)
             .layoutPriority(1)
             Spacer(minLength: 16)
-            control
+            // Con la spiegazione sotto, colonna dei controlli di larghezza minima fissa: il testo va a capo
+            // allo stesso punto in tutte le righe (interruttore, menu e pulsanti hanno larghezze diverse).
+            if detail != nil {
+                control.frame(minWidth: 150, alignment: .trailing)
+            } else {
+                control
+            }
         }
     }
 }
@@ -725,9 +732,11 @@ struct ProviderSection: View {
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 13, design: .monospaced))
                     .frame(minWidth: 200, maxWidth: 260)
+                    // Spento senza chiave come "Verifica": i due pulsanti hanno lo stesso peso visivo.
                     Button(showKey ? L("Nascondi") : L("Mostra")) { showKey.toggle() }
                         .help(showKey ? L("Nascondi la chiave") : L("Mostra la chiave per controllarla"))
                         .fixedSize()
+                        .disabled(!showKey && !model.hasKey(guide.id))
                     Button("Verifica") { model.test(guide.id) }
                         .fixedSize()
                         .help("Prova la chiave con una richiesta vera ai modelli del consiglio")
@@ -857,9 +866,9 @@ struct AboutPage: View {
 
             SettingsSection(L("Collegamenti")) {
                 SettingsRow(L("Progetto"), detail: L("Codice sorgente e novità")) {
-                    Link(destination: projectURL) {
-                        Label("Apri su GitHub", systemImage: "arrow.up.right.square")
-                    }
+                    // Pulsante come "Mostra nel Finder": stessa forma per entrambe le azioni della sezione.
+                    Button("Apri su GitHub") { NSWorkspace.shared.open(projectURL) }
+                        .help(projectURL.absoluteString)
                 }
                 SettingsRow(L("Cartella dati"), detail: L("Scelta dei modelli e cronologia delle discussioni")) {
                     Button("Mostra nel Finder") {
@@ -1016,6 +1025,7 @@ private let settingsSidebarWidth: CGFloat = 200
 @MainActor
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
+    private var titleObserver: AnyCancellable?
     private let nav = SettingsNav()
     private let ui = SettingsPageState()
     let model = SettingsModel()
@@ -1054,7 +1064,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let w = NSWindow(contentRect: NSRect(origin: .zero, size: settingsWindowSize),
                          styleMask: [.titled, .closable, .fullSizeContentView],
                          backing: .buffered, defer: false)
-        w.title = L("Impostazioni")
+        // Come Impostazioni di Sistema: il titolo della finestra è il pannello aperto (anche nel menu Finestra).
+        w.title = nav.tab.title
+        titleObserver = nav.$tab.sink { [weak w] t in w?.title = t.title }
         w.delegate = self
         // Sfondo di marchio sotto tutta la finestra, come nella finestra principale.
         let root = NSViewController()

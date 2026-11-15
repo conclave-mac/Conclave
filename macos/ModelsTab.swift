@@ -291,11 +291,11 @@ final class ModelsModel: ObservableObject {
 private func statusSymbol(_ s: String?) -> (String, Color) {
     switch s {
     case "ok": return ("checkmark.circle.fill", Brand.success)
-    case "checking": return ("clock", .secondary)
+    case "checking": return ("clock", Brand.secondaryText)
     case "busy": return ("hourglass", Brand.warning)
-    case "nokey": return ("key", .secondary)
+    case "nokey": return ("key", Brand.secondaryText)
     case "down", "quota", "gone", "auth", "error": return ("xmark.circle.fill", Brand.danger)
-    default: return ("circle.dashed", .secondary)
+    default: return ("circle.dashed", Brand.secondaryText)
     }
 }
 
@@ -372,7 +372,7 @@ struct Badge: View {
         switch kind {
         case .free: return ("gift", Brand.success)
         case .paid: return ("creditcard", Brand.warning)
-        case .unknown: return ("questionmark.circle", .secondary)
+        case .unknown: return ("questionmark.circle", Brand.secondaryText)
         case .recommended: return ("star.fill", Brand.accent)
         }
     }
@@ -384,6 +384,8 @@ struct Badge: View {
             Image(systemName: symbol.0).foregroundStyle(symbol.1).imageScale(.small)
         }
         .font(Brand.Fonts.smallMedium)
+        // Testo pieno anche dentro contesti in grigio (titolo di sezione): contrasto sul fondo tenue.
+        .foregroundStyle(Brand.text)
         .padding(.horizontal, 7).padding(.vertical, 2)
         .background(.fill.tertiary, in: Capsule())
         .fixedSize()
@@ -491,7 +493,7 @@ struct ModelsTab: View {
     // MARK: Voci del consiglio
 
     private var councilSection: some View {
-        SettingsSection(L("Voci del consiglio"), footer: L("Ogni voce è una famiglia di modelli. Con “Automatico” l'app usa la variante migliore che risponde e tiene le altre come riserva. “Partecipa di default” la preseleziona nelle nuove discussioni.")) {
+        SettingsSection(L("Voci del consiglio"), footer: L("Ogni voce è una famiglia di modelli. Con “Automatico” l'app usa la variante migliore che risponde e tiene le altre come riserva. “Preselezionata” la include nelle nuove discussioni.")) {
             ForEach(model.selection.models) { m in voiceRow(m) }
 
             HStack(spacing: 8) {
@@ -530,7 +532,7 @@ struct ModelsTab: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(m.label).font(Brand.Fonts.section).lineLimit(1)
+                    Text(m.label).font(Brand.Fonts.bodyMedium).lineLimit(1)
                     Text(voiceDetail(m, h))
                         .font(Brand.Fonts.small).foregroundStyle(Brand.secondaryText).textSelection(.enabled)
                 }
@@ -551,11 +553,12 @@ struct ModelsTab: View {
                     .fixedSize()
                 modelPicker(m)
                 Spacer(minLength: 16)
-                Toggle("Partecipa di default", isOn: Binding(get: { m.default ?? false }, set: { model.setDefault(m, $0) }))
+                Toggle("Preselezionata", isOn: Binding(get: { m.default ?? false }, set: { model.setDefault(m, $0) }))
                     .toggleStyle(.checkbox)
                     .fixedSize()
                 Button("Rimuovi", role: .destructive) { model.remove(m) }
                     .help(String(format: L("Togli %@ dal consiglio"), m.label))
+                    .accessibilityLabel(String(format: L("Togli %@ dal consiglio"), m.label))
                     .fixedSize()
             }
         }
@@ -665,7 +668,7 @@ struct ModelsTab: View {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
-                        Text(f.label).font(Brand.Fonts.section).lineLimit(1)
+                        Text(f.label).font(Brand.Fonts.bodyMedium).lineLimit(1)
                         familyCost(f)
                         if f.best.recommended { Badge(kind: .recommended) }
                     }
@@ -683,6 +686,7 @@ struct ModelsTab: View {
                 } else {
                     Button("Aggiungi") { model.addFamily(f) }
                         .help(String(format: L("Aggiungi %@ come voce del consiglio"), f.label))
+                        .accessibilityLabel(String(format: L("Aggiungi %@ come voce del consiglio"), f.label))
                         .fixedSize()
                 }
             }
@@ -735,6 +739,7 @@ struct ModelsTab: View {
                     .controlSize(.small)
                     .fixedSize()
                     .help("Manda una richiesta minima per vedere se risponde con il tuo account")
+                    .accessibilityLabel(String(format: L("Prova %@"), item.name))
             }
         }
     }
