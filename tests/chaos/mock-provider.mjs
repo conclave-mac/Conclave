@@ -11,7 +11,7 @@ import { pathToFileURL } from "node:url";
 
 export const MODELS = [
   "ok-a", "ok-b", "hang", "slow", "ratelimit", "quota", "crash500",
-  "empty", "huge", "html", "flaky-critique", "length", "gone", "otpm", "leaky", "titleonly", "tpm",
+  "empty", "huge", "html", "flaky-critique", "length", "gone", "otpm", "leaky", "titleonly", "tpm", "lag",
 ];
 
 /** Modelli di Groq che supportano browser_search: elencati in /models, non membri del consiglio di prova. */
@@ -158,6 +158,13 @@ async function handle(req, res) {
       // Per provare l'interfaccia dal vivo: 3–7 s di attesa e una risposta lunga.
       const t = setTimeout(() => send(res, 200, completion(model, Array(user.includes("POSIZIONI FINALI DEI MEMBRI") ? 1 : 6).fill(okText(model, user)).join("\n\n"))),
         3000 + Math.random() * 4000);
+      res.on("close", () => clearTimeout(t));
+      return;
+    }
+    case "lag": {
+      // Sotto il tempo massimo per intervento (45 s) ma molto dopo gli altri: va fermato dalla regola
+      // del ritardatario nei round, mentre la risposta iniziale la attende.
+      const t = setTimeout(() => send(res, 200, completion(model, okText(model, user))), 40_000);
       res.on("close", () => clearTimeout(t));
       return;
     }

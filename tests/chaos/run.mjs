@@ -214,6 +214,21 @@ const SCENARIOS = {
     return [true, `done in ${r.secs.toFixed(0)} s, ok-a e ok-b in tutte le fasi, hang escluso`, r.secs];
   },
 
+  // Ritardatario: la risposta iniziale lo aspetta (40 s < 45 s); nel round, quando gli altri hanno finito,
+  // ha ancora al massimo 30 s dall'inizio del round, poi salta il round senza uscire dal dibattito.
+  async lag() {
+    const max = 180;
+    const r = await debate("lag", ["ok-a", "ok-b", "lag"], 1, "ok-a", max * 1000);
+    const bad = expectDone(r, max);
+    if (bad) return [false, `${bad} dopo ${r.secs.toFixed(0)} s`, r.secs];
+    if (!okMsgs(r.state, "lag", "initial").length) return [false, "risposta iniziale di lag non attesa", r.secs];
+    const crit = msgs(r.state, "lag", "critique")[0];
+    if (!crit?.error?.includes("troppo lento")) return [false, `critica di lag: ${crit?.error ?? crit?.content?.slice(0, 40) ?? "assente"}`, r.secs];
+    // Iniziale ~40 s + round ~30 s + giudice: ben sotto i 40 + 45 s che servirebbero senza la regola.
+    if (r.secs > 80) return [false, `troppo lungo: ${r.secs.toFixed(0)} s`, r.secs];
+    return [true, `done in ${r.secs.toFixed(0)} s, lag atteso nella risposta iniziale e fermato nel round`, r.secs];
+  },
+
   // Se resta un solo modello i round si saltano, ma va detto (nota salvata nella cronologia).
   async b2() {
     const max = 120;
@@ -1496,7 +1511,7 @@ const DESCR = {
   p: "chiavi e token mai visibili", q: "permessi dei file dati",
   n: "voce resta sulla riserva", o: "limite token in uscita (OTPM)",
   m: "voce di famiglia: riserva se il principale si blocca",
-  a: "ok-a + ok-b, 3 round", b: "ok-a + ok-b + hang, 2 round", b2: "un solo modello rimasto", c: "flaky-critique rientra", d: "ratelimit con attesa",
+  a: "ok-a + ok-b, 3 round", b: "ok-a + ok-b + hang, 2 round", lag: "ritardatario fermato nel round", b2: "un solo modello rimasto", c: "flaky-critique rientra", d: "ratelimit con attesa",
   e: "giudice hang → riserva", f: "html non alterato", g: "empty/crash500/gone esclusi", h: "huge 300k caratteri",
   i: "annullamento", j: "input non validi", l: "quota + length (extra)", k: "motore vivo alla fine",
   aa: "ricerca sul web via Groq finto", ab: "ricerca senza ricercatore disponibile", ac: "ricercatore bloccato",

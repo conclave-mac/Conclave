@@ -57,8 +57,13 @@ interface Debater {
 
 const LETTERS = "ABCDEFGHIJKL";
 
-/** Tempo massimo per un intervento (riserve e attese comprese): oltre, il modello salta il round. */
-const PARTICIPANT_BUDGET_MS = 75_000;
+/** Tempo massimo per un intervento (riserve e attese comprese): oltre, il modello salta il round.
+ *  45 s dai tempi reali (nov 2026): Claude CLI al massimo 26 s, Nemotron oltre 50 s solo in 1 caso su 5. */
+const PARTICIPANT_BUDGET_MS = 45_000;
+/** Nei round: quando hanno risposto tutti tranne uno, l'ultimo ha ancora al massimo 15 s, ma mai meno di
+ *  30 s dall'inizio del round (la Claude CLI impiega ~24 s anche quando gli altri finiscono in 3). */
+const STRAGGLER_GRACE_MS = 15_000;
+const STRAGGLER_FLOOR_MS = 30_000;
 const JUDGE_BUDGET_MS = 150_000;
 /** Tempo massimo della ricerca sul web (oltre: errore non fatale). Abbreviabile solo per le prove. */
 const RESEARCH_BUDGET_MS = (() => {
@@ -214,26 +219,44 @@ export async function runDebate(
   async function phase(name: Phase, build: (d: Debater) => string, store: (d: Debater, t: string) => void,
                        keep?: (d: Debater) => void) {
     emit({ type: "phase", phase: name });
+    const started = Date.now();
+    const running = alive().map((d) => ({ d, late: new AbortController() }));
+    let pending = running.length;
+    let lateTimer: ReturnType<typeof setTimeout> | undefined;
+    const finished = () => {
+      pending--;
+      // Solo nei round (`keep`): chi resta indietro salta il round e rientra nel successivo. Nella risposta
+      // iniziale chi fallisce esce dal dibattito, quindi lì vale solo il tempo massimo.
+      if (!keep || pending !== 1 || running.length < 2) return;
+      const wait = Math.max(STRAGGLER_GRACE_MS, STRAGGLER_FLOOR_MS - (Date.now() - started));
+      lateTimer = setTimeout(() => running.forEach((x) => x.late.abort()), wait);
+    };
     await Promise.all(
-      alive().map(async (d) => {
+      running.map(async ({ d, late }) => {
         try {
           // Ogni intervento ha un tempo massimo: un modello bloccato non ferma il dibattito.
-          const r = await withBudget(PARTICIPANT_BUDGET_MS, signal, (budget) => chat(d.def, { system: P.SYSTEM_DEBATER, user: build(d), signal: budget }));
+          const r = await withBudget(PARTICIPANT_BUDGET_MS, AbortSignal.any([signal, late.signal]),
+            (budget) => chat(d.def, { system: P.SYSTEM_DEBATER, user: build(d), signal: budget }));
           store(d, r.text);
           save(ctx, { model_id: d.def.id, phase: name, content: r.text, error: null, ms: r.ms, model_used: r.model, replaced: r.replaced });
           emit({ type: "message", phase: name, modelId: d.def.id, text: r.text, ms: r.ms, model: r.model, replaced: r.replaced });
         } catch (e) {
           if (signal.aborted) return;
-          const raw = (e as Error).message;
+          const raw = late.signal.aborted
+            ? `troppo lento: gli altri avevano finito, nessuna risposta entro ${Math.round((Date.now() - started) / 1000)} s`
+            : (e as Error).message;
           // Senza risposta iniziale il modello esce; nei round successivi salta il round,
           // mantiene la posizione precedente e rientra nel round dopo.
           let error = raw;
           if (keep) { keep(d); error = `ha saltato questo round (${raw})`; } else d.alive = false;
           save(ctx, { model_id: d.def.id, phase: name, content: null, error, ms: null });
           emit({ type: "error", phase: name, modelId: d.def.id, error });
+        } finally {
+          finished();
         }
       }),
     );
+    clearTimeout(lateTimer);
     if (signal.aborted) throw new Error("cancelled");
   }
 
