@@ -419,9 +419,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         NSLayoutConstraint.activate([
             content.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
-            // Il contenuto parte sotto la toolbar: il testo che scorre non finisce sotto il titolo;
-            // la toolbar mostra lo sfondo della finestra (Brand.canvas), dello stesso colore.
-            content.topAnchor.constraint(equalTo: safe.topAnchor),
+            // Il contenuto arriva fin sotto la toolbar (come Note e Mail): SwiftUI lo dispone nella safe area
+            // e il testo che scorre passa sotto i pulsanti su vetro.
+            content.topAnchor.constraint(equalTo: container.topAnchor),
             content.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             loading.centerXAnchor.constraint(equalTo: safe.centerXAnchor),
             loading.centerYAnchor.constraint(equalTo: safe.centerYAnchor),
@@ -461,6 +461,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         window.title = L("Nuova discussione")
         // La domanda è già il titolo della pagina: nella toolbar non si ripete (resta per il menu Finestra).
         window.titleVisibility = .hidden
+        // Su macOS 26 la barra del titolo sopra il contenuto dipinge il fondo di sistema (bianco):
+        // trasparente, sotto la toolbar si vede lo sfondo di marchio senza stacchi.
+        window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 760, height: 520)
         // Sfondo coerente con il marchio (si vede durante l'avvio e dietro la toolbar);

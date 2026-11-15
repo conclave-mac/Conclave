@@ -716,6 +716,9 @@ struct DebateView: View {
                             .frame(height: 28)
                     }
                 }
+                // Sopra, la maschera arriva fin sotto la toolbar: il testo che scorre passa sotto i
+                // pulsanti con l'effetto bordo, invece di essere tagliato di netto al bordo della toolbar.
+                .ignoresSafeArea(.container, edges: .top)
             }
             // Come nella chat di Claude: un pulsante rotondo con la freccia, in basso al centro,
             // compare quando non si è in fondo (dal vivo: quando ci si è sganciati).
