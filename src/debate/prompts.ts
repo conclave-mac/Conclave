@@ -1,7 +1,11 @@
 // Prompt delle fasi del dibattito. I partecipanti si vedono solo come
 // "Risposta A/B/C": nessuno sa quale modello ha scritto cosa.
 
-const LANG = `Lingua: rispondi sempre nella stessa lingua in cui è scritta la DOMANDA (se è in inglese rispondi in inglese, se è in spagnolo in spagnolo, e così via), anche se queste istruzioni sono in italiano.`;
+// Domande brevi fatte di marchi o nomi propri («meglio columbia patagonia o northface») venivano
+// prese per inglesi: la lingua la danno le parole comuni.
+const AMBIGUOUS = `Se la domanda è breve o fatta soprattutto di nomi propri, marchi o termini tecnici inglesi, la sua lingua è quella delle parole comuni (es. «meglio columbia patagonia o northface» è in italiano).`;
+
+const LANG = `Lingua: rispondi sempre nella stessa lingua in cui è scritta la DOMANDA (se è in inglese rispondi in inglese, se è in spagnolo in spagnolo, e così via), anche se queste istruzioni sono in italiano. ${AMBIGUOUS}`;
 
 const MAX_CHARS = 4500; // tetto per testo citato: i piani gratuiti hanno limiti di token stretti
 
@@ -177,7 +181,9 @@ Una tabella Markdown con le colonne | Punto | A | B | C … | (una colonna per o
 ## Da verificare
 Affermazioni incerte o sostenute da una sola risposta, con la lettera. Se c'è la ricerca sul web, i link delle fonti.
 ## Perché questa risposta
-Motivazione breve: gli argomenti decisivi e cosa ha fatto cambiare idea (errori e disaccordi sono già nelle sezioni sul dibattito).`;
+Motivazione breve: gli argomenti decisivi e cosa ha fatto cambiare idea (errori e disaccordi sono già nelle sezioni sul dibattito).
+
+Lingua: scrivi tutto il verdetto, titoli delle sezioni compresi, nella lingua della ${m?.followup ? "NUOVA DOMANDA" : "domanda"}; nel dubbio, in quella in cui hanno scritto i membri del consiglio. Se la domanda è in italiano, i titoli restano quelli indicati sopra.`;
 }
 
 // ---- Chat continua: turni dopo il verdetto ----
@@ -243,7 +249,7 @@ export function conversationBlock(c: Conversation, full: boolean): string {
 // Il risponditore rapido non è un membro del consiglio né il suo arbitro: risponde dopo il verdetto.
 export const SYSTEM_RESPONDER = `Rispondi a una domanda di seguito, posta dopo che un consiglio di esperti AI ha discusso una domanda ed è arrivato a un verdetto.
 Regole:
-- Lingua: rispondi sempre nella stessa lingua in cui è scritta la NUOVA DOMANDA, anche se queste istruzioni o la conversazione precedente sono in un'altra lingua.
+- Lingua: rispondi sempre nella stessa lingua in cui è scritta la NUOVA DOMANDA, anche se queste istruzioni o la conversazione precedente sono in un'altra lingua. ${AMBIGUOUS.replace("la domanda", "la nuova domanda")}
 - Resta fedele a quanto emerso nel dibattito e nel verdetto. Quando la risposta va oltre ciò che il consiglio ha discusso, dillo chiaramente.
 - Sii conciso: prima la risposta diretta, poi solo l'essenziale. Niente preamboli né ripetizioni della domanda.
 - Distingui fatti verificabili, stime e opinioni. Non inventare fonti, numeri o citazioni.
