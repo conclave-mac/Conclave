@@ -522,7 +522,7 @@
 "valore troppo lungo" = "value too long";
 "carattere non ammesso" = "character not allowed";
 "Prova %@" = "Test %@";
-"Apri la pagina del download" = "Open Download Page";
+"Apri la pagina del download…" = "Open Download Page…";
 "Immagine" = "Image";
 "Errore: %@" = "Error: %@";
 "Allegato: %@, %@, %@" = "Attachment: %@, %@, %@";
@@ -535,7 +535,7 @@
 "Chiave salvata" = "Key saved";
 "Crea una chiave gratuita sul sito di %@." = "Create a free key on the %@ website.";
 "Crea una chiave sul sito di %@ (a pagamento)." = "Create a key on the %@ website (paid).";
-"Apri %@" = "Open %@";
+"Apri %@…" = "Open %@…";
 "Incolla qui la chiave." = "Paste the key here.";
 "Chiave API di %@" = "%@ API key";
 "Verifica che funzioni, poi premi “Salva e attiva” in basso." = "Check that it works, then click “Save and Activate” below.";
@@ -545,3 +545,5 @@
 "Gratuite, consigliate" = "Free, Recommended";
 "Facoltative" = "Optional";
 "Servono solo se vuoi altre voci nel consiglio." = "Only needed if you want more voices in the council.";
+"Apri su GitHub…" = "Open on GitHub…";
+"Mostra registro del motore…" = "Show Engine Log…";

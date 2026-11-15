@@ -767,7 +767,7 @@ struct ProviderKeyRow: View {
                 Button {
                     NSWorkspace.shared.open(guide.url)
                 } label: {
-                    Label(String(format: L("Apri %@"), guide.url.host() ?? guide.name), systemImage: "arrow.up.right.square")
+                    Label(String(format: L("Apri %@…"), guide.url.host() ?? guide.name), systemImage: "arrow.up.right.square")
                 }
                 .help(guide.url.absoluteString)
             }
@@ -936,7 +936,8 @@ struct AboutPage: View {
             SettingsSection(L("Collegamenti")) {
                 SettingsRow(L("Progetto"), detail: L("Codice sorgente e novità")) {
                     // Pulsante come "Mostra nel Finder": stessa forma per entrambe le azioni della sezione.
-                    Button("Apri su GitHub") { NSWorkspace.shared.open(projectURL) }
+                    // Ellissi: apre un'altra app (HIG Buttons ▸ Push buttons).
+                    Button("Apri su GitHub…") { NSWorkspace.shared.open(projectURL) }
                         .help(projectURL.absoluteString)
                 }
                 SettingsRow(L("Cartella dati"), detail: L("Scelta dei modelli e cronologia delle discussioni")) {

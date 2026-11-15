@@ -1111,7 +1111,7 @@ struct EngineStatusView: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: 440)
                 HStack(spacing: 10) {
-                    Button("Mostra registro del motore") { model.onShowLog?() }
+                    Button("Mostra registro del motore…") { model.onShowLog?() }
                     Button("Riprova") { model.onRetry?() }
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
