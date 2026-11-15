@@ -304,6 +304,9 @@ final class SettingsModel: ObservableObject {
 
     func hasKey(_ id: String) -> Bool { !(keys[id] ?? "").isEmpty }
 
+    /// Chiave cambiata rispetto a quella salvata (da salvare con "Salva e attiva").
+    func isChanged(_ id: String) -> Bool { (keys[id] ?? "") != (loadedKeys[id] ?? "") }
+
     func binding(_ id: String) -> Binding<String> {
         Binding(get: { self.keys[id] ?? "" }, set: {
             let v = $0.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -395,7 +398,7 @@ final class SettingsModel: ObservableObject {
 @MainActor
 final class SettingsPageState: ObservableObject {
     @Published var shownKeys: Set<String> = []        // provider con la chiave in chiaro
-    @Published var guideOpen: [String: Bool] = [:]    // provider → guida aperta (nil = predefinito)
+    @Published var guideOpen: [String: Bool] = [:]    // provider → passi aperti (nil = predefinito)
     @Published var loginError: String?                // pagina Generale
     @Published var keysError: String?                 // pagina Chiavi API
     @Published var modelsError: String?               // pagina Modelli
@@ -682,44 +685,93 @@ struct GeneralPage: View {
 
 // MARK: - Pagina Chiavi API
 
-struct ProviderSection: View {
+/// Riga di un provider, come gli account in Impostazioni di Sistema: nome, cosa sblocca e stato a parole;
+/// il pulsante a destra apre sotto i tre passi per aggiungere o cambiare la chiave.
+struct ProviderKeyRow: View {
     let guide: ProviderGuide
+    /// Aperta finché l'utente non sceglie (la prima chiave consigliata che manca, per partire subito).
+    let openByDefault: Bool
     @ObservedObject var model: SettingsModel
     @ObservedObject var ui: SettingsPageState
 
-    private var showKey: Bool {
-        get { ui.shownKeys.contains(guide.id) }
-        nonmutating set { if newValue { ui.shownKeys.insert(guide.id) } else { ui.shownKeys.remove(guide.id) } }
-    }
-
-    /// Guida aperta in partenza solo se manca la chiave di un provider gratuito principale;
-    /// poi vale la scelta dell'utente, che resta anche cambiando pagina.
-    private var guideOpen: Binding<Bool> {
-        Binding(get: { ui.guideOpen[guide.id] ?? (!model.hasKey(guide.id) && !guide.optional) },
-                set: { ui.guideOpen[guide.id] = $0 })
-    }
-
+    private var expanded: Bool { ui.guideOpen[guide.id] ?? openByDefault }
+    private var showKey: Bool { ui.shownKeys.contains(guide.id) }
     private var test: TestState { model.tests[guide.id] ?? .idle }
+    private var hasKey: Bool { model.hasKey(guide.id) }
 
-    /// Stato a parole accanto al titolo della sezione.
-    private var statusText: String {
-        switch test {
-        case .ok: return L("Funziona")
-        case .warn: return L("Funziona, con avvisi")
-        case .fail: return L("Non funziona")
-        case .testing: return L("Verifica in corso")
-        case .idle: return model.hasKey(guide.id) ? L("Chiave inserita") : L("Nessuna chiave")
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 8) {
+                        Text(guide.name).font(Brand.Fonts.bodyMedium)
+                        if !guide.free { Badge.cost(false) }
+                    }
+                    Text(guide.unlocks)
+                        .font(Brand.Fonts.small)
+                        .foregroundStyle(Brand.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+                Spacer(minLength: 12)
+                status.fixedSize()
+                // Larghezza minima comune: gli stati restano in colonna anche con "Fine" o "Modifica…".
+                Button {
+                    ui.guideOpen[guide.id] = !expanded
+                } label: {
+                    Text(expanded ? L("Fine") : hasKey ? L("Modifica…") : L("Aggiungi chiave…"))
+                        .frame(minWidth: 112)
+                }
+                .fixedSize()
+                .accessibilityLabel(expanded ? L("Fine") : String(format: hasKey ? L("Modifica la chiave di %@") : L("Aggiungi la chiave di %@"), guide.name))
+            }
+            if expanded {
+                editor.padding(.top, 14)
+            }
         }
     }
 
-    var body: some View {
-        SettingsSection(guide.name, footer: guide.unlocks + ". " + guide.summary) {
-            HStack(spacing: 8) {
-                Badge.cost(guide.free)
-                Text(statusText)
+    /// Stato a parole con il suo simbolo: non dipende dal solo colore.
+    @ViewBuilder private var status: some View {
+        switch test {
+        case .testing:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Verifica in corso").foregroundStyle(Brand.secondaryText)
             }
-        } content: {
-            SettingsRow(L("Chiave API")) {
+        case .ok: statusLabel(L("Funziona"), "checkmark.circle.fill", Brand.success)
+        case .warn: statusLabel(L("Funziona, con avvisi"), "exclamationmark.triangle.fill", Brand.warning)
+        case .fail: statusLabel(L("Non funziona"), "xmark.octagon.fill", Brand.danger)
+        case .idle:
+            if !hasKey { statusLabel(L("Nessuna chiave"), "circle.dashed", Brand.tertiaryText, text: Brand.tertiaryText) }
+            else if model.isChanged(guide.id) { statusLabel(L("Da salvare"), "circle.fill", Brand.accent) }
+            else { statusLabel(L("Chiave salvata"), "key.fill", Brand.secondaryText) }
+        }
+    }
+
+    private func statusLabel(_ title: String, _ symbol: String, _ tint: Color, text: Color = Brand.secondaryText) -> some View {
+        Label {
+            Text(title).foregroundStyle(text)
+        } icon: {
+            Image(systemName: symbol).foregroundStyle(tint)
+        }
+        .font(Brand.Fonts.body)
+    }
+
+    /// I tre passi, sempre nello stesso ordine: aprire il sito, incollare la chiave, verificarla.
+    private var editor: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            KeyStep(number: 1, title: guide.free
+                    ? String(format: L("Crea una chiave gratuita sul sito di %@."), guide.name)
+                    : String(format: L("Crea una chiave sul sito di %@ (a pagamento)."), guide.name)) {
+                Button {
+                    NSWorkspace.shared.open(guide.url)
+                } label: {
+                    Label(String(format: L("Apri %@"), guide.url.host() ?? guide.name), systemImage: "arrow.up.right.square")
+                }
+                .help(guide.url.absoluteString)
+            }
+            KeyStep(number: 2, title: L("Incolla qui la chiave.")) {
                 HStack(spacing: 8) {
                     Group {
                         if showKey {
@@ -731,22 +783,25 @@ struct ProviderSection: View {
                     .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 13, design: .monospaced))
-                    .frame(minWidth: 200, maxWidth: 260)
-                    // Spento senza chiave come "Verifica": i due pulsanti hanno lo stesso peso visivo.
-                    Button(showKey ? L("Nascondi") : L("Mostra")) { showKey.toggle() }
-                        .help(showKey ? L("Nascondi la chiave") : L("Mostra la chiave per controllarla"))
-                        .fixedSize()
-                        .disabled(!showKey && !model.hasKey(guide.id))
-                    Button("Verifica") { model.test(guide.id) }
-                        .fixedSize()
-                        .help("Prova la chiave con una richiesta vera ai modelli del consiglio")
-                        .disabled(!model.hasKey(guide.id) || test == .testing)
+                    .frame(maxWidth: 320)
+                    .accessibilityLabel(String(format: L("Chiave API di %@"), guide.name))
+                    Button(showKey ? L("Nascondi") : L("Mostra")) {
+                        if showKey { ui.shownKeys.remove(guide.id) } else { ui.shownKeys.insert(guide.id) }
+                    }
+                    .help(showKey ? L("Nascondi la chiave") : L("Mostra la chiave per controllarla"))
+                    .fixedSize()
+                    .disabled(!showKey && !hasKey)
                 }
             }
-
-            if test != .idle { TestResultView(state: test) }
-
-            DisclosureGroup("Come ottenere la chiave", isExpanded: guideOpen) {
+            KeyStep(number: 3, title: L("Verifica che funzioni, poi premi “Salva e attiva” in basso.")) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Button("Verifica") { model.test(guide.id) }
+                        .help("Prova la chiave con una richiesta vera ai modelli del consiglio")
+                        .disabled(!hasKey || test == .testing)
+                    if test != .idle { TestResultView(state: test) }
+                }
+            }
+            DisclosureGroup("Istruzioni dettagliate") {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(guide.steps.enumerated()), id: \.offset) { i, step in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -754,14 +809,38 @@ struct ProviderSection: View {
                             Text(step).fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    Text(guide.note)
-                        .font(Brand.Fonts.body).foregroundStyle(Brand.secondaryText)
+                    Text(guide.summary + " " + guide.note)
+                        .font(Brand.Fonts.small).foregroundStyle(Brand.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
-                    Link(destination: guide.url) {
-                        Label(String(format: L("Apri la pagina delle chiavi di %@"), guide.name), systemImage: "arrow.up.right.square")
-                    }
                 }
-                .padding(.vertical, 6)
+                .padding(.top, 6)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: Brand.Radius.card, style: .continuous).fill(Brand.hover))
+    }
+}
+
+/// Passo numerato dell'aggiunta di una chiave: numero nel cerchio, frase, controllo sotto.
+private struct KeyStep<Content: View>: View {
+    let number: Int
+    let title: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(verbatim: "\(number)")
+                .font(Brand.Fonts.smallSemibold)
+                .foregroundStyle(Brand.secondaryText)
+                .frame(width: 20, height: 20)
+                .background(Circle().strokeBorder(Brand.hairline, lineWidth: 1))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(String(format: L("Passo %d: %@"), number, title))
+                content
             }
         }
     }
@@ -771,51 +850,41 @@ struct SettingsView: View {
     @ObservedObject var model: SettingsModel
     @ObservedObject var ui: SettingsPageState
     var close: () -> Void
-    @AppStorage("SettingsShowOtherProviders") private var showOthers = false
 
     private var available: [ProviderGuide] { providerGuides.filter { model.providers[$0.id] != nil } }
     private var main: [ProviderGuide] { available.filter { !$0.optional } }
     private var others: [ProviderGuide] { available.filter(\.optional) }
+    /// La prima chiave consigliata che manca si apre da sola: si parte subito dal passo 1.
+    private var firstMissing: String? { main.first { !model.hasKey($0.id) }?.id }
 
     var body: some View {
         VStack(spacing: 0) {
             SettingsPage(L("Chiavi API")) {
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: "gift")
-                        .font(.system(size: 18))
-                        .foregroundStyle(Brand.text)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Puoi usare Conclave gratis").font(Brand.Fonts.section)
-                        Text("Claude non chiede chiavi se hai installato Claude Code con un abbonamento Claude (facoltativo). Gemini, Groq e OpenRouter danno chiavi gratuite, senza carta di credito: con queste il consiglio ha già più voci. Incolla una chiave, premi “Verifica”, poi “Salva e attiva”.")
-                            .foregroundStyle(Brand.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
+                Text("Ogni chiave aggiunge voci al consiglio. Le tre consigliate sono gratuite e non chiedono la carta di credito. Claude usa il tuo abbonamento e non ha bisogno di chiavi.")
+                    .foregroundStyle(Brand.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                SettingsSection(L("Gratuite, consigliate")) {
+                    ForEach(main) { g in
+                        ProviderKeyRow(guide: g, openByDefault: g.id == firstMissing, model: model, ui: ui)
                     }
                 }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Brand.surface, in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Brand.hairline))
-                .accessibilityElement(children: .combine)
-
-                ForEach(main) { g in ProviderSection(guide: g, model: model, ui: ui) }
 
                 if !others.isEmpty {
-                    SettingsSection(L("Altri provider"), footer: L("Facoltativi: servono solo se vuoi altre voci. OpenAI è l'unico a pagamento.")) {
-                        SettingsRow(L("Mostra altri provider"), detail: others.map(\.name).joined(separator: ", ")) {
-                            Toggle(L("Mostra altri provider"), isOn: $showOthers)
-                                .toggleStyle(.switch)
-                                .labelsHidden()
+                    SettingsSection(L("Facoltative"), footer: L("Servono solo se vuoi altre voci nel consiglio.")) {
+                        ForEach(others) { g in
+                            ProviderKeyRow(guide: g, openByDefault: false, model: model, ui: ui)
                         }
-                    }
-                    if showOthers || others.contains(where: { model.hasKey($0.id) }) {
-                        ForEach(others) { g in ProviderSection(guide: g, model: model, ui: ui) }
                     }
                 }
 
-                Text("Le chiavi restano solo su questo Mac, nel Portachiavi di macOS (voce “Conclave – API keys” in Accesso Portachiavi).")
-                    .font(Brand.Fonts.small).foregroundStyle(Brand.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+                Label {
+                    Text("Le chiavi restano solo su questo Mac, nel Portachiavi di macOS (voce “Conclave – API keys” in Accesso Portachiavi).")
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "lock")
+                }
+                .font(Brand.Fonts.small).foregroundStyle(Brand.secondaryText)
             }
 
             SettingsBar {
