@@ -631,6 +631,8 @@ struct DebateView: View {
     /// Larghezza della colonna del contenuto: decide le card per riga.
     @State private var contentWidth: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Zoom del testo (⌘+ ⌘-): le intestazioni della sintesi crescono con il testo del Markdown.
+    @AppStorage(TextZoom.key) private var zoom = 1.0
 
     init(store: CouncilStore, debate: DebateState, saveFile: @escaping (_ filename: String, _ text: String) -> Void) {
         self.store = store
@@ -666,13 +668,13 @@ struct DebateView: View {
                         .padding(.top, 16)
                     }
 
-                    if debate.isRunning { progressBar.padding(.top, 14) }
+                    if debate.isRunning { progressBar.padding(.top, 16) }
 
                     if !debate.phases.isEmpty {
-                        courseHeading.padding(.top, 28)
+                        courseHeading.padding(.top, 32)
                             .padding(.bottom, 16)
                         ForEach(Array(debate.phases.enumerated()), id: \.element.id) { i, p in
-                            phaseRows(p, number: i + 1, last: i == debate.phases.count - 1)
+                            phaseRows(p, last: i == debate.phases.count - 1)
                         }
                     }
 
@@ -774,7 +776,7 @@ struct DebateView: View {
                     .buttonStyle(.bordered)
                     .buttonBorderShape(.circle)
                     .controlSize(.large)
-                    .background(Circle().fill(.background))
+                    .background(Circle().fill(Brand.surface))
                     .shadow(color: .black.opacity(0.15), radius: 4, y: 1)
                     .help(title)
                     .accessibilityLabel(title)
@@ -966,7 +968,7 @@ struct DebateView: View {
         } else {
             switch debate.status {
             case "done": StatusBadge(text: L("Completato"), symbol: "checkmark.circle.fill", tint: Brand.olive)
-            case "cancelled": StatusBadge(text: L("Interrotto"), symbol: "stop.circle.fill", tint: .secondary)
+            case "cancelled": StatusBadge(text: L("Interrotto"), symbol: "stop.circle.fill", tint: Brand.secondaryText)
             case "interrupted": StatusBadge(text: L("Interrotto: il motore è stato riavviato"), symbol: "exclamationmark.triangle.fill", tint: Brand.warning)
             default: StatusBadge(text: L("Non riuscito"), symbol: "xmark.octagon.fill", tint: Brand.danger)
             }
@@ -983,7 +985,7 @@ struct DebateView: View {
             ProgressView(value: Double(pr.done), total: Double(pr.total)) {
                 Text(label).font(Brand.Fonts.bodyMedium)
             } currentValueLabel: {
-                Text(String(format: L("%d di %d risposte"), pr.done, pr.total)).monospacedDigit()
+                Text(String(format: L("%d di %d risposte"), pr.done, pr.total)).font(Brand.Fonts.small).foregroundStyle(Brand.secondaryText).monospacedDigit()
             }
             .progressViewStyle(.linear)
             .accessibilityValue(label + ", " + String(format: L("%d di %d risposte"), pr.done, pr.total))
@@ -1038,12 +1040,13 @@ struct DebateView: View {
     private var judgingPlaceholder: some View {
         HStack(spacing: 10) {
             ProgressView().controlSize(.small)
-            Text(L("Il giudice sta scrivendo il verdetto…"))
+            Text(L("Il giudice sta scrivendo il verdetto…")).font(Brand.Fonts.body)
                 .foregroundStyle(Brand.secondaryText)
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .surfaceBox(radius: Brand.Radius.panel, stroke: Brand.hairline)
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: Risultato: sintesi del dibattito e verdetto
@@ -1078,52 +1081,116 @@ struct DebateView: View {
             .padding(.horizontal, 18)
             .padding(.top, 14)
 
-            MarkdownView(text)
-                .frame(maxWidth: 720, alignment: .leading)
-                .padding(.horizontal, 18)
-                .padding(.top, 6)
-                .padding(.bottom, 16)
+            // I titoli interni del giudice ("## Su cosa concordano"…) diventano intestazioni di gruppo
+            // piccole e grigie, come quelle delle barre laterali: con i titoli Markdown (16 pt) erano
+            // più grandi del titolo del riquadro (15 pt) e la gerarchia era piatta.
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(Array(Self.summarySections(text).enumerated()), id: \.offset) { _, s in
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let title = s.title {
+                            Text(title)
+                                .font(zoom == 1 ? Brand.Fonts.smallSemibold : .system(size: 12 * zoom, weight: .semibold))
+                                .foregroundStyle(Brand.secondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityAddTraits(.isHeader)
+                        }
+                        if !s.body.isEmpty { MarkdownView(s.body) }
+                    }
+                }
+            }
+            .frame(maxWidth: 720, alignment: .leading)
+            .padding(.horizontal, 18)
+            .padding(.top, 10)
+            .padding(.bottom, 16)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: Brand.Radius.card, style: .continuous).fill(Brand.hover))
         .accessibilityElement(children: .contain)
     }
 
+    /// Affidabilità secondo il giudice: testo e simbolo, il colore è solo una seconda codifica.
+    @ViewBuilder private func confidenceBadge(_ confidence: String?) -> some View {
+        if let c = CouncilStore.confidenceText(confidence) {
+            StatusBadge(text: c,
+                        symbol: confidence == "alta" ? "checkmark.shield.fill"
+                            : confidence == "media" ? "exclamationmark.shield.fill" : "xmark.shield.fill",
+                        tint: confidence == "alta" ? Brand.olive : confidence == "media" ? Brand.amberWarm : Brand.rose)
+                .fixedSize()
+                .help(L("Quanto il giudice ritiene affidabile la risposta: accordo tra i modelli, solidità degli argomenti e punti da verificare."))
+        }
+    }
+
+    /// Sintesi divisa nelle sue sezioni: titolo Markdown ("## …", senza #) e testo sotto.
+    /// Le righe dentro i blocchi di codice non contano come titoli.
+    static func summarySections(_ text: String) -> [(title: String?, body: String)] {
+        var out: [(title: String?, body: String)] = []
+        var title: String?
+        var lines: [String] = []
+        var fence = false
+        func flush() {
+            let body = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if title != nil || !body.isEmpty { out.append((title, body)) }
+            lines = []
+        }
+        for line in text.components(separatedBy: "\n") {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("```") || t.hasPrefix("~~~") { fence.toggle() }
+            if !fence, t.hasPrefix("#") {
+                let hashes = t.prefix { $0 == "#" }.count
+                let rest = t.dropFirst(hashes)
+                if hashes <= 6, rest.first == " " {
+                    flush()
+                    let h = rest.trimmingCharacters(in: .whitespaces)
+                    title = h.trimmingCharacters(in: CharacterSet(charactersIn: "#* ").union(.whitespaces))
+                    continue
+                }
+            }
+            lines.append(line)
+        }
+        flush()
+        return out
+    }
+
     // MARK: Verdetto: scheda protagonista
 
     private func verdictBox(_ text: String, debate: String?, by verdictBy: String?, confidence: String?, key: String, copyText: String) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 17))
-                    .foregroundStyle(Brand.clay)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(Brand.clay.opacity(0.12)))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(L("Verdetto del consiglio"))
-                        .font(Brand.Fonts.section)
-                    if let by = verdictBy, !by.isEmpty {
-                        Text(String(format: L("Giudice: %@"), by))
-                            .font(Brand.Fonts.small)
-                            .foregroundStyle(Brand.secondaryText)
+        let seal = Image(systemName: "checkmark.seal.fill")
+            .font(.system(size: 17))
+            .foregroundStyle(Brand.clay)
+            .frame(width: 36, height: 36)
+            .background(Circle().fill(Brand.clay.opacity(0.12)))
+            .accessibilityHidden(true)
+        let heading = VStack(alignment: .leading, spacing: 1) {
+            Text(L("Verdetto del consiglio"))
+                .font(Brand.Fonts.section)
+                .foregroundStyle(Brand.text)
+            if let by = verdictBy, !by.isEmpty {
+                Text(String(format: L("Giudice: %@"), by))
+                    .font(Brand.Fonts.small)
+                    .foregroundStyle(Brand.secondaryText)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+        return VStack(alignment: .leading, spacing: 0) {
+            // A finestra stretta l'affidabilità va su una seconda riga invece di spezzare il titolo.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 12) {
+                    seal
+                    heading.fixedSize()
+                    confidenceBadge(confidence)
+                    Spacer(minLength: 8)
+                    actions(copyText, key: key)
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .center, spacing: 12) {
+                        seal
+                        heading.fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        actions(copyText, key: key)
                     }
+                    confidenceBadge(confidence).padding(.leading, 48)
                 }
-                .accessibilityElement(children: .combine)
-                .accessibilityAddTraits(.isHeader)
-
-                if let c = CouncilStore.confidenceText(confidence) {
-                    // Affidabilità secondo il giudice: testo e simbolo, il colore è solo una seconda codifica.
-                    StatusBadge(text: c,
-                                symbol: confidence == "alta" ? "checkmark.shield.fill"
-                                    : confidence == "media" ? "exclamationmark.shield.fill" : "xmark.shield.fill",
-                                tint: confidence == "alta" ? Brand.olive : confidence == "media" ? Brand.amberWarm : Brand.rose)
-                        .fixedSize()
-                        .help(L("Quanto il giudice ritiene affidabile la risposta: accordo tra i modelli, solidità degli argomenti e punti da verificare."))
-                }
-
-                Spacer(minLength: 8)
-                actions(copyText, key: key)
             }
             .padding(.horizontal, 22)
             .padding(.vertical, 14)
@@ -1201,7 +1268,7 @@ struct DebateView: View {
     /// `t`: turno di una domanda di seguito (nil = dibattito originale); le sue righe hanno
     /// identità e stato di apertura propri ("turn-<n>-…").
     @ViewBuilder
-    private func phaseRows(_ p: PhaseState, number: Int, last: Bool, in t: DebateState? = nil) -> some View {
+    private func phaseRows(_ p: PhaseState, last: Bool, in t: DebateState? = nil) -> some View {
         let d = t ?? debate
         let prefix = t.map { "turn-\($0.turn)-" } ?? ""
         let key = prefix + p.id
@@ -1217,10 +1284,10 @@ struct DebateView: View {
         let rows = open && !p.cards.isEmpty
             ? stride(from: 0, to: p.cards.count, by: cols).map { Array(p.cards[$0..<min($0 + cols, p.cards.count)]) }
             : []
-        let gap: CGFloat = last ? 0 : 22
+        let gap: CGFloat = last ? 0 : 24
 
         TimelineRow(line: !last, lineTop: 34, bottom: rows.isEmpty ? gap : 0) {
-            StepMarker(number: number, state: state, reduceMotion: reduceMotion)
+            StepMarker(phaseID: p.id, state: state, reduceMotion: reduceMotion)
         } content: {
             Button(action: toggle) {
                 // Fase chiusa e non in corso: una sola riga con il riassunto (es. "Round 2 — Revisione:
@@ -1232,7 +1299,8 @@ struct DebateView: View {
                             expanded: open, canExpand: !p.cards.isEmpty,
                             reduceMotion: reduceMotion,
                             compact: open || state == .current ? nil
-                                : (title: compactTitle(p), summary: store.phaseSummary(p, in: d)))
+                                : (title: compactTitle(p), summary: store.phaseSummary(p, in: d)),
+                            narrow: contentWidth > 0 && contentWidth < 600)
             }
             .buttonStyle(PhaseHeaderStyle())
             .disabled(p.cards.isEmpty)
@@ -1290,7 +1358,7 @@ extension DebateView {
 
         if t.isQuick {
             ForEach(Array(t.phases.enumerated()), id: \.element.id) { i, p in
-                phaseRows(p, number: i + 1, last: i == t.phases.count - 1, in: t)
+                phaseRows(p, last: i == t.phases.count - 1, in: t)
             }
             if let a = t.answer {
                 CardView(card: a, running: t.isRunning, since: t.startedAt)
@@ -1298,16 +1366,16 @@ extension DebateView {
                     .accessibilityElement(children: .contain)
                     .accessibilityLabel(String(format: L("Risposta alla domanda di seguito %d"), n))
                     .id("turn-\(n)-answer")
-                    .padding(.top, t.phases.isEmpty ? 0 : 20)
+                    .padding(.top, t.phases.isEmpty ? 0 : 24)
             } else {
                 turnStatus(t).id("turn-\(n)-status")
             }
         } else {
             // Turno del consiglio: come il dibattito originale, lo svolgimento e poi il risultato
             // (o il segnaposto mentre il giudice scrive).
-            let gap: CGFloat = t.phases.isEmpty ? 0 : 28
+            let gap: CGFloat = t.phases.isEmpty ? 0 : 32
             ForEach(Array(t.phases.enumerated()), id: \.element.id) { i, p in
-                phaseRows(p, number: i + 1, last: i == t.phases.count - 1, in: t)
+                phaseRows(p, last: i == t.phases.count - 1, in: t)
             }
             // Segnaposto e verdetto in una sola riga con un solo id (vedi il verdetto del dibattito).
             if t.verdict != nil || (t.isRunning && t.judging) {
@@ -1337,6 +1405,7 @@ extension DebateView {
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .font(Brand.Fonts.body)
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .surfaceBox(radius: 12)
@@ -1450,44 +1519,25 @@ private struct FollowupBar: View {
                             overHelp: String(format: L("La domanda supera il limite di %@ caratteri: accorciala per inviarla."),
                                              formatCount(AttachmentLimits.maxQuestion)))
 
-            HStack(spacing: 12) {
-                AttachButton(count: store.followupAttachments.count) { store.addAttachments($0, to: .followup) }
-                    .disabled(running)
-
-                Toggle(isOn: Binding(get: { store.followupWebSearch && store.webSearchAvailable },
-                                     set: { store.followupWebSearch = $0 })) {
-                    Label(L("Cerca sul web"), systemImage: "globe")
+            // Finestra stretta: "Chi risponde" su una riga propria, così nessuna etichetta si tronca.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    attachButton
+                    webToggle
+                    Spacer(minLength: 8)
+                    responderMenu
+                    sendControl
                 }
-                .toggleStyle(.switch)
-                .controlSize(.mini)
-                .fixedSize()
-                .disabled(!store.webSearchAvailable || running)
-                .help(webHelp)
-                .accessibilityLabel(L("Cerca sul web"))
-                .accessibilityHint(webHelp)
-
-                Spacer(minLength: 8)
-
-                responderMenu
-
-                if running {
-                    Button { Task { await store.cancel() } } label: {
-                        ZStack {
-                            Circle().fill(Brand.text)
-                            Image(systemName: "stop.fill")
-                                .font(.system(size: 12))
-                                .foregroundStyle(Color(nsColor: .textBackgroundColor))
-                        }
-                        .frame(width: 32, height: 32)
-                        .contentShape(Circle())
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 12) {
+                        responderMenu
+                        Spacer(minLength: 0)
                     }
-                    .buttonStyle(.plain)
-                    .help(L("Interrompi (⌘.). Le risposte già arrivate restano salvate."))
-                    .accessibilityLabel(L("Interrompi"))
-                } else {
-                    SendButton(enabled: store.canSendFollowup, busy: store.sendingFollowup, label: L("Invia la domanda"),
-                               help: store.followupProblem(debate) ?? L("Invia la domanda (⌘↩)")) {
-                        Task { await store.sendFollowup() }
+                    HStack(spacing: 12) {
+                        attachButton
+                        webToggle
+                        Spacer(minLength: 8)
+                        sendControl
                     }
                 }
             }
@@ -1498,6 +1548,49 @@ private struct FollowupBar: View {
         .padding(.top, 14)
         .padding(.bottom, 10)
         .composerSurface(focused: focused, dropTargeted: $dropTargeted) { store.addAttachments($0, to: .followup) }
+    }
+
+    private var attachButton: some View {
+        AttachButton(count: store.followupAttachments.count) { store.addAttachments($0, to: .followup) }
+            .disabled(running)
+    }
+
+    private var webToggle: some View {
+        Toggle(isOn: Binding(get: { store.followupWebSearch && store.webSearchAvailable },
+                             set: { store.followupWebSearch = $0 })) {
+            Label(L("Cerca sul web"), systemImage: "globe")
+        }
+        .toggleStyle(.switch)
+        .controlSize(.mini)
+        .fixedSize()
+        .disabled(!store.webSearchAvailable || running)
+        .help(webHelp)
+        .accessibilityLabel(L("Cerca sul web"))
+        .accessibilityHint(webHelp)
+    }
+
+    /// Invio, oppure il pulsante per fermare mentre arriva la risposta.
+    @ViewBuilder private var sendControl: some View {
+        if running {
+            Button { Task { await store.cancel() } } label: {
+                ZStack {
+                    Circle().fill(Brand.text)
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Brand.surface)
+                }
+                .frame(width: 32, height: 32)
+                .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help(L("Interrompi (⌘.). Le risposte già arrivate restano salvate."))
+            .accessibilityLabel(L("Interrompi"))
+        } else {
+            SendButton(enabled: store.canSendFollowup, busy: store.sendingFollowup, label: L("Invia la domanda"),
+                       help: store.followupProblem(debate) ?? L("Invia la domanda (⌘↩)")) {
+                Task { await store.sendFollowup() }
+            }
+        }
     }
 
     private var webHelp: String {
@@ -1548,7 +1641,7 @@ private struct FollowupBar: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
-            .background(Capsule().fill(Color.primary.opacity(0.05)))
+            .background(Capsule().fill(Brand.hover))
             .overlay(Capsule().strokeBorder(Brand.hairline, lineWidth: 1))
             .contentShape(Capsule())
         }
@@ -1602,7 +1695,7 @@ private struct PhaseHeaderStyle: ButtonStyle {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .background(RoundedRectangle(cornerRadius: Brand.Radius.card, style: .continuous)
-                    .fill(Color.primary.opacity(!enabled ? 0 : configuration.isPressed ? 0.08 : hover ? 0.04 : 0)))
+                    .fill(Brand.hover.opacity(!enabled ? 0 : configuration.isPressed ? 1 : hover ? 0.7 : 0)))
                 // Il fondo sporge solo verso il percorso, a destra resta allineato alle card.
                 .padding(.leading, -10)
                 .contentShape(Rectangle())
@@ -1611,33 +1704,44 @@ private struct PhaseHeaderStyle: ButtonStyle {
     }
 }
 
-/// Numero della tappa nel percorso: pieno se completata, contornato se in corso, tenue se saltata.
+/// Tappa nel percorso: pieno se completata, contornato se in corso, tenue se saltata.
+/// Nei round il numero è quello del round ("2" accanto a "Round 2 di 3"); preparazione e apertura,
+/// che non sono round, hanno un simbolo: un numero progressivo diverso da quello del round confondeva.
 private struct StepMarker: View {
-    let number: Int
+    let phaseID: String
     let state: StepState
     let reduceMotion: Bool
+
+    @ViewBuilder private var mark: some View {
+        if let i = CouncilStore.phaseOrder.firstIndex(of: phaseID), i > 0 {
+            Text(verbatim: "\(i)")
+        } else {
+            Image(systemName: phaseID == "research" ? "globe" : "text.bubble")
+                .font(.system(size: 12))
+        }
+    }
 
     var body: some View {
         ZStack {
             switch state {
             case .done:
                 Circle().fill(Brand.clay.opacity(0.14))
-                Text("\(number)").foregroundStyle(Brand.clay)
+                mark.foregroundStyle(Brand.clay)
             case .current:
                 Circle().fill(Brand.surface)
                 Circle().strokeBorder(Brand.clay, lineWidth: 1.5)
-                Text("\(number)").foregroundStyle(Brand.clay)
+                mark.foregroundStyle(Brand.clay)
             case .stopped:
                 Circle().fill(Brand.surface)
                 Circle().strokeBorder(Brand.warning, lineWidth: 1.5)
-                Text("\(number)").foregroundStyle(Brand.warning)
+                mark.foregroundStyle(Brand.warning)
             default:
                 Circle().fill(Brand.surface)
                 Circle().strokeBorder(Brand.hairline, lineWidth: 1.5)
-                Text("\(number)").foregroundStyle(Brand.secondaryText)
+                mark.foregroundStyle(Brand.secondaryText)
             }
         }
-        .font(.system(size: 13).monospacedDigit())
+        .font(Brand.Fonts.smallMedium.monospacedDigit())
         .frame(width: 28, height: 28)
         .padding(.top, 6)
         .symbolEffect(.pulse, isActive: state == .current && !reduceMotion)
@@ -1657,6 +1761,8 @@ private struct PhaseHeader: View {
     let reduceMotion: Bool
     /// Fase compressa: titolo e riassunto in una riga al posto dell'intestazione completa.
     var compact: (title: String, summary: String?)? = nil
+    /// Colonna del contenuto stretta (finestra piccola): stato e conteggi vanno sotto il nome.
+    var narrow = false
 
     var body: some View {
         if let compact { compactBody(compact) } else { fullBody }
@@ -1701,9 +1807,22 @@ private struct PhaseHeader: View {
                     .font(Brand.Fonts.small)
                     .foregroundStyle(Brand.secondaryText)
                 Text(name)
-                    .font(Brand.Fonts.body)
+                    .font(Brand.Fonts.bodyMedium)
                     .foregroundStyle(Brand.text)
                     .fixedSize(horizontal: false, vertical: true)
+                // Colonna stretta: stato e conteggi sotto il nome, così la descrizione non resta in pochi punti.
+                if narrow {
+                    FlowLayout(spacing: 10, lineSpacing: 4) {
+                        PhaseStatusLabel(state: state, reduceMotion: reduceMotion)
+                        if let meta {
+                            Text(meta)
+                                .font(Brand.Fonts.small)
+                                .foregroundStyle(Brand.secondaryText)
+                                .monospacedDigit()
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
                 if let description {
                     Text(description)
                         .font(Brand.Fonts.body)
@@ -1720,17 +1839,19 @@ private struct PhaseHeader: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .multilineTextAlignment(.leading)
 
-            VStack(alignment: .trailing, spacing: 4) {
-                PhaseStatusLabel(state: state, reduceMotion: reduceMotion)
-                if let meta {
-                    Text(meta)
-                        .font(Brand.Fonts.small)
-                        .foregroundStyle(Brand.secondaryText)
-                        .monospacedDigit()
+            if !narrow {
+                VStack(alignment: .trailing, spacing: 4) {
+                    PhaseStatusLabel(state: state, reduceMotion: reduceMotion)
+                    if let meta {
+                        Text(meta)
+                            .font(Brand.Fonts.small)
+                            .foregroundStyle(Brand.secondaryText)
+                            .monospacedDigit()
+                    }
                 }
+                .fixedSize()
+                .padding(.top, 2)
             }
-            .fixedSize()
-            .padding(.top, 2)
 
             if canExpand {
                 Image(systemName: "chevron.right")
@@ -1819,10 +1940,10 @@ private struct ParticipantTag: View {
     var body: some View {
         HStack(spacing: 5) {
             Text(letter)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Brand.participant(letter))
-                .frame(width: 16, height: 16)
-                .background(Circle().fill(Brand.participant(letter).opacity(0.16)))
+                .font(Brand.Fonts.smallMedium)
+                .foregroundStyle(Brand.text)
+                .frame(width: 17, height: 17)
+                .background(Circle().fill(Brand.participant(letter).opacity(0.24)))
             Text(label)
                 .font(Brand.Fonts.small)
                 .foregroundStyle(Brand.secondaryText)
@@ -1831,7 +1952,7 @@ private struct ParticipantTag: View {
         .padding(.leading, 3)
         .padding(.trailing, 8)
         .frame(height: 22)
-        .background(Capsule().fill(Color.primary.opacity(0.04)))
+        .background(Capsule().fill(Brand.hover.opacity(0.7)))
         .overlay(Capsule().strokeBorder(Brand.hairline, lineWidth: 1))
     }
 }
@@ -2014,12 +2135,12 @@ private struct CardView: View {
                     Text(String(format: L("Ha risposto %@ al posto di %@, che non ha risposto in tempo."), card.usedModel ?? L("un modello di riserva"), r))
                         .fixedSize(horizontal: false, vertical: true)
                 } icon: {
-                    Image(systemName: "arrow.triangle.2.circlepath")
+                    Image(systemName: "arrow.triangle.2.circlepath").foregroundStyle(Brand.secondaryText)
                 }
                 .font(Brand.Fonts.small)
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.fill.quaternary))
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Brand.hover))
             }
 
             if let text = card.text {
@@ -2079,6 +2200,9 @@ private struct CardView: View {
                     .foregroundStyle(Brand.secondaryText)
             }
         }
+        // Corpo e colore del marchio anche per i testi senza un carattere proprio (attesa, fermato, titolo).
+        .font(Brand.Fonts.body)
+        .foregroundStyle(Brand.text)
         .padding(14)
         // maxHeight: nella griglia le card della stessa riga hanno la stessa altezza.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
