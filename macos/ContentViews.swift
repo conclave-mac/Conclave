@@ -363,76 +363,105 @@ struct ComposerView: View {
 
     // MARK: Opzioni sotto il riquadro: menu leggeri e stima
 
+    /// Finestra larga: tutto su una riga. Più stretta: la stima va sotto, poi anche l'interruttore.
+    /// I controlli tengono sempre la loro larghezza: le etichette non si troncano né si spezzano.
     private var optionsRow: some View {
-        HStack(spacing: 14) {
-            Menu {
-                Picker("Round", selection: $store.rounds) {
-                    ForEach([0, 1, 2, 3], id: \.self) { r in
-                        Text(verbatim: CouncilStore.roundsTitles[r] ?? "\(r)").tag(r)
-                    }
-                }
-                .pickerStyle(.inline)
-                .labelsHidden()
-            } label: {
-                Label(CouncilStore.roundsLabel(store.rounds), systemImage: "arrow.triangle.2.circlepath")
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 14) {
+                roundsMenu; judgeMenu; webToggle
+                Spacer(minLength: 8)
+                estimate
             }
-            .tint(Brand.text)  // menu neutri come in Claude, non nell'accento
-            .help(L("Velocità: quanti round di critica tra i modelli prima del verdetto"))
-            .accessibilityLabel(L("Round"))
-
-            Menu {
-                Picker("Giudice", selection: judgeBinding) {
-                    Section("Abbonamento Claude") {
-                        ForEach(store.claudeModels, id: \.self) { m in
-                            Text(verbatim: "Claude \(m.capitalized)").tag("claude:\(m)")
-                        }
-                    }
-                    let others = store.voices.filter { !$0.isClaude }
-                    if !others.isEmpty {
-                        Section("Altri modelli") {
-                            ForEach(others) { v in Text(v.label).tag("voice:\(v.id)") }
-                        }
-                    }
-                }
-                .pickerStyle(.inline)
-                .labelsHidden()
-            } label: {
-                Label(String(format: L("Giudice: %@"), store.judgeLabel), systemImage: "checkmark.seal")
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 14) { roundsMenu; judgeMenu; webToggle }
+                estimate
             }
-            .tint(Brand.text)  // menu neutri come in Claude, non nell'accento
-            .help(L("Chi emette il verdetto"))
-            .accessibilityLabel(L("Giudice"))
-
-            Toggle(isOn: $store.webSearch) {
-                Label(L("Cerca sul web"), systemImage: "globe")
-            }
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .disabled(!store.webSearchAvailable)
-            .help(store.webSearchHelp)
-            .accessibilityLabel(L("Cerca sul web"))
-            .accessibilityHint(store.webSearchHelp)
-
-            Spacer(minLength: 8)
-
-            if store.canEstimate {
-                Label(String(format: L("%d chiamate + 1 verdetto"), store.estimatedCalls)
-                        + (store.estimatedTime.map { " · " + $0 } ?? ""),
-                      systemImage: "arrow.left.arrow.right")
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .help(store.hint)
-                    .accessibilityLabel(store.hint)
-                    .contentTransition(.numericText())
-                    .animation(.snappy(duration: 0.2), value: store.estimatedCalls)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 14) { roundsMenu; judgeMenu }
+                webToggle
+                estimate
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .menuStyle(.button)
         .buttonStyle(.borderless)
         .menuIndicator(.visible)
         .font(Brand.Fonts.body)
         .foregroundStyle(Brand.secondaryText)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var roundsMenu: some View {
+        Menu {
+            Picker("Round", selection: $store.rounds) {
+                ForEach([0, 1, 2, 3], id: \.self) { r in
+                    Text(verbatim: CouncilStore.roundsTitles[r] ?? "\(r)").tag(r)
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Label(CouncilStore.roundsLabel(store.rounds), systemImage: "arrow.triangle.2.circlepath")
+        }
+        .tint(Brand.text)  // menu neutri come in Claude, non nell'accento
+        .fixedSize()
+        .help(L("Velocità: quanti round di critica tra i modelli prima del verdetto"))
+        .accessibilityLabel(L("Round"))
+    }
+
+    private var judgeMenu: some View {
+        Menu {
+            Picker("Giudice", selection: judgeBinding) {
+                Section("Abbonamento Claude") {
+                    ForEach(store.claudeModels, id: \.self) { m in
+                        Text(verbatim: "Claude \(m.capitalized)").tag("claude:\(m)")
+                    }
+                }
+                let others = store.voices.filter { !$0.isClaude }
+                if !others.isEmpty {
+                    Section("Altri modelli") {
+                        ForEach(others) { v in Text(v.label).tag("voice:\(v.id)") }
+                    }
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Label(String(format: L("Giudice: %@"), store.judgeLabel), systemImage: "checkmark.seal")
+        }
+        .tint(Brand.text)  // menu neutri come in Claude, non nell'accento
+        .fixedSize()
+        .help(L("Chi emette il verdetto"))
+        .accessibilityLabel(L("Giudice"))
+    }
+
+    private var webToggle: some View {
+        // Senza modelli che cercano sul web l'interruttore resta spento (la scelta salvata non cambia).
+        Toggle(isOn: Binding(get: { store.webSearch && store.webSearchAvailable }, set: { store.webSearch = $0 })) {
+            Label(L("Cerca sul web"), systemImage: "globe")
+        }
+        .toggleStyle(.switch)
+        .controlSize(.mini)
+        .fixedSize()
+        .disabled(!store.webSearchAvailable)
+        .help(store.webSearchHelp)
+        .accessibilityLabel(L("Cerca sul web"))
+        .accessibilityHint(store.webSearchHelp)
+    }
+
+    @ViewBuilder private var estimate: some View {
+        if store.canEstimate {
+            Label(String(format: L("%d chiamate + 1 verdetto"), store.estimatedCalls)
+                    + (store.estimatedTime.map { " · " + $0 } ?? ""),
+                  systemImage: "arrow.left.arrow.right")
+                .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize()
+                .help(store.hint)
+                .accessibilityLabel(store.hint)
+                .contentTransition(.numericText())
+                .animation(.snappy(duration: 0.2), value: store.estimatedCalls)
+        }
     }
 
     @ViewBuilder private var messages: some View {
@@ -1417,11 +1446,13 @@ private struct FollowupBar: View {
                 AttachButton(count: store.followupAttachments.count) { store.addAttachments($0, to: .followup) }
                     .disabled(running)
 
-                Toggle(isOn: $store.followupWebSearch) {
+                Toggle(isOn: Binding(get: { store.followupWebSearch && store.webSearchAvailable },
+                                     set: { store.followupWebSearch = $0 })) {
                     Label(L("Cerca sul web"), systemImage: "globe")
                 }
                 .toggleStyle(.switch)
                 .controlSize(.mini)
+                .fixedSize()
                 .disabled(!store.webSearchAvailable || running)
                 .help(webHelp)
                 .accessibilityLabel(L("Cerca sul web"))
