@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-16
+
+### Added
+- Updates install from inside the app: "Install and Relaunch" downloads the release for your Mac, checks its
+  checksum and code signature, then quits and reopens Conclave on the new version. If a discussion is in
+  progress it can wait until it finishes; if anything fails, the download page is offered as before.
+- Print and export discussions as PDF from the File menu.
+
+### Fixed
+- Quitting with unsaved changes in Settings now asks whether to save them.
+- Debate phase cards use the full width, and the timeline line stops at phases still in progress.
+- Table columns in answers are sized from the real width of their words and lines.
+- The engine error page shows the end of the log as a left-aligned code block.
+
 ## [0.3.1] - 2026-11-15
 
 ### Changed
@@ -117,7 +131,8 @@ versions.
 - Data folder `0700`, files `0600`; atomic writes for settings and health cache.
 - Claude CLI run without tools, MCP servers or user settings, and stopped on shutdown.
 
-[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/peppolone/Conclave/releases/tag/v0.4.0
 [0.3.1]: https://github.com/peppolone/Conclave/releases/tag/v0.3.1
 [0.3.0]: https://github.com/peppolone/Conclave/releases/tag/v0.3.0
 [0.2.1]: https://github.com/peppolone/Conclave/releases/tag/v0.2.1
