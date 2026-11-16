@@ -1189,10 +1189,31 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     // MARK: Chiusura con modifiche non salvate
 
+    var hasUnsavedChanges: Bool { model.dirty || models.dirty }
+
     /// Come nei documenti delle app Mac: chiudendo con modifiche si chiede se salvarle.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        guard model.dirty || models.dirty else { return true }
-        guard sender.attachedSheet == nil else { return false }
+        guard hasUnsavedChanges else { return true }
+        askToSave { [weak self] ok in if ok { self?.window?.close() } }   // close() non ripassa da qui
+        return false
+    }
+
+    /// ⌘Q con modifiche non salvate: la stessa domanda della chiusura, sulla finestra delle
+    /// Impostazioni. Con `.terminateLater` sarà `reply` a dire se uscire (sempre dopo il ritorno).
+    func shouldTerminate(reply: @escaping (Bool) -> Void) -> NSApplication.TerminateReply {
+        guard hasUnsavedChanges, let w = window, w.isVisible || w.isMiniaturized else { return .terminateNow }
+        if w.isMiniaturized { w.deminiaturize(nil) }
+        w.makeKeyAndOrderFront(nil)
+        // Domanda già aperta (dalla chiusura della finestra): si annulla subito, senza `reply`
+        // sincrono che arriverebbe prima di .terminateLater e lascerebbe l'app in attesa.
+        guard w.attachedSheet == nil else { return .terminateCancel }
+        askToSave(reply)
+        return .terminateLater
+    }
+
+    /// `done(true)`: modifiche salvate o scartate; `done(false)`: annullato o salvataggio non riuscito.
+    private func askToSave(_ done: @escaping (Bool) -> Void) {
+        guard let w = window, w.attachedSheet == nil else { done(false); return }
         let alert = NSAlert()
         alert.messageText = L("Vuoi salvare le modifiche alle Impostazioni?")
         alert.informativeText = L("Se non le salvi, le modifiche andranno perse.")
@@ -1202,19 +1223,19 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         discard.keyEquivalentModifierMask = .command
         let cancel = alert.addButton(withTitle: L("Annulla"))
         cancel.keyEquivalent = "\u{1b}"
-        alert.beginSheetModal(for: sender) { [weak self] response in
+        alert.beginSheetModal(for: w) { [weak self] response in
+            guard let self else { return done(false) }
             switch response {
-            case .alertFirstButtonReturn: self?.saveAndClose()
-            case .alertSecondButtonReturn: self?.discardAndClose()
-            default: break
+            case .alertFirstButtonReturn: self.save(done)
+            case .alertSecondButtonReturn: self.discard(); done(true)
+            default: done(false)
             }
         }
-        return false
     }
 
     /// Salva le pagine con modifiche; se un salvataggio non riesce la finestra resta aperta
     /// sulla pagina dell'errore.
-    private func saveAndClose() {
+    private func save(_ done: @escaping (Bool) -> Void) {
         if model.dirty {
             do {
                 try model.save()
@@ -1222,29 +1243,29 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             } catch {
                 ui.keysError = error.localizedDescription
                 nav.tab = .keys
-                return
+                return done(false)
             }
         }
-        guard models.dirty else { window?.close(); return }
+        guard models.dirty else { return done(true) }
         ui.modelsSaving = true
         Task {
             do {
                 try await models.save()
                 ui.modelsError = nil
                 ui.modelsSaving = false
-                window?.close()
+                done(true)
             } catch {
                 ui.modelsError = error.localizedDescription
                 ui.modelsSaving = false
                 nav.tab = .models
+                done(false)
             }
         }
     }
 
-    private func discardAndClose() {
+    private func discard() {
         model.reload()
         models.dirty = false   // alla prossima apertura show() ricarica i modelli dal motore
-        window?.close()        // close() non ripassa da windowShouldClose
     }
 
     /// Il motore è (ri)partito: se le Impostazioni sono aperte si ricaricano i modelli,

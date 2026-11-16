@@ -367,6 +367,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
     /// Con l'icona nella barra dei menu l'app resta attiva anche a finestra chiusa.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { !MenuBarPreference.enabled }
 
+    // ⌘Q con modifiche non salvate nelle Impostazioni: si chiede prima, come per la chiusura della finestra.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        settings.shouldTerminate { NSApp.reply(toApplicationShouldTerminate: $0) }
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         // Anche con Impostazioni o Aiuto aperti il clic sul Dock riporta la finestra principale.
         if !window.isVisible { showMainWindow(nil) }
@@ -670,14 +675,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         file.addItem(withTitle: L("Chiudi"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         file.addItem(.separator())
         file.addItem(item(L("Esporta come Markdown…"), #selector(exportDebate(_:)), "e", [.command, .shift]))
+        file.addItem(item(L("Esporta come PDF…"), #selector(exportPDF(_:)), ""))
+        file.addItem(.separator())
+        file.addItem(item(L("Stampa…"), #selector(printDebate(_:)), "p"))
 
         let edit = NSMenu(title: L("Modifica"))
         // "Annulla" è anche il pulsante Cancel: chiave distinta per l'inglese "Undo".
         edit.addItem(withTitle: NSLocalizedString("menu.undo", value: "Annulla", comment: ""), action: Selector(("undo:")), keyEquivalent: "z")
         edit.addItem(withTitle: L("Ripristina"), action: Selector(("redo:")), keyEquivalent: "Z")
-        file.addItem(item(L("Esporta come PDF…"), #selector(exportPDF(_:)), ""))
-        file.addItem(.separator())
-        file.addItem(item(L("Stampa…"), #selector(printDebate(_:)), "p"))
         edit.addItem(.separator())
         edit.addItem(withTitle: L("Taglia"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         edit.addItem(withTitle: L("Copia"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
@@ -912,11 +917,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         saveMarkdown(filename: e.filename, text: e.text)
     }
 
-    @objc func reload(_ sender: Any?) {
-        Task { await store.reloadModels() }
-        sidebar.reload()
-        if let id = store.current?.id { Task { await store.open(id) } }
-    }
     @objc func printDebate(_ sender: Any?) {
         guard window.attachedSheet == nil, store.current?.verdict != nil, let d = store.current, let e = store.exportMarkdown() else { NSSound.beep(); return }
         DebatePrint.print(markdown: e.text, title: d.displayTitle, in: window)
@@ -940,6 +940,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         }
     }
 
+    @objc func reload(_ sender: Any?) {
+        Task { await store.reloadModels() }
+        sidebar.reload()
+        if let id = store.current?.id { Task { await store.open(id) } }
+    }
 
     @objc func openSettings(_ sender: Any?) {
         settings.show()
