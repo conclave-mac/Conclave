@@ -581,45 +581,57 @@ private struct MarkdownTableView: View {
     let baseFont: Font
     @Environment(\.textZoom) private var zoom
 
-    /// Larghezza stimata di ogni colonna in base al contenuto (min 60, max 280 pt, in proporzione
-    /// al testo ingrandito: altrimenti le parole andrebbero a capo a metà).
-    private var columnWidths: [CGFloat] {
-        (0..<header.count).map { col in
-            var longest = 0
+    /// Larghezze misurate di ogni colonna, come il layout automatico delle tabelle HTML (quello di
+    /// claude.ai): minima = la parola più larga (mai spezzata a metà), massima = la riga più lunga
+    /// (al massimo 320 pt). Misura in semibold: per titoli e grassetti non resta mai corta.
+    private var columnBounds: [(min: CGFloat, max: CGFloat)] {
+        let font = NSFont.systemFont(ofSize: Brand.bodySize * zoom, weight: .semibold)
+        let attrs: [NSAttributedString.Key: Any] = [.font: font]
+        func width(_ s: Substring) -> CGFloat { ceil((String(s) as NSString).size(withAttributes: attrs).width) }
+        let padding: CGFloat = 16 + 2   // margini della cella + arrotondamenti del testo
+        return (0..<header.count).map { col in
+            var lo: CGFloat = 0, hi: CGFloat = 0
             for row in [header] + rows where col < row.count {
-                for part in replaceHTMLLineBreaks(row[col]).split(separator: "\n") {
-                    longest = max(longest, part.count)
+                let plain = String(renderInlineMarkdown(row[col]).characters)
+                for line in plain.split(separator: "\n") {
+                    hi = max(hi, width(line))
+                    for word in line.split(whereSeparator: \.isWhitespace) { lo = max(lo, width(word)) }
                 }
             }
-            return min(max(CGFloat(longest) * 7 * zoom + 16, 60 * zoom), 280 * zoom)
+            let low = lo + padding
+            return (low, max(low, min(hi + padding, 320 * zoom)))
         }
     }
 
     /// Larghezza disponibile, misurata dal contenitore.
     @State private var available: CGFloat = 0
+    @State private var tableHeight: CGFloat = 0
 
-    /// Colonne ridotte in proporzione per stare nella larghezza disponibile (il testo va a capo);
-    /// solo se non bastano 90 pt per colonna (70 con più di 5 colonne) la tabella scorre in orizzontale.
-    private func fitted(_ widths: [CGFloat]) -> [CGFloat] {
-        let total = widths.reduce(0, +)
-        guard available > 0, total > available else { return widths }
-        // Con molte colonne (es. "Dove divergono" con 6–10 risposte) le celle si stringono di più
-        // e il testo va a capo, prima di ricorrere allo scorrimento orizzontale.
-        let minimum: CGFloat = (widths.count > 5 ? 70 : 90) * zoom
-        let free = available - minimum * CGFloat(widths.count)
-        guard free > 0 else { return widths.map { max($0 * available / total, minimum) } }
-        let extra = widths.map { max($0 - minimum, 0) }
-        let extraTotal = max(extra.reduce(0, +), 1)
-        return extra.map { (minimum + $0 * free / extraTotal).rounded(.down) }
+    /// Colonne alla larghezza piena se ci stanno; altrimenti ognuna cede in proporzione a quanto
+    /// può stringersi, mai sotto la sua parola più larga. Se nemmeno così ci stanno, la tabella
+    /// scorre in orizzontale (come `overflow-x: auto` di claude.ai).
+    private func fitted(_ bounds: [(min: CGFloat, max: CGFloat)]) -> [CGFloat] {
+        let maxTotal = bounds.reduce(0) { $0 + $1.max }
+        guard available > 0, maxTotal > available else { return bounds.map(\.max) }
+        let minTotal = bounds.reduce(0) { $0 + $1.min }
+        // Non ci sta comunque: si scorre, quindi colonne leggibili (fino a 200 pt) e non strette
+        // alla parola più larga, che darebbero intestazioni alte una parola per riga.
+        guard available > minTotal else { return bounds.map { max($0.min, min($0.max, 200 * zoom)) } }
+        let share = (available - minTotal) / (maxTotal - minTotal)
+        return bounds.map { ($0.min + ($0.max - $0.min) * share).rounded(.down) }
     }
 
     var body: some View {
-        let widths = fitted(columnWidths)
+        let widths = fitted(columnBounds)
         Group {
             if available > 0, widths.reduce(0, +) > available + 1 {
+                // Altezza dello scorrimento = quella misurata della tabella: da sola la ScrollView
+                // orizzontale non la segue e tagliava le ultime righe.
                 ScrollView(.horizontal) {
                     table(widths).padding(.bottom, 8)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { tableHeight = $0 }
                 }
+                .frame(height: tableHeight > 0 ? tableHeight : nil)
                 .scrollIndicators(.visible)
             } else {
                 table(widths)
