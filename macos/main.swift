@@ -675,6 +675,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         // "Annulla" è anche il pulsante Cancel: chiave distinta per l'inglese "Undo".
         edit.addItem(withTitle: NSLocalizedString("menu.undo", value: "Annulla", comment: ""), action: Selector(("undo:")), keyEquivalent: "z")
         edit.addItem(withTitle: L("Ripristina"), action: Selector(("redo:")), keyEquivalent: "Z")
+        file.addItem(item(L("Esporta come PDF…"), #selector(exportPDF(_:)), ""))
+        file.addItem(.separator())
+        file.addItem(item(L("Stampa…"), #selector(printDebate(_:)), "p"))
         edit.addItem(.separator())
         edit.addItem(withTitle: L("Taglia"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         edit.addItem(withTitle: L("Copia"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
@@ -827,7 +830,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
             return NSApp.keyWindow === window && (d == nil ? store.canStart : store.canSendFollowup)
         case #selector(stopDebate(_:)):
             return NSApp.keyWindow === window && d?.busy == true
-        case #selector(copyVerdict(_:)), #selector(exportDebate(_:)):
+        case #selector(copyVerdict(_:)), #selector(exportDebate(_:)), #selector(exportPDF(_:)), #selector(printDebate(_:)):
             return d?.verdict != nil
         case #selector(zoomTextIn(_:)):
             return TextZoom.canGrow
@@ -914,6 +917,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         sidebar.reload()
         if let id = store.current?.id { Task { await store.open(id) } }
     }
+    @objc func printDebate(_ sender: Any?) {
+        guard window.attachedSheet == nil, store.current?.verdict != nil, let d = store.current, let e = store.exportMarkdown() else { NSSound.beep(); return }
+        DebatePrint.print(markdown: e.text, title: d.displayTitle, in: window)
+    }
+
+    @objc func exportPDF(_ sender: Any?) {
+        guard window.attachedSheet == nil, store.current?.verdict != nil, let d = store.current, let e = store.exportMarkdown() else { NSSound.beep(); return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = String(e.filename.dropLast(3)) + ".pdf"
+        panel.allowedContentTypes = [.pdf]
+        panel.canCreateDirectories = true
+        panel.directoryURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url, let self else { return }
+            if !DebatePrint.exportPDF(markdown: e.text, title: d.displayTitle, to: url) {
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = L("Impossibile salvare il file")
+                alert.beginSheetModal(for: self.window)
+            }
+        }
+    }
+
 
     @objc func openSettings(_ sender: Any?) {
         settings.show()

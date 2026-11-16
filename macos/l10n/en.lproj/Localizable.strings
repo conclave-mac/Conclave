@@ -139,6 +139,8 @@
 "Esporta come Markdown" = "Export as Markdown";
 "Esporta come Markdown (⇧⌘E)" = "Export as Markdown (⇧⌘E)";
 "Esporta come Markdown…" = "Export as Markdown…";
+"Esporta come PDF…" = "Export as PDF…";
+"Stampa…" = "Print…";
 "Facoltativi: servono solo se vuoi altre voci. OpenAI è l'unico a pagamento." = "Optional: only needed if you want more voices. OpenAI is the only paid one.";
 "Fai una domanda: più AI ne discutono e un giudice decide." = "Ask a question: several AIs debate it and a judge decides.";
 "Fase %d di %d · %@" = "Phase %d of %d · %@";
