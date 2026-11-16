@@ -356,6 +356,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         // Primo avvio senza chiavi: apre subito le impostazioni con la guida.
         if !settings.hasAnyKey { settings.show() }
 
+        UpdateCheck.isBusy = { [weak self] in self?.store.hasRunning ?? false }
+        UpdateCheck.reportFailedInstall(over: window)
         Task { await UpdateCheck.run(manual: false, over: window) }
         updateStatusItem()
         NotificationCenter.default.addObserver(forName: MenuBarPreference.changed, object: nil, queue: .main) { [weak self] _ in
@@ -369,7 +371,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
 
     // ⌘Q con modifiche non salvate nelle Impostazioni: si chiede prima, come per la chiusura della finestra.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        settings.shouldTerminate { NSApp.reply(toApplicationShouldTerminate: $0) }
+        // Chiusura annullata: un aggiornamento pronto non deve installarsi (e riaprire l'app) alla prossima.
+        let r = settings.shouldTerminate { ok in
+            if !ok { UpdateCheck.Installer.cancelStaged() }
+            NSApp.reply(toApplicationShouldTerminate: ok)
+        }
+        if r == .terminateCancel { UpdateCheck.Installer.cancelStaged() }
+        return r
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -378,7 +386,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         return true
     }
 
-    func applicationWillTerminate(_ notification: Notification) { server.stop() }
+    func applicationWillTerminate(_ notification: Notification) {
+        server.stop()
+        UpdateCheck.Installer.launchIfStaged()
+    }
 
     func applicationDidBecomeActive(_ notification: Notification) {
         unreadVerdicts = 0
@@ -1040,6 +1051,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
     }
 
     private func restartIfPending() {
+        UpdateCheck.Installer.installIfWaiting()
         guard restartPending, !store.hasRunning else { return }
         restartServer(nil)
     }
