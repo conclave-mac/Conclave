@@ -1103,13 +1103,31 @@ struct EngineStatusView: View {
                     .font(Brand.Fonts.pageTitle)
                     .foregroundStyle(Brand.text)
                     .accessibilityAddTraits(.isHeader)
-                Text(verbatim: message)
+                // Spiegazione centrata; le righe del registro (dopo la riga vuota) come blocco di codice,
+                // allineate a sinistra: centrate uno stack trace non si legge.
+                let parts = message.components(separatedBy: "\n\n")
+                Text(verbatim: parts[0])
                     .font(Brand.Fonts.body)
                     .foregroundStyle(Brand.secondaryText)
                     .lineSpacing(3)
                     .multilineTextAlignment(.center)
                     .textSelection(.enabled)
                     .frame(maxWidth: 440)
+                let log = parts.dropFirst().joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !log.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: true) {
+                        Text(verbatim: log)
+                            .font(Brand.Fonts.small.monospaced())
+                            .foregroundStyle(Brand.secondaryText)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: true, vertical: true)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                    }
+                    .frame(maxWidth: 560, alignment: .leading)
+                    .background(Brand.hover, in: RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: Brand.Radius.control, style: .continuous).strokeBorder(Brand.hairline, lineWidth: 1))
+                }
                 HStack(spacing: 10) {
                     Button("Mostra registro del motore…") { model.onShowLog?() }
                     Button("Riprova") { model.onRetry?() }
