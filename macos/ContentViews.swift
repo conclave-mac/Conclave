@@ -1345,15 +1345,16 @@ struct DebateView: View {
             if reduceMotion { setExpanded(key, !open) }
             else { withAnimation(.easeOut(duration: 0.18)) { setExpanded(key, !open) } }
         }
-        // Card per riga: due se la colonna delle card (contenuto meno numero e spazio) è larga.
+        // Card per riga: due se il contenuto è largo.
         // La ricerca ha una sola card (il dossier): sempre a tutta larghezza.
-        let cols = p.id != "research" && contentWidth - 42 >= 652 ? 2 : 1
+        let cols = p.id != "research" && contentWidth >= 652 ? 2 : 1
         let rows = open && !p.cards.isEmpty
             ? stride(from: 0, to: p.cards.count, by: cols).map { Array(p.cards[$0..<min($0 + cols, p.cards.count)]) }
             : []
         let gap: CGFloat = last ? 0 : 24
 
-        TimelineRow(line: !last, lineTop: 34, bottom: rows.isEmpty ? gap : 0) {
+        // Fase aperta: la linea si interrompe, le card ne occupano il posto.
+        TimelineRow(line: !last && rows.isEmpty, lineTop: 34, bottom: rows.isEmpty ? gap : 0) {
             StepMarker(phaseID: p.id, state: state, reduceMotion: reduceMotion)
         } content: {
             Button(action: toggle) {
@@ -1378,13 +1379,13 @@ struct DebateView: View {
 
         // Identità che cambia con le colonne: passando da 1 a 2 card per riga la pila pigra non
         // deve riusare l'altezza misurata per la riga a card singola (il testo uscirebbe dalla card).
+        // Card senza rientro: a tutta larghezza, non nella colonna del percorso.
         ForEach(Array(rows.enumerated()), id: \.offset) { i, row in
-            TimelineRow(line: !last, lineTop: 0, top: i == 0 ? 10 : 12, bottom: i == rows.count - 1 ? gap : 0) {
-                Color.clear.frame(width: 28, height: 0)
-            } content: {
-                CardsRow(cards: row, cols: cols, running: d.isRunning, since: p.startedAt)
-            }
-            .id("\(prefix)\(p.id)-\(cols)-\(i)")
+            CardsRow(cards: row, cols: cols, running: d.isRunning, since: p.startedAt)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, i == 0 ? 10 : 12)
+                .padding(.bottom, i == rows.count - 1 ? gap : 0)
+                .id("\(prefix)\(p.id)-\(cols)-\(i)")
             .transition(.opacity)
         }
     }
