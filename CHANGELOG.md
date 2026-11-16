@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-16
+
+### Changed
+- No changes to the app: this release checks that Conclave 0.4.0 updates itself with "Install and Relaunch".
+
 ## [0.4.0] - 2026-11-16
 
 ### Added
@@ -131,7 +136,8 @@ versions.
 - Data folder `0700`, files `0600`; atomic writes for settings and health cache.
 - Claude CLI run without tools, MCP servers or user settings, and stopped on shutdown.
 
-[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/peppolone/Conclave/releases/tag/v0.4.1
 [0.4.0]: https://github.com/peppolone/Conclave/releases/tag/v0.4.0
 [0.3.1]: https://github.com/peppolone/Conclave/releases/tag/v0.3.1
 [0.3.0]: https://github.com/peppolone/Conclave/releases/tag/v0.3.0
