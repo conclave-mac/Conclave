@@ -19,7 +19,15 @@ export interface CatalogModel {
 }
 
 /** Provider con piano gratuito su tutti i modelli (con limiti di frequenza). */
-const FREE_PLAN = new Set(["groq", "mistral", "cerebras"]);
+const FREE_PLAN = new Set(["groq", "mistral"]);
+
+/**
+ * Provider senza piano gratuito permanente, solo crediti di prova (Cerebras, nov 2026: 5 $ per 30 giorni,
+ * con carta). Costo "da verificare" (null), non "a pagamento": chi ha crediti deve poter usare le voci.
+ */
+const CREDITS_NOTE: Record<string, string> = {
+  cerebras: "A crediti: 5 $ di prova per 30 giorni (serve la carta), poi a pagamento",
+};
 
 // Modelli che non servono a una discussione testuale.
 const NOT_CHAT = /(embed|tts|whisper|transcri|audio|speech|imagen|image|veo|lyria|guard|moderation|aqa|live|realtime|robotics|computer-use|search|ocr|rerank|dall-e|sora|native-audio|nano-banana|compound|playai|safeguard|orpheus|prompt-guard)/i;
@@ -78,7 +86,7 @@ async function fetchRaw(id: string, p: Provider): Promise<Omit<CatalogModel, "sc
       id: m.id, name: m.name && m.name !== m.id ? m.name : m.id, created: m.created,
       context: m.context_window ?? m.max_context_length, description: m.description,
       free: FREE_PLAN.has(id) ? true : id === "openai" ? false : null,
-      freeNote: FREE_PLAN.has(id) ? "Gratis con il piano free (limiti al minuto)" : id === "openai" ? "A pagamento (crediti OpenAI)" : undefined,
+      freeNote: FREE_PLAN.has(id) ? "Gratis con il piano free (limiti al minuto)" : id === "openai" ? "A pagamento (crediti OpenAI)" : CREDITS_NOTE[id],
     }));
 }
 
