@@ -184,7 +184,13 @@ enum KeyStore {
     private static func store(_ keys: [String: String]) throws {
         let kept = keys.filter { !$0.value.isEmpty }
         let data = try JSONSerialization.data(withJSONObject: kept, options: [.sortedKeys])
-        try Keychain.conclave.write(account, String(decoding: data, as: UTF8.self), label: "Conclave – API keys")
+        do {
+            try Keychain.conclave.write(account, String(decoding: data, as: UTF8.self), label: "Conclave – API keys")
+        } catch {
+            // La scrittura può aver cambiato la voce prima di fallire: la prossima richiesta la rilegge.
+            lock.withLock { cache = nil }
+            throw error
+        }
         lock.withLock { cache = kept }
     }
 
