@@ -358,7 +358,17 @@ struct ComposerView: View {
                     ForEach(store.voices) { v in
                         Toggle(store.displayName(v), isOn: Binding(get: { store.selected.contains(v.id) },
                                                                     set: { _ in store.toggle(v.id) }))
-                            .toggleStyle(VoiceChipStyle(problem: v.problem, provider: v.provider))
+                            .toggleStyle(VoiceChipStyle(problem: v.problem, provider: v.provider,
+                                                        role: store.selected.contains(v.id) && store.rounds >= 1 ? store.roles[v.id] : nil))
+                            .contextMenu {
+                                Picker(L("Ruolo nel round di critica"), selection: Binding(
+                                    get: { store.roles[v.id] ?? "" }, set: { store.setRole($0.isEmpty ? nil : $0, for: v.id) })) {
+                                    Text(L("Nessun ruolo")).tag("")
+                                    Text(L("Avvocato del diavolo")).tag("devil")
+                                    Text(L("Verificatore di fatti")).tag("checker")
+                                }
+                                .pickerStyle(.inline)
+                            }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -543,6 +553,15 @@ struct ComposerView: View {
 private struct VoiceChipStyle: ToggleStyle {
     let problem: String?
     let provider: String
+    var role: String? = nil
+
+    private var roleTitle: String? {
+        switch role {
+        case "devil": return L("Avvocato del diavolo")
+        case "checker": return L("Verificatore di fatti")
+        default: return nil
+        }
+    }
 
     func makeBody(configuration: Configuration) -> some View {
         let on = configuration.isOn
@@ -554,6 +573,9 @@ private struct VoiceChipStyle: ToggleStyle {
                 configuration.label
                     .lineLimit(1)
                     .truncationMode(.tail)
+                if let roleTitle {
+                    Text(verbatim: "· " + roleTitle).font(Brand.Fonts.small).lineLimit(1)
+                }
                 if problem != nil {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .symbolRenderingMode(.multicolor)
@@ -569,7 +591,7 @@ private struct VoiceChipStyle: ToggleStyle {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .help(problem.map { String(format: L("Problema: %@"), $0) } ?? provider)
+        .help(problem.map { String(format: L("Problema: %@"), $0) } ?? provider + L(" — clic destro per assegnare un ruolo"))
         .accessibilityAddTraits(on ? .isSelected : [])
         .accessibilityValue(problem.map { String(format: L("problema: %@"), $0) } ?? (on ? L("partecipa") : L("escluso")))
     }

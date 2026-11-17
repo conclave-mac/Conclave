@@ -560,3 +560,9 @@
 "Verifica…" = "Verifying…";
 "Aggiornamento pronto" = "Update ready";
 "Si installerà al termine della discussione in corso." = "It will be installed when the discussion in progress finishes.";
+
+"Ruolo nel round di critica" = "Role in the critique round";
+"Nessun ruolo" = "No role";
+"Avvocato del diavolo" = "Devil's advocate";
+"Verificatore di fatti" = "Fact-checker";
+" — clic destro per assegnare un ruolo" = " — right-click to assign a role";

@@ -259,6 +259,7 @@ final class CouncilStore: ObservableObject {
         claudeModel = defaults.string(forKey: "council.claudeModel") ?? d["claudeModel"] as? String ?? "sonnet"
         if !claudeModels.contains(claudeModel) { claudeModel = claudeModels.first ?? "sonnet" }
         webSearch = defaults.bool(forKey: "council.webSearch")
+        roles = (defaults.dictionary(forKey: "council.roles") as? [String: String] ?? [:]).filter { ["devil", "checker"].contains($0.value) }
         followupMode = defaults.string(forKey: "council.followupMode") == "council" ? "council" : "quick"
         responder = defaults.string(forKey: "council.responder") ?? ""
         followupWebSearch = defaults.bool(forKey: "council.followupWebSearch")
@@ -298,6 +299,16 @@ final class CouncilStore: ObservableObject {
     func toggle(_ id: String) {
         if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
     }
+
+    /// Ruoli speciali per voce (`devil`, `checker`), salvati come le altre preferenze del composer.
+    @Published var roles: [String: String] = [:] { didSet { persist(roles, "council.roles") } }
+
+    func setRole(_ role: String?, for id: String) {
+        if let role { roles[id] = role } else { roles.removeValue(forKey: id) }
+    }
+
+    /// Solo i ruoli delle voci che partecipano.
+    var activeRoles: [String: String] { roles.filter { selected.contains($0.key) } }
 
     var orderedSelection: [String] { voices.map(\.id).filter { selected.contains($0) } }
 
@@ -460,6 +471,7 @@ final class CouncilStore: ObservableObject {
         if !sent.body.isEmpty { body["attachments"] = sent.body }
         let web = webSearchActive
         if web { body["webSearch"] = true }
+        if rounds >= 1, !activeRoles.isEmpty { body["roles"] = activeRoles }
         do {
             let data = try await request("POST", "/api/debates", body: body)
             guard let id = json(data)["id"] as? Int else { throw URLError(.badServerResponse) }
