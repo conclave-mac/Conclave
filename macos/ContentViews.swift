@@ -795,7 +795,16 @@ struct DebateView: View {
                 // La rotella del mouse non ha fasi di scorrimento (`userScrolling` resta false): uno
                 // spostamento a contenuto invariato e fuori dagli scorrimenti del programma è comunque
                 // dell'utente. Senza, il resnap riportava in fondo a ogni scatto e la vista restava bloccata.
-                let wheel = new.height == old.height && new.offset != old.offset && Date() >= programmaticUntil
+                var wheel = new.height == old.height && new.offset != old.offset && Date() >= programmaticUntil
+                // Durante il ripristino della posizione `programmaticUntil` copre l'assestamento; uno
+                // spostamento a contenuto invariato lontano dall'ultimo salto del ripristino è la rotella
+                // dell'utente: il ripristino si ferma e lo scorrimento torna normale.
+                if reading.restoreTask != nil, new.height == old.height, new.offset != old.offset,
+                   Date().timeIntervalSince(reading.lastRestoreJump) > 0.15 {
+                    reading.cancelRestore()
+                    programmaticUntil = .distantPast
+                    wheel = true
+                }
                 if userScrolling || wheel {
                     reading.userMoved = true
                     if new.offset < old.offset - 2 { following = false; pinnedBottom = false }
@@ -980,7 +989,10 @@ struct DebateView: View {
     /// Come lo snapshot della chat di Claude: agganciati in fondo, oppure la riga che attraversa il
     /// bordo superiore e di quanto è già scorsa (`anchorKey`, `anchorOffsetPx`).
     private func saveReading() {
-        guard debate.verdict != nil || !debate.phases.isEmpty else { return }
+        // Ripristino non ancora finito: la posizione salvata resta quella di prima (le metriche e le
+        // righe registrate non dicono ancora dove si è davvero).
+        if reading.restoreTask != nil { reading.cancelRestore(); return }
+        guard debate.verdict != nil || !debate.phases.isEmpty, !reading.rows.isEmpty else { return }
         if reading.atBottom {
             ReadingPositions.save(debate.id, ReadingPositions.Snapshot(pinned: true))
             return
@@ -1018,9 +1030,11 @@ struct DebateView: View {
             }
             return
         }
-        Task { @MainActor in
+        reading.restoreTask = Task { @MainActor in
+            defer { reading.restoreTask = nil }
             // Serve la larghezza della colonna: decide le card per riga e quindi gli id delle righe.
             for _ in 0..<20 where contentWidth == 0 { try? await Task.sleep(for: .milliseconds(25)) }
+            guard !Task.isCancelled else { return }
             // Gli spostamenti dell'assestamento iniziale non sono dell'utente: non annullano il ripristino.
             programmaticUntil = Date().addingTimeInterval(2)
             reading.userMoved = false
@@ -1035,13 +1049,14 @@ struct DebateView: View {
             // si riprova finché è al suo posto (al massimo ~1,5 s), poi una verifica finale.
             var settled = 0
             for _ in 0..<15 {
-                guard !reading.userMoved else { return }
+                guard !reading.userMoved, !Task.isCancelled else { return }
                 if let r = reading.rows[target], reading.viewport > 0,
                    abs(r.minY - y * (reading.viewport - r.height)) < 2 {
                     settled += 1
                     if settled >= 2 { return }
                 } else {
                     settled = 0
+                    reading.lastRestoreJump = Date()
                     proxy.scrollTo(target, anchor: UnitPoint(x: 0, y: y))
                 }
                 try? await Task.sleep(for: .milliseconds(100))
@@ -2217,6 +2232,15 @@ final class ReadingTracker {
     var viewport: CGFloat = 0
     /// L'utente ha scorso: un ripristino ancora in corso si annulla (come `reader_scrolled` di Claude).
     var userMoved = false
+    /// Ripristino in corso (salti ripetuti finché la riga resta al suo posto) e ora dell'ultimo salto.
+    var restoreTask: Task<Void, Never>?
+    var lastRestoreJump = Date.distantPast
+
+    func cancelRestore() {
+        restoreTask?.cancel()
+        restoreTask = nil
+        userMoved = true
+    }
 }
 
 extension View {
