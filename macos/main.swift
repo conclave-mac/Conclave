@@ -411,6 +411,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
             DispatchQueue.main.async { self?.restartIfPending() }
         }
         store.onCurrentChanged = { [weak self] id in self?.sidebar.selected = id }
+        sidebar.onLoaded = { [weak self] list in self?.store.followRunning(list) }
         store.onVerdictReady = { [weak self] q in
             self?.verdictReady(title: L("Verdetto pronto"), body: q.count > 80 ? String(q.prefix(80)) + "…" : q)
         }

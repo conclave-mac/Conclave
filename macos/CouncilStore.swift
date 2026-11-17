@@ -545,6 +545,17 @@ final class CouncilStore: ObservableObject {
         }
     }
 
+    /// Discussioni "in corso" nella cronologia che l'app non sta seguendo (avviate via API): le si
+    /// segue in background, altrimenti la barra laterale le mostrerebbe in corso fino a una ricarica.
+    /// Una volta sola per discussione: se il flusso non c'è più (404) la ricarica della lista
+    /// la mostrerebbe ancora in corso e si ripartirebbe in un ciclo.
+    func followRunning(_ list: [DebateSummary]) {
+        for d in list where d.status == "running" && d.id != current?.id && followed.insert(d.id).inserted {
+            watch(d.id, title: d.displayTitle)
+        }
+    }
+    private var followed: Set<Int> = []
+
     /// true se un dibattito è in corso, mostrato o in background.
     var hasRunning: Bool { current?.busy == true || !watchers.isEmpty }
 

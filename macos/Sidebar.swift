@@ -36,6 +36,8 @@ final class SidebarModel: ObservableObject {
     var onExport: ((Int) -> Void)?
     var onNew: (() -> Void)?
     var onSettings: (() -> Void)?
+    /// Lista appena caricata: l'app segue le discussioni in corso che non ha avviato lei (API, altra finestra).
+    var onLoaded: (([DebateSummary]) -> Void)?
     /// Ricerca aperta nella barra laterale (riga "Cerca" diventata campo).
     @Published var searching = false
     /// Cresce a ogni richiesta di fuoco (⌘F o clic su "Cerca").
@@ -59,6 +61,7 @@ final class SidebarModel: ObservableObject {
                 a.element.activity != b.element.activity ? a.element.activity > b.element.activity : a.offset < b.offset
             }.map(\.element)
             loaded = true
+            onLoaded?(list)
         }
     }
 
