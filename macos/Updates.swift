@@ -330,7 +330,8 @@ enum UpdateCheck {
             if !reopen { UserDefaults.standard.set(s.version, forKey: installingKey) }
             // La copia nuova ha aspettato in una cartella temporanea (anche ore, con "Installa al termine"):
             // la sua firma si ricontrolla subito prima dello scambio, altrimenti non si installa nulla.
-            guard let requirement = designatedRequirementText() else { try? FileManager.default.removeItem(at: s.dir); return }
+            // Se il requisito non si legge, "never": lo script scarta la copia e riapre comunque l'app vecchia.
+            let requirement = designatedRequirementText() ?? "never"
             let script = """
             for _ in $(seq 300); do kill -0 "$1" 2>/dev/null || break; sleep 0.2; done
             if ! /usr/bin/codesign --verify --deep --strict --test-requirement="=$6" "$4" 2>/dev/null; then
