@@ -110,8 +110,20 @@ struct SidebarView: View {
     @ObservedObject var model: SidebarModel
     /// Riga sotto il puntatore: fondo grigio arrotondato come in Claude.
     @State private var hovered: Int?
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
+        content
+            // "Riduci trasparenza" acceso ad app aperta: SwiftUI non rilegge `Brand.sidebarTint` (messo
+            // sotto questa vista da main.swift), quindi il fondo opaco lo mette la barra stessa.
+            .background {
+                if reduceTransparency || DisplayOptions.opaque {
+                    Brand.sidebarTintOpaque.ignoresSafeArea()
+                }
+            }
+    }
+
+    private var content: some View {
         VStack(spacing: 0) {
             SidebarActionRow(title: L("Nuova discussione"), systemImage: "square.and.pencil",
                              help: L("Inizia una nuova discussione (⌘N)")) { model.onNew?() }

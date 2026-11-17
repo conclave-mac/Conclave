@@ -47,10 +47,20 @@ enum Brand {
     })
 
     /// Velo caldo delle barre laterali sopra il vetro di sistema: un tono appena più scuro del fondo.
+    /// Opaco con "Riduci trasparenza" o "Aumenta contrasto" (il vetro sotto non deve trasparire).
     static let sidebarTint = Color(nsColor: NSColor(name: "BrandSidebarTint") { a in
+        let solid = DisplayOptions.opaque
+        return a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0x19 / 255, green: 0x18 / 255, blue: 0x16 / 255, alpha: solid ? 1 : 0.85)
+            : NSColor(srgbRed: 0xf0 / 255, green: 0xeb / 255, blue: 0xe2 / 255, alpha: solid ? 1 : 0.9)
+    })
+
+    /// Lo stesso velo sempre opaco: fondo che la barra laterale si mette da sola quando "Riduci
+    /// trasparenza" si accende ad app aperta (SwiftUI non rilegge `sidebarTint` per quel cambio).
+    static let sidebarTintOpaque = Color(nsColor: NSColor(name: "BrandSidebarTintOpaque") { a in
         a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 0x19 / 255, green: 0x18 / 255, blue: 0x16 / 255, alpha: 0.85)
-            : NSColor(srgbRed: 0xf0 / 255, green: 0xeb / 255, blue: 0xe2 / 255, alpha: 0.9)
+            ? NSColor(srgbRed: 0x19 / 255, green: 0x18 / 255, blue: 0x16 / 255, alpha: 1)
+            : NSColor(srgbRed: 0xf0 / 255, green: 0xeb / 255, blue: 0xe2 / 255, alpha: 1)
     })
 
     /// Superficie dei riquadri (composer, card, verdetto) sopra il fondo.
@@ -74,11 +84,13 @@ enum Brand {
             : NSColor(white: 0, alpha: 0.9)
     })
 
-    /// Testo secondario (intestazioni delle sezioni nelle barre laterali): nero al 60%, come Claude.
+    /// Testo secondario (intestazioni delle sezioni nelle barre laterali): nero al 60%, come Claude;
+    /// al 78% con "Aumenta contrasto".
     static let secondaryText = Color(nsColor: NSColor(name: "BrandSecondaryText") { a in
-        a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(white: 1, alpha: 0.6)
-            : NSColor(white: 0, alpha: 0.6)
+        let more = DisplayOptions.increaseContrast
+        return a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 1, alpha: more ? 0.8 : 0.6)
+            : NSColor(white: 0, alpha: more ? 0.78 : 0.6)
     })
 
     /// Fondo della riga sotto il puntatore (barra laterale), grigio neutro come in Claude.
@@ -91,11 +103,13 @@ enum Brand {
     /// Corpo del testo della chat e della barra laterale.
     static let bodySize: CGFloat = 14
 
-    /// Testo terziario (orari, suggerimenti): nero al 47%, come gli orari di Claude.
+    /// Testo terziario (orari, suggerimenti): nero al 47%, come gli orari di Claude; al 66% con
+    /// "Aumenta contrasto".
     static let tertiaryText = Color(nsColor: NSColor(name: "BrandTertiaryText") { a in
-        a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(white: 1, alpha: 0.45)
-            : NSColor(white: 0, alpha: 0.47)
+        let more = DisplayOptions.increaseContrast
+        return a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 1, alpha: more ? 0.68 : 0.45)
+            : NSColor(white: 0, alpha: more ? 0.66 : 0.47)
     })
 
     /// Colori caldi della chat (argilla, ambra, oliva, rosa antico, come la palette di Claude): stati,
@@ -148,6 +162,34 @@ enum Brand {
             ? NSColor(white: 1, alpha: 0.10)
             : NSColor(srgbRed: 0x2b / 255, green: 0x22 / 255, blue: 0x14 / 255, alpha: 0.10)
     })
+}
+
+/// Opzioni di visualizzazione di Accessibilità ("Aumenta contrasto", "Riduci trasparenza"), lette
+/// dai colori del marchio a ogni risoluzione: mai una copia statica, così l'ordine tra la notifica
+/// di sistema e il ridisegno non conta. Al cambio di "Aumenta contrasto" SwiftUI rilegge da solo
+/// tutti i colori (cambia `colorSchemeContrast`); per "Riduci trasparenza" no: la barra laterale
+/// lo segue con `accessibilityReduceTransparency` (vedi `SidebarView`).
+///
+/// Prove senza toccare le impostazioni di sistema: `COUNCIL_A11Y_DISPLAY=contrast,transparency`
+/// (anche una sola delle due), valida solo insieme a `COUNCIL_DATA` come le altre variabili di prova.
+enum DisplayOptions {
+    private static let forced: Set<String> = {
+        let env = ProcessInfo.processInfo.environment
+        guard env["COUNCIL_DATA"] != nil, let v = env["COUNCIL_A11Y_DISPLAY"] else { return [] }
+        return Set(v.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
+    }()
+
+    static var increaseContrast: Bool {
+        forced.contains("contrast") || NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+    }
+
+    static var reduceTransparency: Bool {
+        forced.contains("transparency") || NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+    }
+
+    /// Velo delle barre laterali opaco: con uno qualsiasi dei due flag (macOS accende "Riduci
+    /// trasparenza" insieme ad "Aumenta contrasto").
+    static var opaque: Bool { increaseContrast || reduceTransparency }
 }
 
 /// Logo del consiglio disegnato in SwiftUI (nitido a ogni dimensione, segue chiaro/scuro).
