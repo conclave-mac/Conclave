@@ -568,3 +568,11 @@
 "Avvocato del diavolo" = "Devil's advocate";
 "Verificatore di fatti" = "Fact-checker";
 " — clic destro per assegnare un ruolo" = " — right-click to assign a role";
+"ha risposto in %@ s" = "answered in %@ s";
+"ha risposto" = "answered";
+"al posto di %@" = "instead of %@";
+"ha saltato questo round" = "skipped this round";
+"Nessuna risposta" = "No answer";
+"Fasi" = "Phases";
+"Ha risposto %@" = "%@ answered";
+"Hanno risposto: %@" = "Answered: %@";

@@ -674,6 +674,11 @@ struct DebateView: View {
     /// Larghezza della colonna del contenuto: decide le card per riga.
     @State private var contentWidth: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Spazio dei nomi delle voci del rotore "Fasi" di VoiceOver.
+    @Namespace private var rotorNS
+    /// Posizione di lettura (riga in cima e scarto): un oggetto di riferimento, scritto a ogni scatto
+    /// senza ricalcolare la vista; si salva quando si lascia la discussione.
+    @State private var reading = ReadingTracker()
 
     init(store: CouncilStore, debate: DebateState, saveFile: @escaping (_ filename: String, _ text: String) -> Void) {
         self.store = store
@@ -701,6 +706,8 @@ struct DebateView: View {
                 // card), così anche un round lungo non va misurato tutto insieme.
                 LazyVStack(alignment: .leading, spacing: 0) {
                     DebateHeader(store: store, debate: debate, questionExpanded: $questionExpanded)
+                        .readingRow("debate-header", reading)
+                        .id("debate-header")
 
                     if !debate.phases.isEmpty || debate.isRunning {
                         StepsRow(steps: steps, reduceMotion: reduceMotion) { id in
@@ -729,6 +736,8 @@ struct DebateView: View {
                     if debate.verdict != nil || (debate.isRunning && debate.judging) {
                         DebateResult(store: store, debate: debate, text: debate.verdict, verdictBy: debate.verdictBy,
                                      confidence: debate.confidence, key: "verdict", copiedKey: $copiedKey, saveFile: saveFile)
+                            .accessibilityRotorEntry(id: "phase-verdict", in: rotorNS)
+                            .readingRow("phase-verdict", reading)
                             .id("phase-verdict")
                             .padding(.top, 32)
                     }
@@ -746,6 +755,20 @@ struct DebateView: View {
                 .frame(maxWidth: 980, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
+            // Rotore "Fasi" di VoiceOver: salta tra le intestazioni delle fasi, i verdetti e le domande
+            // di seguito. La pila pigra non ha ancora costruito le righe lontane: `prepare` le porta in
+            // vista prima che VoiceOver ci si sposti, sganciando dal fondo (altrimenti il resnap
+            // riporterebbe subito giù).
+            .accessibilityRotor(L("Fasi")) {
+                ForEach(rotorTargets, id: \.id) { t in
+                    AccessibilityRotorEntry(Text(t.label), id: t.id, in: rotorNS) {
+                        following = false
+                        pinnedBottom = false
+                        programmaticUntil = Date().addingTimeInterval(0.6)
+                        proxy.scrollTo(t.id, anchor: .top)
+                    }
+                }
+            }
             // Si segue il dibattito come in una chat: a ogni nuovo round (e al verdetto) la vista
             // scende all'inizio della nuova sezione, così si legge dall'inizio. Lo stato
             // "agganciato" segue le regole della chat di Claude: basta scorrere in su di 2 punti
@@ -760,8 +783,13 @@ struct DebateView: View {
                 ScrollMetrics(offset: g.contentOffset.y,
                               distance: max(0, g.contentSize.height - g.visibleRect.maxY),
                               height: g.contentSize.height,
-                              overshoot: g.visibleRect.maxY - g.contentSize.height > 2)
+                              overshoot: g.visibleRect.maxY - g.contentSize.height > 2,
+                              viewport: g.visibleRect.height,
+                              atTop: g.contentOffset.y + g.contentInsets.top <= 1)
             } action: { old, new in
+                reading.atBottom = new.distance <= 2
+                reading.viewport = new.viewport
+                reading.atTop = new.atTop
                 let away = new.distance > 300
                 if away != awayFromBottom { awayFromBottom = away }
                 // La rotella del mouse non ha fasi di scorrimento (`userScrolling` resta false): uno
@@ -769,6 +797,7 @@ struct DebateView: View {
                 // dell'utente. Senza, il resnap riportava in fondo a ogni scatto e la vista restava bloccata.
                 let wheel = new.height == old.height && new.offset != old.offset && Date() >= programmaticUntil
                 if userScrolling || wheel {
+                    reading.userMoved = true
                     if new.offset < old.offset - 2 { following = false; pinnedBottom = false }
                     else if new.distance <= 2 { following = true; pinnedBottom = true }
                 } else if new.overshoot && !old.overshoot
@@ -845,6 +874,21 @@ struct DebateView: View {
                 FollowupBar(store: store, debate: debate)
             }
           }
+          // Posizione di lettura, come la chat di Claude: si salva lasciando la discussione (la vista si
+          // ricrea a ogni discussione) e si ripristina riaprendola.
+          .onAppear { restoreReading(proxy) }
+          .onDisappear { saveReading() }
+          // VoiceOver: un solo annuncio quando arrivano risposte, mai uno per ogni aggiornamento. Solo
+          // dal vivo: aprendo una discussione dalla cronologia le risposte ci sono già.
+          .onChange(of: answeredCards) { old, new in
+              guard debate.isRunning else { return }
+              let before = Set(old.map(\.key))
+              let names = new.filter { !before.contains($0.key) }.map(\.title)
+              guard !names.isEmpty else { return }
+              let text = names.count == 1 ? String(format: L("Ha risposto %@"), names[0])
+                  : String(format: L("Hanno risposto: %@"), names.joined(separator: ", "))
+              AccessibilityNotification.Announcement(text).post()
+          }
           // Inviata una domanda di seguito: si va in fondo e si resta agganciati mentre arriva la
           // risposta (resnap di `pinnedBottom`), come nella chat di Claude.
           .onChange(of: debate.turns.count) { old, new in
@@ -880,12 +924,158 @@ struct DebateView: View {
 
     private static let endID = "debate-end"
 
+    /// Card con una risposta arrivata, con una chiave unica nella discussione (turno, fase, voce).
+    private struct AnsweredCard: Equatable {
+        let key: String
+        let title: String
+    }
+
+    private var answeredCards: [AnsweredCard] {
+        func cards(_ phases: [PhaseState], _ prefix: String) -> [AnsweredCard] {
+            phases.flatMap { p in
+                p.cards.filter { $0.text != nil && !p.id.hasPrefix("research") }
+                    .map { AnsweredCard(key: "\(prefix)\(p.id)/\($0.id)", title: $0.title) }
+            }
+        }
+        var all = cards(debate.phases, "")
+        for t in debate.turns {
+            all += cards(t.phases, "turn-\(t.turn)-")
+            if let a = t.answer, a.text != nil { all.append(AnsweredCard(key: "turn-\(t.turn)-answer", title: a.title)) }
+        }
+        return all
+    }
+
+    /// Voci del rotore "Fasi": id della riga nella pila pigra ed etichetta letta da VoiceOver.
+    private var rotorTargets: [(id: String, label: String)] {
+        var all = debate.phases.map { (id: "phase-\($0.id)", label: rotorTitle($0)) }
+        if debate.verdict != nil || (debate.isRunning && debate.judging) { all.append((id: "phase-verdict", label: L("Verdetto"))) }
+        for t in debate.turns {
+            let n = t.turn
+            all.append((id: "turn-\(n)-question", label: String(format: L("Domanda di seguito %d"), n)))
+            all += t.phases.map { (id: "turn-\(n)-phase-\($0.id)", label: rotorTitle($0)) }
+            if t.answer != nil { all.append((id: "turn-\(n)-answer", label: String(format: L("Risposta alla domanda di seguito %d"), n))) }
+            if t.verdict != nil || (t.isRunning && t.judging) {
+                all.append((id: "turn-\(n)-verdict", label: String(format: L("Verdetto della domanda di seguito %d"), n)))
+            }
+        }
+        return all
+    }
+
+    private func rotorTitle(_ p: PhaseState) -> String {
+        p.id == "research" ? (CouncilStore.phaseNames[p.id] ?? p.title) : compactTitle(p)
+    }
+
     private struct ScrollMetrics: Equatable {
         var offset: CGFloat
         var distance: CGFloat
         var height: CGFloat
         /// La parte visibile va oltre la fine del contenuto.
         var overshoot: Bool
+        var viewport: CGFloat
+        var atTop: Bool
+    }
+
+    // MARK: Posizione di lettura
+
+    /// Come lo snapshot della chat di Claude: agganciati in fondo, oppure la riga che attraversa il
+    /// bordo superiore e di quanto è già scorsa (`anchorKey`, `anchorOffsetPx`).
+    private func saveReading() {
+        guard debate.verdict != nil || !debate.phases.isEmpty else { return }
+        if reading.atBottom {
+            ReadingPositions.save(debate.id, ReadingPositions.Snapshot(pinned: true))
+            return
+        }
+        // `scrollTo(id, anchor: y)` allinea il punto `y` della riga allo stesso punto della vista: la
+        // riga torna dov'era se y = minY / (vista − altezza). Si prende la riga più in alto per cui y
+        // cade tra 0 e 1 (quella che attraversa il bordo se è più alta della vista, altrimenti la prima
+        // tutta visibile): equivale ad `anchorKey` + `anchorOffsetPx` di Claude.
+        let v = reading.viewport
+        let anchor = reading.rows.sorted { $0.value.minY < $1.value.minY }.lazy.compactMap { row -> (String, CGFloat)? in
+            let span = v - row.value.height
+            guard abs(span) > 1 else { return row.value.minY.magnitude <= 1 ? (row.key, 0) : nil }
+            let y = row.value.minY / span
+            return (0...1).contains(y) ? (row.key, y) : nil
+        }.first
+        guard !reading.atTop, let (key, y) = anchor else {
+            ReadingPositions.forget(debate.id)   // in cima: si riapre come sempre, dall'inizio
+            return
+        }
+        ReadingPositions.save(debate.id, ReadingPositions.Snapshot(pinned: false, key: key, anchorY: y,
+                                                                    fallback: phaseRowID(of: key)))
+    }
+
+    /// Riapertura: in fondo se si era in fondo, altrimenti sulla riga salvata. Le righe di card
+    /// dipendono dalle colonne e dalle fasi aperte (in memoria): se la riga non c'è più si va
+    /// all'intestazione della sua fase. Come Claude, si rinuncia se l'utente scorre nel frattempo.
+    private func restoreReading(_ proxy: ScrollViewProxy) {
+        guard !watchedLive, let snap = ReadingPositions.load(debate.id) else { return }
+        reading.userMoved = false
+        if snap.pinned {
+            pinnedBottom = true
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(60))
+                jumpToEnd(proxy)
+            }
+            return
+        }
+        Task { @MainActor in
+            // Serve la larghezza della colonna: decide le card per riga e quindi gli id delle righe.
+            for _ in 0..<20 where contentWidth == 0 { try? await Task.sleep(for: .milliseconds(25)) }
+            // Gli spostamenti dell'assestamento iniziale non sono dell'utente: non annullano il ripristino.
+            programmaticUntil = Date().addingTimeInterval(2)
+            reading.userMoved = false
+            let ids = rowIDs()
+            guard let key = snap.key,
+                  let target = ids.contains(key) ? key : snap.fallback.flatMap({ ids.contains($0) ? $0 : nil }) else { return }
+            // Sulla riga salvata, nello stesso punto (vedi `saveReading`); sull'intestazione di ripiego, in cima.
+            let y: CGFloat = target == key ? (snap.anchorY ?? 0) : 0
+            pinnedBottom = false
+            // Come l'attesa della riga in Claude: la pila pigra stima le righe non ancora costruite e
+            // si assesta dopo il primo salto, che può non restare. Si controlla dove è finita la riga e
+            // si riprova finché è al suo posto (al massimo ~1,5 s), poi una verifica finale.
+            var settled = 0
+            for _ in 0..<15 {
+                guard !reading.userMoved else { return }
+                if let r = reading.rows[target], reading.viewport > 0,
+                   abs(r.minY - y * (reading.viewport - r.height)) < 2 {
+                    settled += 1
+                    if settled >= 2 { return }
+                } else {
+                    settled = 0
+                    proxy.scrollTo(target, anchor: UnitPoint(x: 0, y: y))
+                }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+    }
+
+    /// Id delle righe che la pila ha in questo momento (stessa logica di `phaseRows`).
+    private func rowIDs() -> Set<String> {
+        var ids: Set<String> = ["debate-header", "phase-verdict"]
+        func add(_ phases: [PhaseState], _ prefix: String, _ t: DebateState?) {
+            for p in phases {
+                ids.insert("\(prefix)phase-\(p.id)")
+                guard isExpanded(prefix + p.id, in: t), !p.cards.isEmpty else { continue }
+                let cols = p.id != "research" && contentWidth >= 652 ? 2 : 1
+                for i in 0..<((p.cards.count + cols - 1) / cols) { ids.insert("\(prefix)\(p.id)-\(cols)-\(i)") }
+            }
+        }
+        add(debate.phases, "", nil)
+        for t in debate.turns {
+            let n = t.turn
+            ids.formUnion(["turn-\(n)-question", "turn-\(n)-answer", "turn-\(n)-verdict", "turn-\(n)-status"])
+            add(t.phases, "turn-\(n)-", t)
+        }
+        return ids
+    }
+
+    /// Intestazione della fase di una riga di card ("turn-2-critique-2-0" → "turn-2-phase-critique").
+    private func phaseRowID(of key: String) -> String? {
+        let all = debate.phases.map { ("", $0.id) } + debate.turns.flatMap { t in t.phases.map { ("turn-\(t.turn)-", $0.id) } }
+        for (prefix, id) in all where key.hasPrefix(prefix + id + "-") && !key.hasPrefix(prefix + "phase-") {
+            return prefix + "phase-" + id
+        }
+        return nil
     }
 
     /// Cambia a ogni nuovo round, all'inizio del giudizio e all'arrivo del verdetto.
@@ -1049,8 +1239,10 @@ struct DebateView: View {
             .buttonStyle(PhaseHeaderStyle())
             .disabled(p.cards.isEmpty)
             .accessibilityValue(p.cards.isEmpty ? "" : open ? L("espanso") : L("compresso"))
+            .accessibilityRotorEntry(id: "\(prefix)phase-\(p.id)", in: rotorNS)
             .help(p.cards.isEmpty ? "" : open ? L("Comprimi la fase") : L("Espandi la fase"))
         }
+        .readingRow("\(prefix)phase-\(p.id)", reading)
         .id("\(prefix)phase-\(p.id)")
 
         // Identità che cambia con le colonne: passando da 1 a 2 card per riga la pila pigra non
@@ -1061,6 +1253,7 @@ struct DebateView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, i == 0 ? 10 : 12)
                 .padding(.bottom, i == rows.count - 1 ? gap : 0)
+                .readingRow("\(prefix)\(p.id)-\(cols)-\(i)", reading)
                 .id("\(prefix)\(p.id)-\(cols)-\(i)")
             .transition(.opacity)
         }
@@ -1096,6 +1289,8 @@ extension DebateView {
     fileprivate func turnRows(_ t: DebateState) -> some View {
         let n = t.turn
         TurnQuestion(turn: t)
+            .accessibilityRotorEntry(id: "turn-\(n)-question", in: rotorNS)
+            .readingRow("turn-\(n)-question", reading)
             .id("turn-\(n)-question")
             .padding(.top, 40)
             .padding(.bottom, 16)
@@ -1105,10 +1300,13 @@ extension DebateView {
                 phaseRows(p, last: i == t.phases.count - 1, in: t)
             }
             if let a = t.answer {
+                // La card è già un elemento unico per VoiceOver (chi risponde, stato, testo): il turno va
+                // nel suggerimento, un contenitore attorno ne nasconderebbe l'etichetta.
                 CardView(card: a, running: t.isRunning, since: t.startedAt)
                     .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityElement(children: .contain)
-                    .accessibilityLabel(String(format: L("Risposta alla domanda di seguito %d"), n))
+                    .accessibilityHint(String(format: L("Risposta alla domanda di seguito %d"), n))
+                    .accessibilityRotorEntry(id: "turn-\(n)-answer", in: rotorNS)
+                    .readingRow("turn-\(n)-answer", reading)
                     .id("turn-\(n)-answer")
                     .padding(.top, t.phases.isEmpty ? 0 : 24)
             } else {
@@ -1127,6 +1325,8 @@ extension DebateView {
                              confidence: t.confidence, key: "turn-\(n)", copiedKey: $copiedKey, saveFile: saveFile)
                     .accessibilityElement(children: .contain)
                     .accessibilityLabel(String(format: L("Verdetto della domanda di seguito %d"), n))
+                    .accessibilityRotorEntry(id: "turn-\(n)-verdict", in: rotorNS)
+                    .readingRow("turn-\(n)-verdict", reading)
                     .id("turn-\(n)-verdict")
                     .padding(.top, gap)
             } else if !t.isRunning || t.phases.isEmpty {
@@ -1874,7 +2074,6 @@ private struct CardView: View {
                     Text(m).font(Brand.Fonts.small).foregroundStyle(Brand.secondaryText).textSelection(.enabled)
                 }
             }
-            .accessibilityElement(children: .combine)
 
             if let r = card.replaced {
                 Label {
@@ -1953,6 +2152,12 @@ private struct CardView: View {
         // maxHeight: nella griglia le card della stessa riga hanno la stessa altezza.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .surfaceBox(radius: 12)
+        // Per VoiceOver la card è un solo elemento: chi ha risposto e lo stato nell'etichetta, il testo
+        // della risposta (o il motivo dell'errore) nel valore. Con `.combine` l'etichetta esplicita
+        // sostituisce quelle dei figli: senza il valore il testo della risposta sparirebbe.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityStatus)
+        .accessibilityValue(card.text.map(Self.spokenText) ?? card.error.map(Self.reason) ?? "")
         .contextMenu {
             if let text = card.text {
                 Button("Copia risposta") {
@@ -1963,9 +2168,102 @@ private struct CardView: View {
         }
     }
 
+    /// Chi ha risposto e come: "Gemini · Risposta B, ha risposto in 3,2 s", "…, non ha risposto".
+    private var accessibilityStatus: String {
+        var parts = [card.title]
+        if card.text != nil {
+            parts.append(card.seconds.map { String(format: L("ha risposto in %@ s"), String(format: "%.1f", locale: AppLanguage.locale, $0)) } ?? L("ha risposto"))
+            if let m = card.usedModel { parts.append(m) }
+            if let r = card.replaced { parts.append(String(format: L("al posto di %@"), r)) }
+        } else if card.error != nil {
+            parts.append(card.skipped ? L("ha saltato questo round")
+                         : card.id.hasPrefix("research") ? L("Ricerca sul web non riuscita") : L("Non ha risposto"))
+        } else {
+            parts.append(running ? L("In attesa") : L("Nessuna risposta"))
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    /// Testo della risposta da leggere ad alta voce: senza i segni del Markdown (asterischi,
+    /// cancelletti, barre delle tabelle, apici inversi) che VoiceOver pronuncerebbe.
+    static func spokenText(_ md: String) -> String {
+        md.split(separator: "\n", omittingEmptySubsequences: false).map { line -> String in
+            var l = String(line).trimmingCharacters(in: .whitespaces)
+            while l.hasPrefix("#") || l.hasPrefix(">") { l = String(l.dropFirst()).trimmingCharacters(in: .whitespaces) }
+            // Righe di separazione delle tabelle ("|---|:--:|").
+            if !l.isEmpty, l.allSatisfy({ "|-: ".contains($0) }) { return "" }
+            for mark in ["**", "__", "`", "|"] { l = l.replacingOccurrences(of: mark, with: mark == "|" ? ", " : "") }
+            return l
+        }
+        .filter { !$0.isEmpty }
+        .joined(separator: "\n")
+    }
+
     /// L'errore del motore è "ha saltato questo round (<motivo>)": si mostra solo il motivo.
     static func reason(_ err: String) -> String {
         guard err.hasPrefix("ha saltato"), let open = err.firstIndex(of: "("), err.hasSuffix(")") else { return err }
         return String(err[err.index(after: open)..<err.index(before: err.endIndex)])
+    }
+}
+
+// MARK: - Posizione di lettura
+
+/// Righe visibili della discussione con la loro posizione rispetto al bordo superiore della vista.
+/// Classe e non `@State` di valori: si aggiorna a ogni scatto senza ricalcolare la vista.
+final class ReadingTracker {
+    var rows: [String: (minY: CGFloat, height: CGFloat)] = [:]
+    var atBottom = false
+    var atTop = true
+    var viewport: CGFloat = 0
+    /// L'utente ha scorso: un ripristino ancora in corso si annulla (come `reader_scrolled` di Claude).
+    var userMoved = false
+}
+
+extension View {
+    /// Registra la posizione della riga nella vista che scorre finché la pila pigra la tiene.
+    func readingRow(_ id: String, _ tracker: ReadingTracker) -> some View {
+        onGeometryChange(for: CGRect.self) { $0.frame(in: .scrollView) } action: { f in
+            tracker.rows[id] = (f.minY, f.height)
+        }
+        .onDisappear { tracker.rows[id] = nil }
+    }
+}
+
+/// Posizioni di lettura delle discussioni in `UserDefaults`: le 32 aperte più di recente, come la
+/// cache in memoria della chat di Claude (che però si perde al riavvio).
+enum ReadingPositions {
+    struct Snapshot: Codable {
+        var pinned: Bool
+        var key: String?
+        /// Punto della riga (0 = bordo superiore, 1 = inferiore) allineato allo stesso punto della vista.
+        var anchorY: CGFloat?
+        var fallback: String?
+    }
+
+    /// Con `COUNCIL_DATA` (prove) una chiave a parte: gli id delle discussioni di prova coincidono
+    /// con quelli reali e le preferenze sono le stesse dell'app installata.
+    private static let key = ProcessInfo.processInfo.environment["COUNCIL_DATA"] == nil ? "ReadingPositions" : "ReadingPositionsTest"
+    private static let cap = 32
+
+    private static var all: [(id: Int, snap: Snapshot)] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let list = try? JSONDecoder().decode([Entry].self, from: data) else { return [] }
+        return list.map { ($0.id, $0.snap) }
+    }
+
+    private struct Entry: Codable { let id: Int; let snap: Snapshot }
+
+    private static func write(_ list: [(id: Int, snap: Snapshot)]) {
+        let entries = list.suffix(cap).map { Entry(id: $0.id, snap: $0.snap) }
+        if let data = try? JSONEncoder().encode(entries) { UserDefaults.standard.set(data, forKey: key) }
+    }
+
+    static func load(_ id: Int) -> Snapshot? { all.last { $0.id == id }?.snap }
+
+    static func save(_ id: Int, _ snap: Snapshot) { write(all.filter { $0.id != id } + [(id, snap)]) }
+
+    static func forget(_ id: Int) {
+        let list = all
+        if list.contains(where: { $0.id == id }) { write(list.filter { $0.id != id }) }
     }
 }
