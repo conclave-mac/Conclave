@@ -198,7 +198,8 @@ export async function chatOpenAI(p: Provider, models: string[], req: ChatRequest
     // Solo per questo modello e questa chiamata: le riserve successive ricevono la richiesta intera.
     let withoutImages = false; // un 400 con le immagini: si riprova una volta con il solo testo
     let tighterMax = 0;        // limite di token al minuto quasi esaurito: si chiede meno uscita
-    for (let attempt = 0; ; attempt++) {
+    // Contano solo i tentativi con attesa: i riprova immediati (senza immagini, meno token) non li consumano.
+    for (let waits = 0; ;) {
       const r: ChatRequest = {
         ...req,
         ...(withoutImages ? { images: undefined } : {}),
@@ -221,8 +222,10 @@ export async function chatOpenAI(p: Provider, models: string[], req: ChatRequest
         }
         // Limite di token in uscita al minuto (Groq: "Limit 1000, Used 608, Requested 767"): se resta
         // margine si riprova subito chiedendo meno token, invece di aspettare e saltare il round.
+        // Un'attesa breve (≤ 5 s) è meglio di una risposta più corta (Qwen scrive 500–700 token): lì si aspetta.
         const room = e instanceof HttpError && e.status === 429 ? outputRoomFrom(e.message) : 0;
-        if (room > 0 && !tighterMax) {
+        const shortWait = e instanceof HttpError && e.retryAfter > 0 && e.retryAfter <= 5;
+        if (room > 0 && !tighterMax && !shortWait) {
           tighterMax = room;
           continue;
         }
@@ -243,11 +246,13 @@ export async function chatOpenAI(p: Provider, models: string[], req: ChatRequest
           continue;
         }
         const quota = e.status === 429 && isHardLimit(e.message);
-        if (busy && !quota && attempt < maxRetries) {
+        if (busy && !quota && waits < maxRetries) {
           // Limite al minuto o sovraccarico: si aspetta quanto indica il provider (max 45 s),
           // altrimenti 5 s, 10 s… L'attesa si interrompe se scade il tempo del round.
-          const waitS = Math.min(e.retryAfter > 0 ? e.retryAfter + 0.5 : 5 * (attempt + 1), 45);
+          const waitS = Math.min(e.retryAfter > 0 ? e.retryAfter + 0.5 : 5 * (waits + 1), 45);
           await sleep(waitS * 1000, req.signal);
+          waits++;
+          tighterMax = 0; // minuto nuovo: si richiede di nuovo la lunghezza piena
           continue;
         }
         if ((busy || gone) && hasNext) break; // passa alla riserva
