@@ -52,9 +52,25 @@ export type Attachment = {
   imageData?: string;
 };
 
-/** Immagini vere di un elenco di allegati (al massimo le ultime 8). */
-export const imagesOf = (...lists: (Attachment[] | undefined)[]): string[] =>
-  lists.flatMap((l) => (l ?? []).map((a) => a.imageData).filter((x): x is string => !!x)).slice(-8);
+/** Immagini per chiamata: al massimo 8 e 600.000 caratteri base64 in tutto (quanto ne accetta una richiesta). */
+export const IMAGES_MAX = 8;
+export const IMAGES_MAX_CHARS = 600_000;
+
+/**
+ * Immagini vere di uno o più elenchi di allegati, nell'ordine. Se superano i limiti vincono le ultime
+ * (gli allegati del turno corrente vanno passati per ultimi); un'immagine che non ci sta si salta.
+ */
+export function imagesOf(...lists: (Attachment[] | undefined)[]): string[] {
+  const all = lists.flatMap((l) => (l ?? []).map((a) => a.imageData).filter((x): x is string => !!x));
+  const out: string[] = [];
+  let chars = 0;
+  for (let i = all.length - 1; i >= 0 && out.length < IMAGES_MAX; i--) {
+    if (chars + all[i].length > IMAGES_MAX_CHARS) continue;
+    chars += all[i].length;
+    out.push(all[i]);
+  }
+  return out.reverse();
+}
 
 /** Materiale in più per il dibattito: allegati e dossier della ricerca sul web. */
 export type Material = {
