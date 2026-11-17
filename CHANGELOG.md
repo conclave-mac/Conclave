@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-17
+
+### Added
+- Assignable roles: right-click a participant in the composer to make it the devil's advocate or the fact-checker
+  in the critique round.
+- Attached images are now sent to Gemini as real images (downscaled), not only as recognized text. Other models
+  keep receiving the recognized text.
+- Updates are checked at every launch.
+
+### Fixed
+- Sidebar: a discussion started from outside the app now leaves the "in progress" state on its own, and the list
+  scrolls to the top when a new discussion arrives.
+
 ## [0.4.1] - 2026-11-16
 
 ### Changed
