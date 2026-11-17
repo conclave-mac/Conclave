@@ -13,7 +13,7 @@
     { "id": "gemini",   "label": "Gemini",   "kind": "openai", "provider": "gemini",     "family": "gemini",   "model": "auto", "default": true },
     { "id": "gpt-oss",  "label": "GPT-OSS",  "kind": "openai", "provider": "groq",       "family": "gpt-oss",  "model": "auto", "default": true },
     { "id": "qwen",     "label": "Qwen",     "kind": "openai", "provider": "groq",       "family": "qwen",     "model": "auto", "default": true },
-    { "id": "deepseek", "label": "DeepSeek", "kind": "openai", "provider": "openrouter", "family": "deepseek", "model": "auto", "default": true },
+    { "id": "nemotron", "label": "Nemotron", "kind": "openai", "provider": "openrouter", "family": "nemotron", "model": "auto", "default": true },
     { "id": "mistral",  "label": "Mistral",  "kind": "openai", "provider": "mistral",    "family": "mistral",  "model": "auto", "default": false }
   ]
 }
