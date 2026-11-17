@@ -1,7 +1,7 @@
 // Chat continua: ricostruisce dal DB la conversazione che precede un turno ≥ 1
 // (domanda originale, allegati, ricerca, verdetto del turno 0 e scambi successivi).
 import { getConversationRows, getAttachments } from "../db.ts";
-import type { Conversation, Exchange } from "./prompts.ts";
+import { ROLES, type Conversation, type Exchange, type Role } from "./prompts.ts";
 
 /** Messaggi che non sono risposte di un partecipante: note, metadati, domande, ricerca, giudice. */
 const notAnswer = (id: string) => id.startsWith("_") || id.startsWith("research") || id.startsWith("judge:");
@@ -9,9 +9,11 @@ const notAnswer = (id: string) => id.startsWith("_") || id.startsWith("research"
 /** Conversazione dei turni 0…turn-1 della discussione `debateId`, con la domanda originale `question`. */
 export function buildConversation(debateId: number, question: string, turn: number): Conversation {
   const rows = getConversationRows(debateId).filter((r) => r.turn < turn);
+  // Immagini vere solo della domanda iniziale: quelle dei turni intermedi restano come testo (OCR), altrimenti
+  // si rimanderebbero tutte a ogni fase e turno. Quelle del turno corrente le aggiunge chi chiama.
   const attachments = getAttachments(debateId)
     .filter((a) => a.turn < turn)
-    .map(({ name, kind, text, imageData }) => ({ name, kind, text, ...(imageData ? { imageData } : {}) }));
+    .map(({ name, kind, text, imageData, turn: t }) => ({ name, kind, text, ...(imageData && t === 0 ? { imageData } : {}) }));
   const research = rows
     .filter((r) => r.phase === "research" && r.content && r.model_id.startsWith("research:"))
     .map((r) => ({ text: r.content!, date: r.created_at.slice(0, 10) }));
@@ -33,4 +35,20 @@ export function buildConversation(debateId: number, question: string, turn: numb
     exchanges.push({ question: q, answer, council });
   }
   return { question, attachments, research, verdict, answers: verdict ? [] : [...last.values()], exchanges };
+}
+
+/**
+ * Ruoli della discussione `{idVoce: ruolo}`: quelli dell'ultimo dibattito (originale o consiglio rilanciato),
+ * letti dai partecipanti salvati in `_meta`. Valori rovinati o sconosciuti si ignorano.
+ */
+export function discussionRoles(debateId: number): Record<string, Role> {
+  const meta = getConversationRows(debateId).filter((r) => r.model_id === "_meta" && r.phase === "start" && r.content).at(-1);
+  const out: Record<string, Role> = {};
+  try {
+    const list: unknown = JSON.parse(meta?.content ?? "[]");
+    for (const p of Array.isArray(list) ? list : []) {
+      if (p && typeof p.id === "string" && (ROLES as readonly unknown[]).includes(p.role)) out[p.id] = p.role as Role;
+    }
+  } catch { /* valore rovinato: nessun ruolo */ }
+  return out;
 }

@@ -4,7 +4,7 @@ import { config, isAvailable, findModel, PORT, selection, validateSelection, sav
 import { medianMsByModel, JUDGE_KEY, createDebate, listDebates, getDebate, deleteDebate, saveAttachments, saveMessage, nextTurn, hasTurnZeroContent, startTurn, finishTurn, finishDebate } from "./db.ts";
 import { ROLES, type Role } from "./debate/prompts.ts";
 import { runDebate, runQuickAnswer, type DebateEvent, type Rounds } from "./debate/orchestrator.ts";
-import { buildConversation } from "./debate/followup.ts";
+import { buildConversation, discussionRoles } from "./debate/followup.ts";
 import type { Attachment } from "./debate/prompts.ts";
 import { findResearcher } from "./debate/research.ts";
 import { listCatalog, probe } from "./catalog.ts";
@@ -253,9 +253,13 @@ function parseDebateRequest(body: Record<string, unknown>): DebateRequest {
 
 type FollowupRequest =
   | { mode: "quick"; question: string; responder: ModelDef; claudeModel: string; webSearch: boolean; attachments: Attachment[] }
-  | { mode: "council"; question: string; models: ModelDef[]; rounds: Rounds; judge: ModelDef; claudeModel: string; webSearch: boolean; attachments: Attachment[] };
+  | {
+      mode: "council"; question: string; models: ModelDef[]; rounds: Rounds; judge: ModelDef; claudeModel: string; webSearch: boolean; attachments: Attachment[];
+      /** undefined = non passati: si riusano quelli della discussione. */
+      roles?: Record<string, Role>;
+    };
 
-/** Domanda di seguito: stessi limiti di POST /api/debates. In modo "quick" models/rounds/judge si ignorano. */
+/** Domanda di seguito: stessi limiti di POST /api/debates. In modo "quick" models/rounds/judge/roles si ignorano. */
 function parseFollowupRequest(body: Record<string, unknown>): FollowupRequest {
   const mode = body.mode ?? "quick";
   if (mode !== "quick" && mode !== "council") throw new BadRequest(400, "mode deve essere quick o council");
@@ -264,7 +268,9 @@ function parseFollowupRequest(body: Record<string, unknown>): FollowupRequest {
   const webSearch = parseWebSearch(body);
   const attachments = parseAttachments(body.attachments);
   if (mode === "quick") return { mode, question, responder: parseJudge(body.responder, "risponditore"), claudeModel, webSearch, attachments };
-  return { mode, question, models: parseModels(body), rounds: parseRounds(body), judge: parseJudge(body.judge, "giudice"), claudeModel, webSearch, attachments };
+  const models = parseModels(body);
+  const roles = body.roles === undefined || body.roles === null ? undefined : parseRoles(body.roles, models);
+  return { mode, question, models, rounds: parseRounds(body), judge: parseJudge(body.judge, "giudice"), claudeModel, webSearch, attachments, roles };
 }
 
 async function handle(req: IncomingMessage, res: ServerResponse) {
@@ -399,6 +405,10 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       const turn = nextTurn(id);
       // Prima di segnare la discussione in corso: un errore qui non la lascia bloccata su "running".
       const conversation = buildConversation(id, debate.question, turn);
+      // Ruoli non passati: quelli dell'ultimo dibattito della discussione, solo per chi partecipa ancora.
+      const roles = f.mode === "council" && !f.roles
+        ? Object.fromEntries(Object.entries(discussionRoles(id)).filter(([mid]) => f.models.some((m) => m.id === mid)))
+        : undefined;
       startTurn(id);
       const save = (model_id: string, phase: string, content: string) => saveMessage(id, { model_id, phase, content, error: null, ms: null, turn });
       try {
@@ -429,7 +439,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
         }
         return runDebate(id, f.question, f.models, {
           rounds: f.rounds, judge: f.judge, claudeModel: f.claudeModel, webSearch: f.webSearch,
-          attachments: f.attachments, turn, conversation,
+          roles: f.roles ?? roles, attachments: f.attachments, turn, conversation,
         }, emit, r.controller.signal);
       });
       return json(res, 201, { turn });

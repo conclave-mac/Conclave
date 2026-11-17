@@ -35,7 +35,7 @@ export type DebateEvent = (
   | {
       type: "start";
       debateId: number;
-      participants: { id: string; label: string; letter: string }[];
+      participants: { id: string; label: string; letter: string; role?: P.Role }[];
       rounds: Rounds;
       judge: string;
       parentId: number | null;
@@ -196,7 +196,12 @@ export async function runDebate(
   // Lettere assegnate a caso: "A" non è sempre lo stesso modello.
   const letters = shuffle(LETTERS.slice(0, models.length).split(""));
   const ds: Debater[] = models.map((def, i) => ({ def, letter: letters[i], alive: true }));
-  const participants = ds.map((d) => ({ id: d.def.id, label: d.def.label, letter: d.letter }));
+  // Ruolo scelto dall'utente (campo additivo): solo se c'è il round di critica, dove agisce.
+  const roleOf = (id: string) => (opts.rounds >= 1 ? opts.roles?.[id] : undefined);
+  const participants = ds.map((d) => {
+    const role = roleOf(d.def.id);
+    return { id: d.def.id, label: d.def.label, letter: d.letter, ...(role ? { role } : {}) };
+  });
   // Salvate per poter rileggere a chi corrisponde ogni lettera nella cronologia.
   save(ctx, { model_id: "_meta", phase: "start", content: JSON.stringify(participants), error: null, ms: null });
   // Solo i metadati: il testo completo resta nella tabella degli allegati, non torna all'app.
