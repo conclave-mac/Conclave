@@ -560,6 +560,8 @@
 "Verifica…" = "Verifying…";
 "Aggiornamento pronto" = "Update ready";
 "Si installerà al termine della discussione in corso." = "It will be installed when the discussion in progress finishes.";
+"Aggiornamento rimandato" = "Update postponed";
+"Conclave %@ si installerà quando chiudi l'app." = "Conclave %@ will be installed when you quit the app.";
 
 "Ruolo nel round di critica" = "Role in the critique round";
 "Nessun ruolo" = "No role";

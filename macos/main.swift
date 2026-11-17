@@ -371,12 +371,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
 
     // ⌘Q con modifiche non salvate nelle Impostazioni: si chiede prima, come per la chiusura della finestra.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // Chiusura annullata: un aggiornamento pronto non deve installarsi (e riaprire l'app) alla prossima.
+        // Chiusura annullata: un aggiornamento pronto non deve riaprire l'app alla prossima; si rimanda.
         let r = settings.shouldTerminate { ok in
-            if !ok { UpdateCheck.Installer.cancelStaged() }
+            if !ok { UpdateCheck.Installer.deferStaged() }
             NSApp.reply(toApplicationShouldTerminate: ok)
         }
-        if r == .terminateCancel { UpdateCheck.Installer.cancelStaged() }
+        if r == .terminateCancel { UpdateCheck.Installer.deferStaged() }
         return r
     }
 

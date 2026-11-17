@@ -132,6 +132,10 @@ enum UpdateCheck {
             if manual { inform(L("Aggiornamento pronto"), L("Si installerà al termine della discussione in corso.")) }
             return
         }
+        if let version = Installer.deferredVersion {
+            if manual { inform(L("Aggiornamento pronto"), String(format: L("Conclave %@ si installerà quando chiudi l'app."), version)) }
+            return
+        }
         if !manual {
             // Mai durante le prove (COUNCIL_DATA) né con una build senza versione.
             guard enabled, currentVersion != nil, (ProcessInfo.processInfo.environment["COUNCIL_DATA"] ?? "").isEmpty else { return }
@@ -238,6 +242,12 @@ enum UpdateCheck {
         @MainActor private static var staged: Staged?
         /// Pronto ma in attesa che finiscano le discussioni in corso.
         @MainActor private static var waiting: Staged?
+        /// Pronto, ma la chiusura per installarlo è stata annullata: si installa alla prossima
+        /// chiusura dell'app, senza riaprirla (mai da `installIfWaiting`, che richiuderebbe l'app).
+        @MainActor private static var deferred: Staged?
+        /// Cartella dell'aggiornamento dal download fino alla consegna allo script: alla chiusura
+        /// dell'app (⌘Q a metà, avviso ancora aperto) si smonta il volume e si cancella.
+        @MainActor private static var work: UpdateWork?
 
         static func assetName(_ version: String) -> String {
             #if arch(arm64)
@@ -263,7 +273,9 @@ enum UpdateCheck {
             guard !busy else { return }
             busy = true
             let model = UpdateProgress(title: String(format: L("Aggiornamento a Conclave %@"), r.version))
-            let task = Task { try await prepare(r, model) }
+            let w = UpdateWork()
+            work = w
+            let task = Task { try await prepare(r, model, w) }
             model.onCancel = { task.cancel() }
             showProgress(model, over: window)
             let result = await task.result
@@ -281,6 +293,7 @@ enum UpdateCheck {
                     if r == .alertSecondButtonReturn { finish(s) } else { waiting = s }
                 }
             case .failure(let error):
+                work = nil
                 if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
                 let alert = NSAlert()
                 alert.messageText = L("Impossibile installare l'aggiornamento")
@@ -301,13 +314,21 @@ enum UpdateCheck {
 
         @MainActor static var hasWaiting: Bool { waiting != nil }
 
-        /// Chiusura dell'app annullata: l'aggiornamento pronto si scarta (si potrà riscaricare dal menu).
+        @MainActor static var deferredVersion: String? { deferred?.version }
+
+        /// Chiusura dell'app annullata (per esempio per le Impostazioni non salvate): l'aggiornamento
+        /// pronto non deve riaprire l'app alla prossima chiusura, ma non si butta senza dirlo: si
+        /// installa quando l'utente chiude l'app, e lo si avvisa.
         @MainActor
-        static func cancelStaged() {
+        static func deferStaged() {
             guard let s = staged else { return }
             staged = nil
+            deferred = s
             UserDefaults.standard.removeObject(forKey: installingKey)
-            try? FileManager.default.removeItem(at: s.dir)
+            // Dopo la risposta a applicationShouldTerminate, non dentro.
+            Task { @MainActor in
+                inform(L("Aggiornamento rimandato"), String(format: L("Conclave %@ si installerà quando chiudi l'app."), s.version))
+            }
         }
 
         @MainActor
@@ -319,29 +340,52 @@ enum UpdateCheck {
 
         /// Da `applicationWillTerminate`, dopo l'arresto del motore: lo script aspetta che il processo
         /// esca (al massimo 60 s), scambia i pacchetti (in caso di errore rimette quello vecchio) e
-        /// riapre l'app. Un aggiornamento in attesa della fine delle discussioni si installa anche
-        /// se l'utente chiude l'app, ma senza riaprirla.
+        /// riapre l'app. Un aggiornamento in attesa della fine delle discussioni (o rimandato) si
+        /// installa anche se l'utente chiude l'app, ma senza riaprirla. Senza nulla da installare,
+        /// un aggiornamento a metà si annulla e la sua cartella si cancella.
         @MainActor
         static func launchIfStaged() {
-            guard let s = staged ?? waiting else { return }
+            guard let s = staged ?? waiting ?? deferred else {
+                work?.discard()
+                work = nil
+                return
+            }
             let reopen = staged != nil
             staged = nil
             waiting = nil
+            deferred = nil
+            work = nil
             if !reopen { UserDefaults.standard.set(s.version, forKey: installingKey) }
             // La copia nuova ha aspettato in una cartella temporanea (anche ore, con "Installa al termine"):
             // la sua firma si ricontrolla subito prima dello scambio, altrimenti non si installa nulla.
             // Se il requisito non si legge, "never": lo script scarta la copia e riapre comunque l'app vecchia.
             let requirement = designatedRequirementText() ?? "never"
+            // Prima dello scambio nessun processo deve girare dal pacchetto: il motore che si sta
+            // chiudendo (fino a 10 s) o una seconda istanza aperta nel frattempo. A questa si
+            // toglierebbe l'app da sotto (e `open` riattiverebbe lei, non la versione nuova): niente
+            // scambio né riapertura, il marker resta e l'istanza aperta dice che non è stato installato.
+            // Con `COUNCIL_DATA` (prove) l'app si riapre con le stesse variabili, mai sui dati reali.
             let script = """
-            for _ in $(seq 300); do kill -0 "$1" 2>/dev/null || break; sleep 0.2; done
-            if ! /usr/bin/codesign --verify --deep --strict --test-requirement="=$6" "$4" 2>/dev/null; then
-              rm -rf "$3"; [ "$5" = 1 ] && open "$2"; exit 0
+            PID="$1" APP="$2" DIR="$3" NEW="$4" REOPEN="$5" REQ="$6"
+            inside() { /bin/ps -axww -o comm= | { while IFS= read -r c; do case "$c" in "$APP"/*) exit 0;; esac; done; exit 1; }; }
+            clean() { [ -d "$DIR/mnt" ] && /usr/bin/hdiutil detach -force "$DIR/mnt" >/dev/null 2>&1; rm -rf "$DIR"; }
+            reopen() {
+              [ "$REOPEN" = 1 ] || return 0
+              env=()
+              for v in COUNCIL_DATA COUNCIL_MODELS COUNCIL_UPDATE_API; do [ -n "${!v}" ] && env+=(--env "$v=${!v}"); done
+              /usr/bin/open "${env[@]}" "$APP"
+            }
+            for _ in $(seq 300); do kill -0 "$PID" 2>/dev/null || break; sleep 0.2; done
+            for _ in $(seq 50); do inside || break; sleep 0.2; done
+            if inside; then clean; exit 0; fi
+            if ! /usr/bin/codesign --verify --deep --strict --test-requirement="=$REQ" "$NEW" 2>/dev/null; then
+              clean; reopen; exit 0
             fi
-            if mv "$2" "$3/old.app"; then
-              mv "$4" "$2" || mv "$3/old.app" "$2"
+            if mv "$APP" "$DIR/old.app"; then
+              mv "$NEW" "$APP" || mv "$DIR/old.app" "$APP"
             fi
-            [ -e "$2" ] && rm -rf "$3"
-            [ "$5" = 1 ] && open "$2"
+            [ -e "$APP" ] && clean
+            reopen
             """
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/bin/bash")
@@ -354,11 +398,12 @@ enum UpdateCheck {
         }
 
         /// Scarica, controlla e prepara l'app nuova accanto a quella installata. Non tocca l'app in uso.
-        private static func prepare(_ r: Release, _ model: UpdateProgress) async throws -> Staged {
+        private static func prepare(_ r: Release, _ model: UpdateProgress, _ work: UpdateWork) async throws -> Staged {
             let name = assetName(r.version)
             guard let dmgURL = r.assets[name], let sumsURL = r.assets["SHA256SUMS.txt"] else { throw Failure.missingFiles }
             let fm = FileManager.default
             let dir = try fm.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: Bundle.main.bundleURL, create: true)
+            work.dir = dir
             do {
                 let (sums, resp) = try await URLSession.shared.data(from: sumsURL)
                 let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
@@ -371,26 +416,38 @@ enum UpdateCheck {
 
                 let dmg = dir.appendingPathComponent("update.dmg")
                 try await download(dmgURL, to: dmg) { f in Task { @MainActor in model.fraction = f } }
+                try Task.checkCancellation()
                 await MainActor.run { model.fraction = nil; model.status = L("Verifica…") }
-                let staged = try await Task.detached { () throws -> URL in
-                    guard try sha256(dmg) == expected else { throw Failure.checksum }
+                // Il task staccato non eredita l'annullamento: Annulla lo passa a `work`, che chiude
+                // subito `ditto` (prima si aspettava la fine della copia).
+                let job = Task.detached { () throws -> URL in
+                    guard try sha256(dmg, work) == expected else { throw Failure.checksum }
                     let mnt = dir.appendingPathComponent("mnt")
                     try fm.createDirectory(at: mnt, withIntermediateDirectories: true)
-                    try tool("/usr/bin/hdiutil", ["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mnt.path, dmg.path])
+                    // `attach` non si interrompe a metà (il volume potrebbe restare collegato).
+                    try work.run("/usr/bin/hdiutil", ["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mnt.path, dmg.path])
                     let app = dir.appendingPathComponent("Conclave.app")
-                    let copied = Result { try tool("/usr/bin/ditto", [mnt.appendingPathComponent("Conclave.app").path, app.path]) }
-                    _ = try? tool("/usr/bin/hdiutil", ["detach", "-force", mnt.path])
+                    let copied = Result { try work.run("/usr/bin/ditto", [mnt.appendingPathComponent("Conclave.app").path, app.path], cancellable: true) }
+                    // Se resta montato si riprova quando la cartella si cancella (errore, chiusura, script).
+                    UpdateWork.unmount(mnt)
                     try copied.get()
                     try? fm.removeItem(at: dmg)
-                    _ = try? tool("/usr/bin/xattr", ["-dr", "com.apple.quarantine", app.path])
+                    if work.isCancelled { throw CancellationError() }
+                    _ = try? work.run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", app.path])
                     try verify(app, version: r.version)
                     return app
-                }.value
+                }
+                let staged = try await withTaskCancellationHandler { try await job.value } onCancel: {
+                    work.cancel()
+                    job.cancel()
+                }
                 try Task.checkCancellation()
                 return Staged(version: r.version, app: staged, dir: dir)
             } catch {
-                try? fm.removeItem(at: dir)
-                throw error
+                let cancelled = work.isCancelled
+                work.cleanUp()
+                // `ditto` chiuso da Annulla esce con un errore: è un annullamento, non un guasto.
+                throw cancelled ? CancellationError() : error
             }
         }
 
@@ -418,27 +475,15 @@ enum UpdateCheck {
                   info?["CFBundleShortVersionString"] as? String == version else { throw Failure.version }
         }
 
-        private static func sha256(_ file: URL) throws -> String {
+        private static func sha256(_ file: URL, _ work: UpdateWork) throws -> String {
             let h = try FileHandle(forReadingFrom: file)
             defer { try? h.close() }
             var hasher = SHA256()
-            while let chunk = try h.read(upToCount: 1 << 20), !chunk.isEmpty { hasher.update(data: chunk) }
-            return hasher.finalize().map { String(format: "%02x", $0) }.joined()
-        }
-
-        private static func tool(_ path: String, _ args: [String]) throws {
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: path)
-            p.arguments = args
-            let err = Pipe()
-            p.standardOutput = FileHandle.nullDevice
-            p.standardError = err
-            try p.run()
-            let msg = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            p.waitUntilExit()
-            guard p.terminationStatus == 0 else {
-                throw Failure.tool("\((path as NSString).lastPathComponent): " + msg.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300))
+            while let chunk = try h.read(upToCount: 1 << 20), !chunk.isEmpty {
+                if work.isCancelled { throw CancellationError() }
+                hasher.update(data: chunk)
             }
+            return hasher.finalize().map { String(format: "%02x", $0) }.joined()
         }
 
         private static func download(_ url: URL, to dest: URL, progress: @escaping @Sendable (Double) -> Void) async throws {
@@ -473,6 +518,94 @@ enum UpdateCheck {
             progressWindow = nil
             if let parent = sheet.sheetParent { parent.endSheet(sheet) } else { sheet.orderOut(nil) }
         }
+    }
+}
+
+/// Un aggiornamento in preparazione: cartella, processo in corso e annullamento. Usato dal task
+/// staccato della verifica e dal main thread (Annulla, chiusura dell'app), quindi con un lock.
+final class UpdateWork: @unchecked Sendable {
+    private let lock = NSLock()
+    private var folder: URL?
+    private var process: Process?
+    /// Il processo in corso si può chiudere con Annulla (`ditto` sì, `hdiutil attach` no).
+    private var killable = false
+    private var cancelled = false
+
+    var isCancelled: Bool { lock.withLock { cancelled } }
+    var dir: URL? {
+        get { lock.withLock { folder } }
+        set { lock.withLock { folder = newValue } }
+    }
+
+    /// Esegue uno strumento e ne aspetta la fine; dopo Annulla non ne parte più nessuno.
+    func run(_ path: String, _ args: [String], cancellable: Bool = false) throws {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: path)
+        p.arguments = args
+        let err = Pipe()
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = err
+        try lock.withLock {
+            if cancelled { throw CancellationError() }
+            try p.run()
+            process = p
+            killable = cancellable
+        }
+        let msg = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        p.waitUntilExit()
+        lock.withLock { process = nil }
+        guard p.terminationStatus == 0 else {
+            throw UpdateCheck.Installer.Failure.tool("\((path as NSString).lastPathComponent): " + msg.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300))
+        }
+    }
+
+    func cancel() {
+        lock.withLock {
+            cancelled = true
+            if killable { process?.terminate() }
+        }
+    }
+
+    /// Annulla, aspetta il processo in corso (al massimo 10 s), smonta e cancella. Sincrono:
+    /// va bene anche in `applicationWillTerminate`, dove poi il processo esce.
+    func discard() {
+        cancel()
+        let deadline = Date().addingTimeInterval(10)
+        while lock.withLock({ process?.isRunning == true }), Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+        cleanUp()
+    }
+
+    /// Smonta il volume del DMG se è ancora montato e cancella la cartella.
+    func cleanUp() {
+        guard let dir else { return }
+        Self.unmount(dir.appendingPathComponent("mnt"))
+        try? FileManager.default.removeItem(at: dir)
+        self.dir = nil
+    }
+
+    /// `detach` può fallire per un attimo (volume ancora in uso, Spotlight): fino a tre tentativi,
+    /// gli ultimi forzati. false se resta montato.
+    @discardableResult
+    static func unmount(_ mnt: URL) -> Bool {
+        for attempt in 0..<3 {
+            guard isMountPoint(mnt) else { return true }
+            if attempt > 0 { Thread.sleep(forTimeInterval: 1) }
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+            p.arguments = ["detach"] + (attempt > 0 ? ["-force"] : []) + [mnt.path]
+            p.standardOutput = FileHandle.nullDevice
+            p.standardError = FileHandle.nullDevice
+            guard (try? p.run()) != nil else { continue }
+            p.waitUntilExit()
+        }
+        return !isMountPoint(mnt)
+    }
+
+    /// Un volume montato ha un dispositivo diverso dalla cartella che lo contiene.
+    private static func isMountPoint(_ url: URL) -> Bool {
+        var a = stat(), b = stat()
+        guard stat(url.path, &a) == 0, stat(url.deletingLastPathComponent().path, &b) == 0 else { return false }
+        return a.st_dev != b.st_dev
     }
 }
 
