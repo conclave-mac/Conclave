@@ -400,7 +400,7 @@
 "Dimensioni reali" = "Actual Size";
 "Aggiornamenti" = "Updates";
 "Controlla gli aggiornamenti" = "Check for updates";
-"Una volta a settimana Conclave chiede a GitHub se c'è una versione nuova e ti avvisa. Non installa nulla da solo e non invia dati." = "Once a week Conclave asks GitHub whether a new version exists and lets you know. It never installs anything by itself and sends no data.";
+"A ogni avvio Conclave chiede a GitHub se c'è una versione nuova e ti avvisa. Non installa nulla senza il tuo consenso e non invia dati." = "Every time it starts, Conclave asks GitHub whether a new version exists and lets you know. It never installs anything without your consent and sends no data.";
 "Impossibile controllare gli aggiornamenti" = "Unable to check for updates";
 "Conclave è aggiornato" = "Conclave is up to date";
 "La versione %@ è la più recente." = "Version %@ is the latest.";

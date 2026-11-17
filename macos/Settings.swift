@@ -659,7 +659,7 @@ struct GeneralPage: View {
             }
             SettingsSection(L("Aggiornamenti")) {
                 SettingsRow(L("Controlla gli aggiornamenti"),
-                            detail: L("Una volta a settimana Conclave chiede a GitHub se c'è una versione nuova e ti avvisa. Non installa nulla da solo e non invia dati.")) {
+                            detail: L("A ogni avvio Conclave chiede a GitHub se c'è una versione nuova e ti avvisa. Non installa nulla senza il tuo consenso e non invia dati.")) {
                     Toggle(L("Controlla gli aggiornamenti"), isOn: $updates)
                         .toggleStyle(.switch)
                         .labelsHidden()

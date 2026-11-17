@@ -91,9 +91,10 @@ Node.js is bundled with the app; you do not need to install it.
 
 ### Updates
 
-Conclave checks the GitHub Releases API at most once a week (or on demand from the app menu) and
-tells you when a newer version exists. It never downloads or installs anything: it only offers to
-open the release page. The check can be turned off in **Settings ▸ General**.
+Conclave checks the GitHub Releases API at every launch (or on demand from the app menu) and
+tells you when a newer version exists. If you choose **Install and Relaunch**, it downloads the DMG
+for your Mac, verifies it against `SHA256SUMS.txt` and the app's code signature, and replaces itself;
+otherwise it offers to open the release page. The check can be turned off in **Settings ▸ General**.
 
 ## Setting up providers
 
@@ -141,7 +142,7 @@ one participant is left, the rounds are skipped and the app says so.
 - **Your questions are sent to the providers you choose**, and only to them. Read their terms:
   some free tiers (for example Google AI Studio and some OpenRouter `:free` models) may use your
   prompts to improve their models.
-- **No telemetry.** The only network request Conclave makes on its own is the weekly update check
+- **No telemetry.** The only network request Conclave makes on its own is the update check at launch
   to `api.github.com`, which you can disable.
 - **API keys** are stored in the macOS Keychain (generic passwords, service
   `io.github.peppolone.conclave`). The app passes them to the local engine through its standard

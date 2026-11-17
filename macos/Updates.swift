@@ -15,12 +15,9 @@ import SwiftUI
 
 enum UpdateCheck {
     static let enabledKey = "UpdateCheckEnabled"
-    private static let nextKey = "UpdateCheckNext"
     private static let skippedKey = "UpdateSkippedVersion"
     /// Versione per cui l'app si è chiusa per installare: al riavvio dice se la sostituzione non è riuscita.
     private static let installingKey = "UpdateInstalling"
-    /// Controllo automatico al massimo una volta a settimana.
-    private static let interval: TimeInterval = 7 * 24 * 3600
     private static let api = URL(string: "https://api.github.com/repos/peppolone/Conclave/releases/latest")!
     static let releasesPage = URL(string: "https://github.com/peppolone/Conclave/releases")!
 
@@ -120,7 +117,7 @@ enum UpdateCheck {
         return parse(data)
     }
 
-    /// Controllo automatico (all'avvio, se è passata una settimana) o richiesto dal menu.
+    /// Controllo automatico (a ogni avvio) o richiesto dal menu.
     /// Quello automatico non disturba mai: parla solo se c'è una versione nuova non saltata.
     /// L'avviso automatico è un foglio sulla finestra principale, mai una finestra modale a sé:
     /// non deve comparire sopra le Impostazioni del primo avvio o mentre si scrive altrove.
@@ -137,21 +134,18 @@ enum UpdateCheck {
         }
         if !manual {
             // Mai durante le prove (COUNCIL_DATA) né con una build senza versione.
-            guard enabled, currentVersion != nil, (ProcessInfo.processInfo.environment["COUNCIL_DATA"] ?? "").isEmpty,
-                  Date().timeIntervalSince1970 >= d.double(forKey: nextKey) else { return }
+            guard enabled, currentVersion != nil, (ProcessInfo.processInfo.environment["COUNCIL_DATA"] ?? "").isEmpty else { return }
+            // Data del prossimo controllo delle versioni che controllavano una volta a settimana.
+            d.removeObject(forKey: "UpdateCheckNext")
         }
         let current = currentVersion ?? "0"
         let release: Release?
         do { release = try await latest() } catch {
-            // Senza rete non si rimanda di una settimana: si riprova al prossimo avvio.
             if manual { inform(L("Impossibile controllare gli aggiornamenti"), error.localizedDescription) }
             return
         }
-        if !manual {
-            // Finestra principale non visibile o già con un foglio aperto: si riprova al prossimo avvio.
-            guard let window, window.isVisible, window.attachedSheet == nil else { return }
-            d.set(Date().addingTimeInterval(interval).timeIntervalSince1970, forKey: nextKey)
-        }
+        // Finestra principale non visibile o già con un foglio aperto: si riprova al prossimo avvio.
+        if !manual { guard let window, window.isVisible, window.attachedSheet == nil else { return } }
         guard let release, isNewer(release.version, than: current) else {
             if manual { inform(L("Conclave è aggiornato"), String(format: L("La versione %@ è la più recente."), current)) }
             return
