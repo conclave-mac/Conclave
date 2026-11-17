@@ -328,8 +328,14 @@ enum UpdateCheck {
             staged = nil
             waiting = nil
             if !reopen { UserDefaults.standard.set(s.version, forKey: installingKey) }
+            // La copia nuova ha aspettato in una cartella temporanea (anche ore, con "Installa al termine"):
+            // la sua firma si ricontrolla subito prima dello scambio, altrimenti non si installa nulla.
+            guard let requirement = designatedRequirementText() else { try? FileManager.default.removeItem(at: s.dir); return }
             let script = """
             for _ in $(seq 300); do kill -0 "$1" 2>/dev/null || break; sleep 0.2; done
+            if ! /usr/bin/codesign --verify --deep --strict --test-requirement="=$6" "$4" 2>/dev/null; then
+              rm -rf "$3"; [ "$5" = 1 ] && open "$2"; exit 0
+            fi
             if mv "$2" "$3/old.app"; then
               mv "$4" "$2" || mv "$3/old.app" "$2"
             fi
@@ -339,7 +345,7 @@ enum UpdateCheck {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/bin/bash")
             p.arguments = ["-c", script, "conclave-update", String(getpid()), Bundle.main.bundleURL.path, s.dir.path, s.app.path,
-                           reopen ? "1" : "0"]
+                           reopen ? "1" : "0", requirement]
             p.standardInput = FileHandle.nullDevice
             p.standardOutput = FileHandle.nullDevice
             p.standardError = FileHandle.nullDevice
@@ -385,6 +391,16 @@ enum UpdateCheck {
                 try? fm.removeItem(at: dir)
                 throw error
             }
+        }
+
+        /// Requisito designato dell'app in uso come testo (per `codesign --test-requirement`).
+        private static func designatedRequirementText() -> String? {
+            var me: SecCode?, mine: SecStaticCode?, req: SecRequirement?, text: CFString?
+            guard SecCodeCopySelf([], &me) == errSecSuccess, let me,
+                  SecCodeCopyStaticCode(me, [], &mine) == errSecSuccess, let mine,
+                  SecCodeCopyDesignatedRequirement(mine, [], &req) == errSecSuccess, let req,
+                  SecRequirementCopyString(req, [], &text) == errSecSuccess, let text else { return nil }
+            return text as String
         }
 
         /// La firma dell'app nuova deve soddisfare il requisito designato di quella in uso.
