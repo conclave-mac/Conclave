@@ -124,7 +124,7 @@ enum AttachmentReader {
             guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
                   let img = CGImageSourceCreateImageAtIndex(src, 0, nil)
             else { throw Failure(message: L("Immagine non leggibile.")) }
-            return (try ocr([img]), ImageEncoder.jpegBase64(src))
+            return try imageResult(img, src)
         }
     }
 
@@ -133,7 +133,14 @@ enum AttachmentReader {
         guard let src = CGImageSourceCreateWithData(data as CFData, nil),
               let img = CGImageSourceCreateImageAtIndex(src, 0, nil)
         else { throw Failure(message: L("Immagine non leggibile.")) }
-        return (try ocr([img]), ImageEncoder.jpegBase64(src))
+        return try imageResult(img, src)
+    }
+
+    /// Foto o grafico senza testo: valido lo stesso se c'è l'immagine ridotta (Gemini la vede davvero).
+    private static func imageResult(_ img: CGImage, _ src: CGImageSource) throws -> (text: String, imageData: String?) {
+        let jpeg = ImageEncoder.jpegBase64(src)
+        do { return (try ocr([img]), jpeg) }
+        catch let e as Failure where jpeg != nil && e.message == L("Nessun testo riconosciuto.") { return ("", jpeg) }
     }
 
     private static func readText(_ url: URL) throws -> String {
