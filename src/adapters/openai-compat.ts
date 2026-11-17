@@ -106,18 +106,39 @@ export function isHardLimit(message: string): boolean {
 /** Modelli che hanno risposto 400 alle immagini: non si riprovano più (in memoria fino al riavvio). */
 const imageRefused = new Set<string>();
 
-/** Solo i modelli Gemini (non Gemma, di cui non si sa se accettino immagini) ricevono le immagini vere. */
+/**
+ * Modelli che ricevono le immagini vere, con il massimo per richiesta. Gemini sì (Gemma no: non si sa
+ * se le accetti); su Groq solo Qwen 3.8 27B, al massimo 3 immagini (2.048 token l'una).
+ */
+const IMAGE_MODELS: { test: RegExp; max: number }[] = [
+  { test: /^(models\/)?gemini/i, max: Infinity },
+  { test: /^qwen\/qwen3\.8-27b$/i, max: 3 },
+];
+
+/** Immagini da mandare a questo modello: nessuna se non le accetta, al massimo quante ne accetta. */
 export function imagesFor(model: string, images?: string[]): string[] {
-  return images?.length && /^(models\/)?gemini/i.test(model) && !imageRefused.has(model) ? images : [];
+  const rule = IMAGE_MODELS.find((r) => r.test.test(model));
+  return images?.length && rule && !imageRefused.has(model) ? images.slice(0, rule.max) : [];
 }
 
 const IMAGES_NOTE = "\n\nLe immagini allegate sono unite a questo messaggio.";
 
+/** Richiesta troppo grande per il limite di token del piano (Groq: 413, o 429 "Request too large"). */
+function tooLarge(e: HttpError): boolean {
+  // "Request too large… reduce max_tokens" riguarda l'uscita richiesta: lì si abbassa max_tokens, le immagini restano.
+  if (outputLimitFrom(e.message) > 0) return false;
+  return e.status === 413 ||(e.status === 429 && /request too large|reduce your message size/i.test(e.message));
+}
+
 /** Contenuto del messaggio utente: testo semplice, o testo + immagini (data URL) se ce ne sono. */
-function userContent(user: string, images: string[]): string | unknown[] {
+function userContent(user: string, images: string[], total: number): string | unknown[] {
   if (!images.length) return user;
+  // Se il modello ne accetta meno di quelle allegate, lo si dice: le altre restano solo come testo.
+  const note = images.length < total
+    ? `${IMAGES_NOTE} Per limiti del modello ne ricevi solo ${images.length} su ${total}: delle altre hai solo il testo estratto.`
+    : IMAGES_NOTE;
   return [
-    { type: "text", text: user + IMAGES_NOTE },
+    { type: "text", text: user + note },
     ...images.map((b64) => ({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64}` } })),
   ];
 }
@@ -142,7 +163,7 @@ export async function once(p: Provider, model: string, req: ChatRequest, timeout
       model,
       messages: [
         { role: "system", content: req.system },
-        { role: "user", content: userContent(req.user, imagesFor(model, req.images)) },
+        { role: "user", content: userContent(req.user, imagesFor(model, req.images), req.images?.length ?? 0) },
       ],
       // Margine ampio: nei modelli che "ragionano" anche il ragionamento consuma questo limite.
       max_tokens: Math.min(req.maxTokens ?? 4096, outputCap.get(model) ?? Infinity),
@@ -197,7 +218,8 @@ export async function chatOpenAI(p: Provider, models: string[], req: ChatRequest
     const maxRetries = hasNext ? 0 : MAX_RETRIES; // con una riserva disponibile non si aspetta
     // Solo per questo modello e questa chiamata: le riserve successive ricevono la richiesta intera.
     let withoutImages = false; // un 400 con le immagini: si riprova una volta con il solo testo
-    let tighterMax = 0;        // limite di token al minuto quasi esaurito: si chiede meno uscita
+    let imagesTooBig = false;  // richiesta troppo grande con le immagini: senza, ma solo per questa chiamata
+    let tighterMax = 0;       // limite di token al minuto quasi esaurito: si chiede meno uscita
     // Contano solo i tentativi con attesa: i riprova immediati (senza immagini, meno token) non li consumano.
     for (let waits = 0; ;) {
       const r: ChatRequest = {
@@ -209,7 +231,7 @@ export async function chatOpenAI(p: Provider, models: string[], req: ChatRequest
         // Se c'è una riserva, un modello lento non deve consumare tutto il tempo del round.
         const text = await once(p, model, r, req.timeoutMs ?? (hasNext ? ATTEMPT_WITH_RESERVE_MS : TIMEOUT_MS));
         // Le immagini erano la causa del 400 solo se il solo testo passa: allora non si riprovano più.
-        if (withoutImages) imageRefused.add(model);
+        if (withoutImages && !imagesTooBig) imageRefused.add(model);
         return { text, ms: Date.now() - started, model };
       } catch (e) {
         lastError = e;
@@ -218,6 +240,14 @@ export async function chatOpenAI(p: Provider, models: string[], req: ChatRequest
         if (e instanceof HttpError && e.status === 400 && !withoutImages && imagesFor(model, req.images).length) {
           withoutImages = true;
           console.error(`[immagini] ${model} ha risposto 400 con le immagini: riprovo con il solo testo`);
+          continue;
+        }
+        // Immagini oltre il tetto di token del piano gratuito (Qwen su Groq: ~8.000 al minuto): prima di
+        // accorciare la risposta o rinunciare, si riprova senza. Le immagini restano attive per le prossime chiamate.
+        if (e instanceof HttpError && tooLarge(e) && !withoutImages && imagesFor(model, req.images).length) {
+          withoutImages = true;
+          imagesTooBig = true;
+          console.error(`[immagini] ${model}: richiesta troppo grande con le immagini, riprovo con il solo testo`);
           continue;
         }
         // Limite di token in uscita al minuto (Groq: "Limit 1000, Used 608, Requested 767"): se resta
