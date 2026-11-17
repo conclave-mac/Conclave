@@ -352,7 +352,10 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       { rounds: d.rounds, judge: d.judge.id, claudeModel: d.claudeModel, ...(d.webSearch ? { webSearch: true } : {}) },
       d.parentContext?.id ?? null,
     );
-    if (d.attachments.length) saveAttachments(id, d.attachments);
+    if (d.attachments.length) {
+      try { saveAttachments(id, d.attachments); }
+      catch (e) { finishDebate(id, "failed", null); throw e; } // niente discussione orfana "in corso"
+    }
     const opts = {
       rounds: d.rounds, judge: d.judge, claudeModel: d.claudeModel, parentContext: d.parentContext,
       webSearch: d.webSearch, roles: d.roles, attachments: d.attachments,
@@ -395,11 +398,17 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       const conversation = buildConversation(id, debate.question, turn);
       startTurn(id);
       const save = (model_id: string, phase: string, content: string) => saveMessage(id, { model_id, phase, content, error: null, ms: null, turn });
-      save("_user", "followup", f.question);
-      save("_meta", "turn", JSON.stringify(f.mode === "quick"
-        ? { mode: f.mode, rounds: 0, judge: f.responder.id, webSearch: f.webSearch }
-        : { mode: f.mode, rounds: f.rounds, judge: f.judge.id, webSearch: f.webSearch }));
-      if (f.attachments.length) saveAttachments(id, f.attachments, turn);
+      try {
+        save("_user", "followup", f.question);
+        save("_meta", "turn", JSON.stringify(f.mode === "quick"
+          ? { mode: f.mode, rounds: 0, judge: f.responder.id, webSearch: f.webSearch }
+          : { mode: f.mode, rounds: f.rounds, judge: f.judge.id, webSearch: f.webSearch }));
+        if (f.attachments.length) saveAttachments(id, f.attachments, turn);
+      } catch (e) {
+        // Scrittura fallita (disco pieno, DB occupato): senza questo la discussione resterebbe "in corso" per sempre (409).
+        finishTurn(id, "failed");
+        throw e;
+      }
       track(id, turn, (r) => {
         const emit = (e: DebateEvent) => send(r, e);
         emit({ type: "turn", turn, question: f.question, mode: f.mode });
