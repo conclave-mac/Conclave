@@ -119,53 +119,60 @@ struct SidebarView: View {
             SidebarSearchRow(model: model)
                 .padding(.horizontal, 10).padding(.top, 2).padding(.bottom, 4)
 
-            List(selection: Binding(get: { model.selected }, set: { id in
-                // La lista riassegna la stessa selezione quando si aggiorna: va aperta solo
-                // una discussione diversa, altrimenti quella in corso verrebbe ricaricata.
-                guard id != model.selected else { return }
-                model.selected = id
-                if let id { model.onOpen?(id) }
-            })) {
-                ForEach(model.items) { d in
-                    DebateRow(debate: d, selected: model.selected == d.id) { model.requestDelete(d.id) }
-                        .tag(d.id)
-                        // Selezione nel colore del marchio al posto dell'accento di sistema.
-                        .listRowBackground(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(model.selected == d.id ? Brand.selection
-                                      : hovered == d.id ? Brand.hover : .clear)
-                                .padding(.horizontal, 10)
-                        )
-                        .background(SystemHighlightRemover(selected: model.selected == d.id))
-                        .onHover { inside in
-                            if inside { hovered = d.id } else if hovered == d.id { hovered = nil }
-                        }
-                        // Solo le azioni più probabili, distruttive in fondo, niente scorciatoie.
-                        .contextMenu {
-                            if d.status == "done" {
-                                Button("Esporta come Markdown…") { model.onExport?(d.id) }
-                                Divider()
+            ScrollViewReader { proxy in
+                List(selection: Binding(get: { model.selected }, set: { id in
+                    // La lista riassegna la stessa selezione quando si aggiorna: va aperta solo
+                    // una discussione diversa, altrimenti quella in corso verrebbe ricaricata.
+                    guard id != model.selected else { return }
+                    model.selected = id
+                    if let id { model.onOpen?(id) }
+                })) {
+                    ForEach(model.items) { d in
+                        DebateRow(debate: d, selected: model.selected == d.id) { model.requestDelete(d.id) }
+                            .tag(d.id)
+                            // Selezione nel colore del marchio al posto dell'accento di sistema.
+                            .listRowBackground(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(model.selected == d.id ? Brand.selection
+                                          : hovered == d.id ? Brand.hover : .clear)
+                                    .padding(.horizontal, 10)
+                            )
+                            .background(SystemHighlightRemover(selected: model.selected == d.id))
+                            .onHover { inside in
+                                if inside { hovered = d.id } else if hovered == d.id { hovered = nil }
                             }
-                            Button("Elimina", role: .destructive) { model.requestDelete(d.id) }
-                        }
-                }
-            }
-            .listStyle(.sidebar)
-            .tint(Brand.accent)
-            .overlay {
-                if model.loaded && model.items.isEmpty {
-                    if model.query.trimmingCharacters(in: .whitespaces).isEmpty {
-                        SidebarEmptyState(title: L("Nessuna discussione"), systemImage: "bubble.left.and.bubble.right",
-                                          description: L("Le discussioni avviate compaiono qui."))
-                    } else {
-                        SidebarEmptyState(title: L("Nessun risultato"), systemImage: "magnifyingglass",
-                                          description: String(format: L("Nessuna discussione contiene «%@»."),
-                                                              model.query.trimmingCharacters(in: .whitespaces)))
+                            // Solo le azioni più probabili, distruttive in fondo, niente scorciatoie.
+                            .contextMenu {
+                                if d.status == "done" {
+                                    Button("Esporta come Markdown…") { model.onExport?(d.id) }
+                                    Divider()
+                                }
+                                Button("Elimina", role: .destructive) { model.requestDelete(d.id) }
+                            }
                     }
                 }
+                .listStyle(.sidebar)
+                .tint(Brand.accent)
+                .overlay {
+                    if model.loaded && model.items.isEmpty {
+                        if model.query.trimmingCharacters(in: .whitespaces).isEmpty {
+                            SidebarEmptyState(title: L("Nessuna discussione"), systemImage: "bubble.left.and.bubble.right",
+                                              description: L("Le discussioni avviate compaiono qui."))
+                        } else {
+                            SidebarEmptyState(title: L("Nessun risultato"), systemImage: "magnifyingglass",
+                                              description: String(format: L("Nessuna discussione contiene «%@»."),
+                                                                  model.query.trimmingCharacters(in: .whitespaces)))
+                        }
+                    }
+                }
+                // Convenzione Mac: ⌫ sulla discussione selezionata la elimina (con conferma).
+                .onDeleteCommand { model.requestDelete() }
+                // Una discussione che entra in cima (nuova o con una domanda di seguito) si deve vedere: la
+                // tabella resta ancorata alla riga che era in cima e la nuova finirebbe sopra, fuori vista.
+                .onChange(of: model.items.first?.id) { _, first in
+                    if let first { proxy.scrollTo(first, anchor: .top) }
+                }
             }
-            // Convenzione Mac: ⌫ sulla discussione selezionata la elimina (con conferma).
-            .onDeleteCommand { model.requestDelete() }
         }
         // Barra fissa in fondo: solo l'ingranaggio delle Impostazioni, a sinistra (scelta dell'utente).
         // Nessuno sfondo opaco: resta sul vetro della barra laterale di sistema.
