@@ -157,7 +157,7 @@
 "Gratis" = "Free";
 "Gratis con i modelli “:free”, senza credito." = "Free with “:free” models, no credit needed.";
 "Gratis con limiti (piano “Experiment”)." = "Free with limits (“Experiment” plan).";
-"Gratis con limiti giornalieri." = "Free with daily limits.";
+"A crediti: 5 $ di prova per 30 giorni (serve la carta), poi a pagamento." = "Credits only: a $5 trial for 30 days (card required), then paid.";
 "Gratis, senza carta di credito, molto veloce." = "Free, no credit card required, very fast.";
 "Gratis, senza carta di credito." = "Free, no credit card required.";
 "Ha limiti al minuto: con molti modelli insieme l'app aspetta e riprova da sola." = "Has per-minute limits: with many models at once, the app waits and retries on its own.";
@@ -215,7 +215,7 @@
 "Attiva modalità a tutto schermo" = "Enter Full Screen";
 "Modelli" = "Models";
 "Modelli GPT ufficiali di OpenAI" = "Official OpenAI GPT models";
-"Modelli gratuiti “:free” (per esempio Nemotron e DeepSeek)" = "Free “:free” models (for example Nemotron and DeepSeek)";
+"Modelli gratuiti “:free” (per esempio Nemotron e Gemma)" = "Free “:free” models (for example Nemotron and Gemma)";
 "Modello" = "Model";
 "Modifica" = "Edit";
 "Mostra" = "Show";
@@ -272,7 +272,7 @@
 "Preselezionata" = "Preselected";
 "Partecipano" = "Participants";
 "Partecipanti" = "Participants";
-"Per avere GPT gratis non serve questa chiave: GPT-OSS, il modello open di OpenAI, è disponibile gratis con Groq, Cerebras o OpenRouter." = "You don’t need this key to use GPT for free: GPT-OSS, OpenAI’s open model, is available for free with Groq, Cerebras or OpenRouter.";
+"Per avere GPT gratis non serve questa chiave: GPT-OSS, il modello open di OpenAI, è disponibile gratis con Groq o OpenRouter." = "You don’t need this key to use GPT for free: GPT-OSS, OpenAI’s open model, is available for free with Groq or OpenRouter.";
 "Personalizza la barra strumenti…" = "Customize Toolbar…";
 "Più modelli di intelligenza artificiale discutono la tua domanda in round, si criticano a vicenda e un giudice emette il verdetto. Chiavi e discussioni restano su questo Mac." = "Several AI models discuss your question in rounds, critique each other, and a judge delivers the verdict. Keys and discussions stay on this Mac.";
 "Più modelli rispondono alla stessa domanda, si criticano a vicenda per il numero di round scelto e rivedono la propria posizione. Alla fine il giudice scrive il verdetto." = "Several models answer the same question, critique each other for the chosen number of rounds and revise their positions. At the end the judge writes the verdict.";

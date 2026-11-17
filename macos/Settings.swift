@@ -44,7 +44,7 @@ let providerGuides: [ProviderGuide] = [
         note: L("Ha limiti al minuto: con molti modelli insieme l'app aspetta e riprova da sola.")),
     ProviderGuide(
         id: "openrouter", name: "OpenRouter", free: true, optional: false,
-        unlocks: L("Modelli gratuiti “:free” (per esempio Nemotron e DeepSeek)"),
+        unlocks: L("Modelli gratuiti “:free” (per esempio Nemotron e Gemma)"),
         summary: L("Gratis con i modelli “:free”, senza credito."),
         url: URL(string: "https://openrouter.ai/settings/keys")!,
         steps: [
@@ -65,9 +65,9 @@ let providerGuides: [ProviderGuide] = [
         ],
         note: L("Utile come voce europea in più nel consiglio.")),
     ProviderGuide(
-        id: "cerebras", name: "Cerebras", free: true, optional: true,
+        id: "cerebras", name: "Cerebras", free: false, optional: true,
         unlocks: L("GPT-OSS, Qwen, Llama e altri modelli open, molto veloci"),
-        summary: L("Gratis con limiti giornalieri."),
+        summary: L("A crediti: 5 $ di prova per 30 giorni (serve la carta), poi a pagamento."),
         url: URL(string: "https://cloud.cerebras.ai")!,
         steps: [
             L("Apri Cerebras Cloud e registrati."),
@@ -85,7 +85,7 @@ let providerGuides: [ProviderGuide] = [
             L("In “API keys” clicca “Create new secret key”."),
             L("Copia la chiave (inizia con “sk-”) e incollala qui sopra."),
         ],
-        note: L("Per avere GPT gratis non serve questa chiave: GPT-OSS, il modello open di OpenAI, è disponibile gratis con Groq, Cerebras o OpenRouter.")),
+        note: L("Per avere GPT gratis non serve questa chiave: GPT-OSS, il modello open di OpenAI, è disponibile gratis con Groq o OpenRouter.")),
 ]
 
 // MARK: - Chiavi API
