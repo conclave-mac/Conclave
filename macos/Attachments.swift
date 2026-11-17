@@ -57,10 +57,18 @@ struct AttachmentItem: Identifiable, Equatable {
     var name: String
     var kind: AttachmentKind
     var text: String?
+    /// JPEG ridotto in base64 (solo immagini): viaggia al motore insieme al testo OCR. Escluso da ==.
+    var imageData: String?
     var error: String?
     var truncated = false
     var loading: Bool { text == nil && error == nil }
     var chars: Int { text?.utf16.count ?? 0 }
+
+    static func == (a: AttachmentItem, b: AttachmentItem) -> Bool {
+        a.id == b.id && a.name == b.name && a.kind == b.kind && a.text == b.text
+            && a.error == b.error && a.truncated == b.truncated
+            && (a.imageData == nil) == (b.imageData == nil)
+    }
 }
 
 /// Allegato di una discussione salvata: solo i metadati (il testo resta al motore).
@@ -108,24 +116,24 @@ enum AttachmentReader {
     }
 
     /// Legge il testo di un file. Lento (OCR, PDF grandi): da chiamare fuori dal thread principale.
-    static func read(_ url: URL, kind: AttachmentKind) throws -> String {
+    static func read(_ url: URL, kind: AttachmentKind) throws -> (text: String, imageData: String?) {
         switch kind {
-        case .pdf: return try readPDF(url)
-        case .text: return try readText(url)
+        case .pdf: return (try readPDF(url), nil)
+        case .text: return (try readText(url), nil)
         case .image:
             guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
                   let img = CGImageSourceCreateImageAtIndex(src, 0, nil)
             else { throw Failure(message: L("Immagine non leggibile.")) }
-            return try ocr([img])
+            return (try ocr([img]), ImageEncoder.jpegBase64(src))
         }
     }
 
-    /// Testo riconosciuto in un'immagine incollata (dati PNG/TIFF degli appunti).
-    static func readImage(_ data: Data) throws -> String {
+    /// Testo riconosciuto in un'immagine incollata (dati PNG/TIFF degli appunti) e immagine ridotta.
+    static func readImage(_ data: Data) throws -> (text: String, imageData: String?) {
         guard let src = CGImageSourceCreateWithData(data as CFData, nil),
               let img = CGImageSourceCreateImageAtIndex(src, 0, nil)
         else { throw Failure(message: L("Immagine non leggibile.")) }
-        return try ocr([img])
+        return (try ocr([img]), ImageEncoder.jpegBase64(src))
     }
 
     private static func readText(_ url: URL) throws -> String {
@@ -381,3 +389,48 @@ func chooseAttachments(_ done: @escaping ([URL]) -> Void) {
     if let win = NSApp.keyWindow ?? NSApp.mainWindow { panel.beginSheetModal(for: win, completionHandler: handler) }
     else { panel.begin(completionHandler: handler) }
 }
+
+// MARK: - Immagine ridotta per il motore
+
+// BEGIN ImageEncoder (estratto dalle prove: nessuna dipendenza dal resto dell'app)
+enum ImageEncoder {
+    /// Massimo di caratteri base64 per allegato e in totale (contratto con il motore).
+    static let maxPerImage = 250_000
+    static let maxTotal = 600_000
+
+    /// JPEG (senza prefisso data:) in base64, lato lungo <= 1280 px; se troppo grande riprova con
+    /// qualità e dimensioni minori. nil se non ci si riesce: l'immagine viaggia solo come testo.
+    static func jpegBase64(_ src: CGImageSource) -> String? {
+        for (side, quality) in [(1280, 0.7), (1024, 0.5), (768, 0.35), (512, 0.35)] as [(Int, Double)] {
+            guard let data = jpeg(src, maxSide: side, quality: quality) else { return nil }
+            let b64 = data.base64EncodedString()
+            if b64.utf16.count <= maxPerImage { return b64 }
+        }
+        return nil
+    }
+
+    static func jpeg(_ src: CGImageSource, maxSide: Int, quality: Double) -> Data? {
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxSide,
+        ]
+        guard let thumb = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) else { return nil }
+        let w = thumb.width, h = thumb.height
+        // JPEG non ha alfa: si disegna su sfondo bianco.
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        let rect = CGRect(x: 0, y: 0, width: w, height: h)
+        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        ctx.fill(rect)
+        ctx.draw(thumb, in: rect)
+        guard let flat = ctx.makeImage() else { return nil }
+        let out = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(out, "public.jpeg" as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dest, flat, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return out as Data
+    }
+}
+// END ImageEncoder

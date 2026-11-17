@@ -339,7 +339,17 @@ final class CouncilStore: ObservableObject {
     /// Allegati pronti nel formato del motore, con i metadati da mostrare.
     private static func payload(_ items: [AttachmentItem]) -> (body: [[String: String]], meta: [AttachmentMeta]) {
         let sent = items.compactMap { a in a.text.map { (a, $0) } }
-        return (sent.map { ["name": $0.0.name, "kind": $0.0.kind.rawValue, "text": $0.1] },
+        // imageData: solo immagini, entro il totale concordato col motore; l'eccesso resta solo testo OCR.
+        var imageTotal = 0
+        let body: [[String: String]] = sent.map { a, text in
+            var d = ["name": a.name, "kind": a.kind.rawValue, "text": text]
+            if a.kind == .image, let img = a.imageData, imageTotal + img.utf16.count <= ImageEncoder.maxTotal {
+                imageTotal += img.utf16.count
+                d["imageData"] = img
+            }
+            return d
+        }
+        return (body,
                 sent.map { AttachmentMeta(name: $0.0.name, kind: $0.0.kind, chars: $0.0.chars) })
     }
 
@@ -405,12 +415,13 @@ final class CouncilStore: ObservableObject {
     }
 
     private func load(_ id: UUID, _ items: ReferenceWritableKeyPath<CouncilStore, [AttachmentItem]>,
-                      _ read: @escaping @Sendable () throws -> String) {
+                      _ read: @escaping @Sendable () throws -> (text: String, imageData: String?)) {
         Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) { Result { try read() } }.value
             guard let self, let i = self[keyPath: items].firstIndex(where: { $0.id == id }) else { return }
             switch result {
-            case .success(let text):
+            case .success(let (text, imageData)):
+                self[keyPath: items][i].imageData = imageData
                 let cut = AttachmentReader.truncate(text, to: AttachmentLimits.maxChars)
                 self[keyPath: items][i].text = cut
                 self[keyPath: items][i].truncated = cut.utf16.count < text.utf16.count
