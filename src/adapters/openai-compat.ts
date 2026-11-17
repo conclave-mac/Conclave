@@ -190,6 +190,7 @@ export async function chatOpenAI(p: Provider, models: string[], req: ChatRequest
         // Il provider rifiuta le immagini (o il formato): una volta sola si riprova senza, invece di far fallire la voce.
         if (e instanceof HttpError && e.status === 400 && !imagesDropped && imagesFor(model, req.images).length) {
           imagesDropped = true;
+          console.error(`[immagini] ${model} ha risposto 400 con le immagini: riprovo con il solo testo`);
           req = { ...req, images: undefined };
           continue;
         }
