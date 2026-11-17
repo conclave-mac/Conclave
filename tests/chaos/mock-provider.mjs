@@ -216,6 +216,15 @@ async function handle(req, res) {
       if (!mt || mt > 1000) return send(res, 429, err(`Request too large for model \`otpm\` in organization org-chaos service tier \`on_demand\` on output tokens per minute (OTPM): Limit 1000, Requested ${mt || 4096}. The request's expected output tokens exceed the enforced limit; reduce max_tokens (or the request's expected output) and try again.`, "tokens"));
       return send(res, 200, completion(model, okText(model, user)));
     }
+    case "otpm-used": {
+      // Come Qwen su Groq quando il minuto è già in parte consumato: passa solo chiedendo ≤ 400 token.
+      const mt = Number(body.max_tokens ?? 4096);
+      if (mt > 400) return send(res, 429, err(`Rate limit reached for model \`otpm-used\` in organization \`org_01abcdefghijklmnop\` service tier \`on_demand\` on output tokens per minute (OTPM): Limit 1000, Used 600, Requested ${mt}. Please try again in 20s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing`, "tokens"));
+      return send(res, 200, completion(model, okText(model, user)));
+    }
+    case "gemini-badkey":
+      // 400 che non c'entra con le immagini (come Gemini con una chiave non valida).
+      return send(res, 400, err("API key not valid. Please pass a valid API key.", "invalid_request_error"));
     case "leaky": {
       // Come OpenAI con una chiave sbagliata: il provider ripete la chiave ricevuta nel messaggio.
       const key = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");

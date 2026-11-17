@@ -86,6 +86,18 @@ export function outputLimitFrom(message: string): number {
   return lim > 0 ? Math.max(200, Math.floor(lim * 0.8)) : 0;
 }
 
+/**
+ * "…output tokens per minute (OTPM): Limit 1000, Used 608, Requested 767…" → token in uscita ancora
+ * disponibili in questo minuto, se bastano per una risposta utile (almeno 300), altrimenti 0.
+ */
+export function outputRoomFrom(message: string): number {
+  const m = message.match(/Limit\s+(\d+),\s*Used\s+(\d+),\s*Requested\s+(\d+)/i);
+  if (!m || !/output tokens/i.test(message)) return 0;
+  const [lim, used, requested] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const room = Math.floor((lim - used) * 0.95);
+  return room >= 300 && room < requested ? room : 0;
+}
+
 /** Errore 429 che non si risolve aspettando qualche secondo. */
 export function isHardLimit(message: string): boolean {
   return /exceeded your current quota|limit: 0\b|per day|\(RPD\)|\(TPD\)|reduce your message size|request too large/i.test(message);
@@ -154,6 +166,8 @@ export async function once(p: Provider, model: string, req: ChatRequest, timeout
     } catch { /* risposta non JSON */ }
     const ra = Number(res.headers.get("retry-after"));
     const hinted = parseTryAgain(msg);
+    // Pubblicità del piano a pagamento in coda agli errori di Groq: inutile nella chat e nelle esportazioni.
+    msg = msg.replace(/\s*Need more tokens\?[\s\S]*$/i, "");
     throw new HttpError(res.status, `HTTP ${res.status}: ${redact(msg)}`, Number.isFinite(ra) && ra > 0 ? ra : hinted);
   }
 
@@ -177,25 +191,39 @@ export async function once(p: Provider, model: string, req: ChatRequest, timeout
  */
 export async function chatOpenAI(p: Provider, models: string[], req: ChatRequest): Promise<ChatResult> {
   const started = Date.now();
-  let imagesDropped = false; // un 400 con le immagini: si riprova una volta con il solo testo
   let lastError: unknown;
   for (const [i, model] of models.entries()) {
     const hasNext = i < models.length - 1;
     const maxRetries = hasNext ? 0 : MAX_RETRIES; // con una riserva disponibile non si aspetta
+    // Solo per questo modello e questa chiamata: le riserve successive ricevono la richiesta intera.
+    let withoutImages = false; // un 400 con le immagini: si riprova una volta con il solo testo
+    let tighterMax = 0;        // limite di token al minuto quasi esaurito: si chiede meno uscita
     for (let attempt = 0; ; attempt++) {
+      const r: ChatRequest = {
+        ...req,
+        ...(withoutImages ? { images: undefined } : {}),
+        ...(tighterMax ? { maxTokens: Math.min(req.maxTokens ?? 4096, tighterMax) } : {}),
+      };
       try {
         // Se c'è una riserva, un modello lento non deve consumare tutto il tempo del round.
-        const text = await once(p, model, req, req.timeoutMs ?? (hasNext ? ATTEMPT_WITH_RESERVE_MS : TIMEOUT_MS));
+        const text = await once(p, model, r, req.timeoutMs ?? (hasNext ? ATTEMPT_WITH_RESERVE_MS : TIMEOUT_MS));
+        // Le immagini erano la causa del 400 solo se il solo testo passa: allora non si riprovano più.
+        if (withoutImages) imageRefused.add(model);
         return { text, ms: Date.now() - started, model };
       } catch (e) {
         lastError = e;
         if (req.signal?.aborted) throw e;
         // Il provider rifiuta le immagini (o il formato): una volta sola si riprova senza, invece di far fallire la voce.
-        if (e instanceof HttpError && e.status === 400 && !imagesDropped && imagesFor(model, req.images).length) {
-          imagesDropped = true;
-          imageRefused.add(model);
+        if (e instanceof HttpError && e.status === 400 && !withoutImages && imagesFor(model, req.images).length) {
+          withoutImages = true;
           console.error(`[immagini] ${model} ha risposto 400 con le immagini: riprovo con il solo testo`);
-          req = { ...req, images: undefined };
+          continue;
+        }
+        // Limite di token in uscita al minuto (Groq: "Limit 1000, Used 608, Requested 767"): se resta
+        // margine si riprova subito chiedendo meno token, invece di aspettare e saltare il round.
+        const room = e instanceof HttpError && e.status === 429 ? outputRoomFrom(e.message) : 0;
+        if (room > 0 && !tighterMax) {
+          tighterMax = room;
           continue;
         }
         // Modello che non risponde in tempo o risposta illeggibile: si passa alla riserva, se c'è.

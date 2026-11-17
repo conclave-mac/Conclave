@@ -1531,6 +1531,7 @@ const DESCR = {
   ba: "sintesi del dibattito dopo il verdetto",
   bb: "ruoli assegnabili nel round di critica",
   bc: "immagini vere solo alle voci Gemini",
+  bd: "limite di token al minuto, 400 non legati alle immagini, id organizzazione nascosti",
 };
 
 // ---------- immagini allegate (solo Gemini) ----------
@@ -1538,6 +1539,38 @@ const DESCR = {
 // Con imageData la voce di famiglia gemini riceve l'immagine vera (data URL nel body), le altre solo il testo
 // OCR; vale per partecipante, giudice e domanda di seguito; imageData non esce mai dall'API né dai log; 400 del
 // provider con immagini → si riprova una volta senza; input ostili → 400.
+SCENARIOS.bd = async function bd() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const { chatOpenAI, imagesFor, outputRoomFrom } = await import("../../src/adapters/openai-compat.ts");
+  const { redact } = await import("../../src/redact.ts");
+  process.env.CHAOS_UNIT_KEY = "chiave-di-prova";
+  const p = { name: "Chaos", baseUrl: `http://127.0.0.1:${mockPort}/v1`, keyEnv: "CHAOS_UNIT_KEY" };
+  const wrong = [];
+  const user = QUESTION("bd-unit");
+  // 1. 429 sui token in uscita con margine: si riprova subito con meno token, senza aspettare i 20 s.
+  const t0 = Date.now();
+  try {
+    const r = await chatOpenAI(p, ["otpm-used"], { system: "s", user, maxTokens: 4096 });
+    if (!r.text) wrong.push("otpm: risposta vuota");
+    if (Date.now() - t0 > 5000) wrong.push(`otpm: ha aspettato ${Date.now() - t0} ms`);
+  } catch (e) { wrong.push(`otpm: ${e.message.slice(0, 120)}`); }
+  if (outputRoomFrom("output tokens per minute (OTPM): Limit 1000, Used 900, Requested 800") !== 0) wrong.push("margine sotto 300 accettato");
+  if (outputRoomFrom("tokens per minute (TPM): Limit 6000, Used 5800, Requested 900") !== 0) wrong.push("TPM scambiato per OTPM");
+  // 2. 400 non legato alle immagini: la voce fallisce ma le immagini non vengono disattivate per sempre.
+  try { await chatOpenAI(p, ["gemini-badkey"], { system: "s", user, images: ["/9j/AAAA"] }); wrong.push("badkey: nessun errore"); }
+  catch (e) { if (!/API key not valid/.test(e.message)) wrong.push(`badkey: ${e.message.slice(0, 80)}`); }
+  if (!imagesFor("gemini-badkey", ["x"]).length) wrong.push("badkey: immagini disattivate per un 400 sulla chiave");
+  // 3. Rifiuto vero delle immagini: ricordato solo dopo che il solo testo è passato.
+  try { await chatOpenAI(p, ["gemini-noimg"], { system: "s", user, images: ["/9j/AAAA"] }); }
+  catch (e) { wrong.push(`noimg: ${e.message.slice(0, 80)}`); }
+  if (imagesFor("gemini-noimg", ["x"]).length) wrong.push("noimg: rifiuto non ricordato");
+  // 4. Id dell'organizzazione e pubblicità del piano a pagamento fuori dagli errori.
+  const red = redact("in organization `org_01abcdefghijklmnop` service tier");
+  if (red.includes("org_01abcdef")) wrong.push("id organizzazione non nascosto");
+  return [wrong.length === 0, wrong.join("; ") || "margine OTPM usato, immagini disattivate solo se davvero rifiutate, org nascosto", secs()];
+};
+
 SCENARIOS.bc = async function bc() {
   const started = Date.now();
   const secs = () => (Date.now() - started) / 1000;
