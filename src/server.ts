@@ -354,7 +354,10 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     );
     if (d.attachments.length) {
       try { saveAttachments(id, d.attachments); }
-      catch (e) { finishDebate(id, "failed", null); throw e; } // niente discussione orfana "in corso"
+      catch (e) { // niente discussione orfana "in corso"
+        try { finishDebate(id, "failed", null); } catch (err) { logError(`chiusura ${id}`)(err); }
+        throw e;
+      }
     }
     const opts = {
       rounds: d.rounds, judge: d.judge, claudeModel: d.claudeModel, parentContext: d.parentContext,
@@ -406,7 +409,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
         if (f.attachments.length) saveAttachments(id, f.attachments, turn);
       } catch (e) {
         // Scrittura fallita (disco pieno, DB occupato): senza questo la discussione resterebbe "in corso" per sempre (409).
-        finishTurn(id, "failed");
+        try { finishTurn(id, "failed"); } catch (err) { logError(`chiusura ${id}`)(err); }
         throw e;
       }
       track(id, turn, (r) => {
