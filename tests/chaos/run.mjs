@@ -2012,6 +2012,138 @@ SCENARIOS.bf = async function bf() {
   return [wrong.length === 0, wrong.slice(0, 4).join("; ") || "3 immagini su 5, riprova senza solo per dimensione, max_tokens abbassato con le immagini, base64 mascherato", secs()];
 };
 
+// ---------- ruoli visibili e nei turni; immagini nei turni di seguito ----------
+
+// Ruolo nei partecipanti di start e _meta (solo per chi ce l'ha, solo con il round di critica); "Rilancia
+// il consiglio" riusa i ruoli della discussione se non passati, accetta quelli nuovi, {} li toglie, 400 sui
+// ruoli sconosciuti, id non partecipanti ignorati.
+SCENARIOS.bg = async function bg() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const wrong = [];
+  const TAG = "conv-rolevis";
+  const roleMap = (list) => Object.fromEntries((list ?? []).filter((p) => "role" in p).map((p) => [p.id, p.role]));
+  const startOf = (events) => events.find((e) => e.type === "start");
+  const metaOf = (state, turn) => {
+    try { return JSON.parse(turnMsgs(state, turn).find((m) => m.model_id === "_meta" && m.phase === "start")?.content ?? "[]"); } catch { return []; }
+  };
+  const lastCrit = async (model) => (await promptsOf(TAG)).filter((p) => p.phase === "critique" && p.model === model).at(-1)?.user ?? "";
+  const r = await debate(TAG, ["ok-a", "ok-b"], 1, "ok-a", 60_000, { extra: { roles: { "ok-a": "checker", "non-partecipa": "devil" } } });
+  const bad = expectDone(r, 60);
+  if (bad) return [false, bad, secs()];
+  const want = JSON.stringify({ "ok-a": "checker" });
+  if (JSON.stringify(roleMap(startOf(r.events)?.participants)) !== want) wrong.push(`start: ${JSON.stringify(startOf(r.events)?.participants)}`);
+  if (JSON.stringify(roleMap(metaOf(r.state, 0))) !== want) wrong.push(`_meta: ${JSON.stringify(metaOf(r.state, 0))}`);
+  // Senza round di critica il ruolo non agisce e non si mostra.
+  const r0 = await debate("conv-rolevis0", ["ok-a", "ok-b"], 0, "ok-a", 60_000, { extra: { roles: { "ok-a": "devil" } } });
+  if (Object.keys(roleMap(startOf(r0.events)?.participants)).length) wrong.push("ruolo mostrato con 0 round");
+  const council = { mode: "council", models: ["ok-a", "ok-b"], rounds: 1, judge: "ok-a" };
+  // 1. Senza roles: si riusano quelli della discussione.
+  const t1 = await turnOf(r.id, { ...council, question: FQ(TAG, "E per il ritorno?") }, 60_000);
+  if (t1.post.status !== 201 || t1.state?.status !== "done") return [false, `turno 1 → ${t1.post.status} ${t1.state?.status}`, secs()];
+  if (JSON.stringify(roleMap(startOf(t1.events)?.participants)) !== want) wrong.push(`turno 1 start: ${JSON.stringify(startOf(t1.events)?.participants)}`);
+  if (JSON.stringify(roleMap(metaOf(t1.state, 1))) !== want) wrong.push("turno 1 _meta senza ruolo");
+  if (!(await lastCrit("ok-a")).includes("VERIFICATORE DI FATTI")) wrong.push("turno 1: verificatore non riusato");
+  // 2. Ruoli nuovi: sostituiscono quelli della discussione; id non partecipanti ignorati.
+  const t2 = await turnOf(r.id, { ...council, question: FQ(TAG, "E in estate?"), roles: { "ok-b": "devil", "altro": "checker" } }, 60_000);
+  if (t2.post.status !== 201 || t2.state?.status !== "done") return [false, `turno 2 → ${t2.post.status} ${t2.state?.status}`, secs()];
+  if (JSON.stringify(roleMap(startOf(t2.events)?.participants)) !== JSON.stringify({ "ok-b": "devil" })) wrong.push(`turno 2 start: ${JSON.stringify(startOf(t2.events)?.participants)}`);
+  if (!(await lastCrit("ok-b")).includes("AVVOCATO DEL DIAVOLO") || (await lastCrit("ok-a")).includes("VERIFICATORE DI FATTI")) wrong.push("turno 2: ruoli nuovi non applicati");
+  // 3. Riuso dall'ultimo consiglio rilanciato, non dal dibattito originale.
+  const t3 = await turnOf(r.id, { ...council, question: FQ(TAG, "E in inverno?") }, 60_000);
+  if (JSON.stringify(roleMap(startOf(t3.events)?.participants)) !== JSON.stringify({ "ok-b": "devil" })) wrong.push("turno 3: non riusa l'ultimo consiglio");
+  // 4. {} esplicito: nessun ruolo.
+  const t4 = await turnOf(r.id, { ...council, question: FQ(TAG, "E di notte?"), roles: {} }, 60_000);
+  if (Object.keys(roleMap(startOf(t4.events)?.participants)).length) wrong.push("turno 4: {} non toglie i ruoli");
+  // 5. Validazione come POST /api/debates; la discussione resta utilizzabile.
+  for (const roles of [{ "ok-a": "boss" }, "devil", ["devil"]]) {
+    const p = await api("POST", followupPath(r.id), { body: { ...council, claudeModel: "sonnet", question: FQ(TAG, "x"), roles } });
+    if (p.status !== 400) wrong.push(`roles ${JSON.stringify(roles)} → ${p.status}, atteso 400`);
+  }
+  const after = await api("GET", `/api/debates/${r.id}`);
+  if (after.body?.status === "running") wrong.push("discussione bloccata in corso dopo un 400");
+  // Risposta rapida: roles ignorati.
+  const q = await turnOf(r.id, { question: FQ(TAG, "Riassumi"), responder: "ok-b", roles: { "ok-a": "boss" } }, 60_000);
+  if (q.post.status !== 201) wrong.push(`risposta rapida con roles → ${q.post.status}`);
+  if (wrong.length) return [false, wrong.slice(0, 4).join("; "), secs()];
+  return [true, "role in start/_meta, riuso nei turni, ruoli nuovi, {} vuoto, 400, rapida li ignora", secs()];
+};
+
+// Immagini nei turni di seguito: tetto per chiamata (unità) e, dal vivo, solo quelle della domanda iniziale
+// più quelle del turno corrente (non quelle dei turni intermedi), con risposta rapida e consiglio rilanciato.
+SCENARIOS.bh = async function bh() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const wrong = [];
+  const { imagesOf, IMAGES_MAX, IMAGES_MAX_CHARS } = await import("../../src/debate/prompts.ts");
+  const im = (c, n) => ({ name: `${c}.jpg`, kind: "image", text: "x", imageData: c.repeat(n) });
+  const short = (xs) => xs.map((x) => `${x[0]}${x.length}`).join(",");
+  const cases = [
+    [[[im("A", 400_000)], [im("B", 300_000)]], "B300000"],
+    [[[im("A", 200_000), im("B", 200_000)], [im("C", 100_000)]], "A200000,B200000,C100000"],
+    [[[im("A", 500_000), im("B", 50_000)], [im("C", 100_000)]], "B50000,C100000"],
+    [[Array.from({ length: 10 }, (_, i) => im("ABCDEFGHIJ"[i], 10))], "CDEFGHIJ".split("").map((c) => `${c}10`).join(",")],
+    [[undefined, [{ name: "t", kind: "text", text: "x" }]], ""],
+  ];
+  for (const [lists, out] of cases) if (short(imagesOf(...lists)) !== out) wrong.push(`imagesOf → ${short(imagesOf(...lists))}, atteso ${out}`);
+  if (IMAGES_MAX !== 8 || IMAGES_MAX_CHARS !== 600_000) wrong.push("limiti cambiati");
+
+  const cfg = {
+    providers: { chaos: { name: "Chaos", baseUrl: `http://127.0.0.1:${mockPort}/v1`, keyEnv: "CHAOS_KEY" } },
+    judge: { id: "j", label: "Giudice", kind: "openai", provider: "chaos", model: "ok-a" },
+    models: [
+      { id: "gem", label: "Gemini", kind: "openai", provider: "chaos", model: GEMINI_MODELS[0], family: "gemini", default: false },
+      { id: "ok", label: "Altro", kind: "openai", provider: "chaos", model: "ok-a", family: "ok-a", default: false },
+    ],
+  };
+  const tok = randomBytes(32).toString("hex");
+  const eng = await startExtraEngine(cfg, JSON.stringify({ token: tok, keys: { CHAOS_KEY } }));
+  const call = (method, path, body) => api(method, path, { port: eng.port, headers: authed(tok), body });
+  const waitDone = async (id) => {
+    for (let i = 0; i < 200; i++) {
+      const r = await call("GET", `/api/debates/${id}`);
+      if (r.body?.status && r.body.status !== "running") return r.body;
+      await new Promise((res) => setTimeout(res, 300));
+    }
+    return null;
+  };
+  try {
+    for (let i = 0; i < 50; i++) {
+      const ms = (await call("GET", "/api/models")).body?.models ?? [];
+      if (["gem", "ok"].every((id) => ms.find((m) => m.id === id)?.available)) break;
+      await new Promise((res) => setTimeout(res, 300));
+    }
+    const TAG = "conv-img-turns";
+    // Prima lettera dopo "/9j/" diversa per ogni immagine: si riconosce nei primi 30 caratteri del data URL.
+    const img = (c) => ({ name: `${c}.jpg`, kind: "image", text: `OCR-${c}`, imageData: `/9j/${c.repeat(4 * 300)}` });
+    const tagOf = (url) => url.slice("data:image/jpeg;base64,/9j/".length, "data:image/jpeg;base64,/9j/".length + 1);
+    const c = await call("POST", "/api/debates", { question: QUESTION(TAG), models: ["gem", "ok"], rounds: 0, judge: "ok", claudeModel: "sonnet", attachments: [img("A")] });
+    if (c.status !== 201) return [false, `POST → ${c.status} ${c.text.slice(0, 100)}`, secs()];
+    if ((await waitDone(c.body.id))?.status !== "done") return [false, "dibattito di partenza non concluso", secs()];
+    const turn = async (body) => {
+      const p = await call("POST", `/api/debates/${c.body.id}/followups`, { claudeModel: "sonnet", ...body });
+      if (p.status !== 201) { wrong.push(`seguito → ${p.status} ${p.text.slice(0, 80)}`); return; }
+      await waitDone(c.body.id);
+    };
+    const gemLast = async (phase) => (await promptsOf(TAG)).filter((p) => p.model === GEMINI_MODELS[0] && p.phase === phase).at(-1);
+    await turn({ question: FQ(TAG, "Primo seguito"), mode: "quick", responder: "ok", attachments: [img("B")] });
+    await turn({ question: FQ(TAG, "Secondo seguito"), mode: "quick", responder: "gem", attachments: [img("C")] });
+    const a2 = await gemLast("answer");
+    if (a2?.imageUrls.map(tagOf).join() !== "A,C") wrong.push(`rapida: immagini ${a2?.imageUrls.map(tagOf).join()} invece di A,C`);
+    if (!a2?.user.includes("OCR-B")) wrong.push("rapida: testo OCR del turno intermedio perso");
+    await turn({ question: FQ(TAG, "Rilancio"), mode: "council", models: ["gem", "ok"], rounds: 0, judge: "ok" });
+    const i3 = await gemLast("initial");
+    if (i3?.imageUrls.map(tagOf).join() !== "A") wrong.push(`consiglio: immagini ${i3?.imageUrls.map(tagOf).join()} invece di A`);
+  } finally {
+    eng.proc.kill("SIGTERM");
+  }
+  if (wrong.length) return [false, wrong.slice(0, 4).join("; "), secs()];
+  return [true, `${cases.length} casi del tetto; nei turni solo immagini della domanda iniziale e del turno corrente`, secs()];
+};
+
+DESCR.bg = "ruoli visibili e riusati in Rilancia il consiglio";
+DESCR.bh = "immagini nei turni di seguito: iniziali + turno corrente, con tetto";
+
 // ---------- main ----------
 
 async function main() {
