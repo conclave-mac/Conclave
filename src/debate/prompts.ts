@@ -120,12 +120,19 @@ export function initialPrompt(question: string, parent?: ParentContext, m?: Mate
 Dai la tua risposta indipendente: prima la conclusione, poi il ragionamento essenziale e le ipotesi su cui si regge. Chiudi con una riga su cosa ti farebbe cambiare idea.`;
 }
 
-export function critiquePrompt(question: string, own: string, others: Labeled[], devil: boolean, m?: Material): string {
-  const role = devil
-    ? `\nRUOLO SPECIALE: sei l'AVVOCATO DEL DIAVOLO. Individua la risposta che sembra più convincente (anche la tua) e attaccane i punti deboli con il massimo rigore, anche se alla fine le dai ragione.`
-    : "";
+/** Ruoli assegnabili a un partecipante: agiscono nel round di critica. */
+export type Role = "devil" | "checker";
+export const ROLES: readonly Role[] = ["devil", "checker"];
+
+const ROLE_TEXT: Record<Role, string> = {
+  devil: `\nRUOLO SPECIALE: sei l'AVVOCATO DEL DIAVOLO. Individua la risposta che sembra più convincente (anche la tua) e attaccane i punti deboli con il massimo rigore, anche se alla fine le dai ragione.`,
+  checker: `\nRUOLO SPECIALE: sei il VERIFICATORE DI FATTI. Oltre alla critica, controlla le affermazioni verificabili di ogni risposta (numeri, date, nomi, citazioni, nessi causali) e segnala quelle sbagliate, imprecise o non verificabili, dicendo cosa è corretto. Non inventare correzioni: se non sei sicuro, scrivilo.`,
+};
+
+export function critiquePrompt(question: string, own: string, others: Labeled[], role: Role | null, m?: Material): string {
+  const roleText = role ? ROLE_TEXT[role] : "";
   return `${roundHead(m)}\n${question}${attachmentsExcerpt(m)}\n\nLA TUA RISPOSTA INIZIALE:\n${clip(own)}\n\nRISPOSTE DEGLI ALTRI MEMBRI:\n${block(others)}
-${role}
+${roleText}
 Round 1 — Critica. Per ciascuna risposta degli altri, citando la lettera:
 - l'errore o la lacuna più grave (fatti sbagliati, ragionamenti deboli, cose importanti mancanti), con il motivo;
 - il punto in cui ha ragione lei e non tu, se c'è.

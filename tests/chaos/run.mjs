@@ -1529,6 +1529,37 @@ const DESCR = {
   ax: "riga AFFIDABILITÀ (unità)", ay: "confidenza salvata, restituita e nel prompt del giudice",
   az: "giudice senza riga e tempi medi",
   ba: "sintesi del dibattito dopo il verdetto",
+  bb: "ruoli assegnabili nel round di critica",
+};
+
+// ---------- ruoli assegnabili ----------
+
+// Verificatore su ok-a: solo il suo prompt lo contiene, l'avvocato casuale tocca l'altro (ok-b); ruolo
+// sconosciuto → 400; id che non partecipa → ignorato; senza ruoli resta l'avvocato casuale (uno solo).
+SCENARIOS.bb = async function bb() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const wrong = [];
+  const crit = async (tag) => (await promptsOf(tag)).filter((x) => x.phase === "critique");
+  const r1 = await debate("conv-roles-checker", ["ok-a", "ok-b"], 1, "ok-a", 60_000, { extra: { roles: { "ok-a": "checker", "altro-id": "devil" } } });
+  const bad = expectDone(r1, 60);
+  if (bad) return [false, bad, secs()];
+  const c1 = await crit("conv-roles-checker");
+  if (c1.length !== 2) wrong.push(`${c1.length} prompt di critica invece di 2`);
+  if (c1.filter((x) => x.user.includes("VERIFICATORE DI FATTI")).length !== 1) wrong.push("verificatore non su un solo prompt");
+  const d1 = c1.filter((x) => x.user.includes("AVVOCATO DEL DIAVOLO"));
+  if (d1.length !== 1 || d1[0].user.includes("VERIFICATORE DI FATTI")) wrong.push("avvocato casuale: deve essere uno, e non il verificatore");
+  const r2 = await debate("conv-roles-none", ["ok-a", "ok-b"], 1, "ok-a", 60_000);
+  const bad2 = expectDone(r2, 60);
+  if (bad2) return [false, bad2, secs()];
+  const c2 = await crit("conv-roles-none");
+  if (c2.filter((x) => x.user.includes("AVVOCATO DEL DIAVOLO")).length !== 1) wrong.push("senza ruoli: avvocato casuale non unico");
+  for (const roles of [{ "ok-a": "boss" }, "devil", ["devil"]]) {
+    const r = await api("POST", "/api/debates", { body: { question: QUESTION("conv-roles-bad"), models: ["ok-a", "ok-b"], rounds: 1, judge: "ok-a", claudeModel: "sonnet", roles } });
+    if (r.status !== 400) wrong.push(`roles ${JSON.stringify(roles)} → ${r.status}, atteso 400`);
+  }
+  if (wrong.length) return [false, wrong.slice(0, 4).join("; "), secs()];
+  return [true, "ruolo applicato a un solo prompt, avvocato casuale solo tra chi non ha un ruolo, validazione 400", secs()];
 };
 
 // ---------- verdetto breve: riga AFFIDABILITÀ e tempi medi ----------

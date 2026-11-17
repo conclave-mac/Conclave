@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { timingSafeEqual } from "node:crypto";
 import { config, isAvailable, findModel, PORT, selection, validateSelection, saveSelection, type ModelDef } from "./config.ts";
 import { medianMsByModel, JUDGE_KEY, createDebate, listDebates, getDebate, deleteDebate, saveAttachments, saveMessage, nextTurn, hasTurnZeroContent, startTurn, finishTurn, finishDebate } from "./db.ts";
+import { ROLES, type Role } from "./debate/prompts.ts";
 import { runDebate, runQuickAnswer, type DebateEvent, type Rounds } from "./debate/orchestrator.ts";
 import { buildConversation } from "./debate/followup.ts";
 import type { Attachment } from "./debate/prompts.ts";
@@ -120,6 +121,7 @@ interface DebateRequest {
   claudeModel: string;
   parentContext?: { id: number; question: string; verdict: string };
   webSearch: boolean;
+  roles: Record<string, Role>;
   attachments: Attachment[];
 }
 
@@ -198,6 +200,18 @@ function parseWebSearch(body: Record<string, unknown>): boolean {
   return body.webSearch === true;
 }
 
+/** Ruoli speciali `{idVoce: "devil"|"checker"}`: gli id che non partecipano si ignorano, un ruolo sconosciuto è un 400. */
+function parseRoles(value: unknown, models: ModelDef[]): Record<string, Role> {
+  if (value === undefined || value === null) return {};
+  if (typeof value !== "object" || Array.isArray(value)) throw new BadRequest(400, "roles deve essere un oggetto");
+  const out: Record<string, Role> = {};
+  for (const [id, role] of Object.entries(value)) {
+    if (!(ROLES as readonly unknown[]).includes(role)) throw new BadRequest(400, `ruolo non valido: ${ROLES.join(", ")}`);
+    if (models.some((m) => m.id === id)) out[id] = role as Role;
+  }
+  return out;
+}
+
 /** Controlla e normalizza la richiesta di un nuovo dibattito: ogni problema è un 400, mai un 500. */
 function parseDebateRequest(body: Record<string, unknown>): DebateRequest {
   const models = parseModels(body);
@@ -218,7 +232,8 @@ function parseDebateRequest(body: Record<string, unknown>): DebateRequest {
 
   const webSearch = parseWebSearch(body);
   const attachments = parseAttachments(body.attachments);
-  return { question, models, rounds, judge, claudeModel, parentContext, webSearch, attachments };
+  const roles = parseRoles(body.roles, models);
+  return { question, models, rounds, judge, claudeModel, parentContext, webSearch, roles, attachments };
 }
 
 type FollowupRequest =
@@ -325,7 +340,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     if (d.attachments.length) saveAttachments(id, d.attachments);
     const opts = {
       rounds: d.rounds, judge: d.judge, claudeModel: d.claudeModel, parentContext: d.parentContext,
-      webSearch: d.webSearch, attachments: d.attachments,
+      webSearch: d.webSearch, roles: d.roles, attachments: d.attachments,
     };
     track(id, 0, (r) => runDebate(id, d.question, d.models, opts, (e) => send(r, e), r.controller.signal));
     return json(res, 201, { id });

@@ -20,6 +20,8 @@ export interface DebateOptions {
   parentContext?: P.ParentContext & { id: number };
   /** Ricerca sul web prima della fase iniziale. */
   webSearch?: boolean;
+  /** Ruoli speciali per id di voce (agiscono nel round di critica). */
+  roles?: Record<string, P.Role>;
   /** Allegati (testo già estratto dall'app). Non passano agli approfondimenti. */
   attachments?: P.Attachment[];
   /** Turno della chat (0 = dibattito originale). */
@@ -278,11 +280,16 @@ export async function runDebate(
       save(ctx, { model_id: "_note", phase: "critique", content: "Round saltati: ha risposto un solo modello.", error: null, ms: null });
     }
     if (opts.rounds >= 1 && alive().length >= 2) {
-      // Round 1: critica incrociata. L'avvocato del diavolo è scelto a caso.
-      const devil = alive()[Math.floor(Math.random() * alive().length)];
+      // Round 1: critica incrociata. Ruoli scelti dall'utente; se tra i partecipanti attivi nessuno è avvocato
+      // del diavolo, ne tocca uno a caso tra quelli senza ruolo (o tra tutti, se ognuno ha un ruolo).
+      const roles = opts.roles ?? {};
+      const hasDevil = alive().some((d) => roles[d.def.id] === "devil");
+      const free = alive().filter((d) => !roles[d.def.id]);
+      const pool = free.length ? free : alive();
+      const randomDevil = hasDevil ? null : pool[Math.floor(Math.random() * pool.length)];
       await phase(
         "critique",
-        (d) => P.critiquePrompt(question, d.initial!, others(d, (x) => x.initial), d === devil, material),
+        (d) => P.critiquePrompt(question, d.initial!, others(d, (x) => x.initial), d === randomDevil ? "devil" : roles[d.def.id] ?? null, material),
         (d, t) => (d.critique = t),
         () => {},
       );
