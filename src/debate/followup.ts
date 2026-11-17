@@ -11,7 +11,7 @@ export function buildConversation(debateId: number, question: string, turn: numb
   const rows = getConversationRows(debateId).filter((r) => r.turn < turn);
   const attachments = getAttachments(debateId)
     .filter((a) => a.turn < turn)
-    .map(({ name, kind, text }) => ({ name, kind, text }));
+    .map(({ name, kind, text, imageData }) => ({ name, kind, text, ...(imageData ? { imageData } : {}) }));
   const research = rows
     .filter((r) => r.phase === "research" && r.content && r.model_id.startsWith("research:"))
     .map((r) => ({ text: r.content!, date: r.created_at.slice(0, 10) }));

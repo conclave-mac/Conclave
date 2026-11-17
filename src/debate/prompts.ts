@@ -46,7 +46,15 @@ function contextBlock(parent?: ParentContext): string {
 }
 
 /** File allegati alla domanda: il testo lo estrae sempre l'app (PDF, testo, OCR delle immagini). */
-export type Attachment = { name: string; kind: "pdf" | "text" | "image"; text: string };
+export type Attachment = {
+  name: string; kind: "pdf" | "text" | "image"; text: string;
+  /** Solo kind "image": JPEG ridotto in base64 (senza prefisso), per le voci Gemini. */
+  imageData?: string;
+};
+
+/** Immagini vere di un elenco di allegati (al massimo le ultime 8). */
+export const imagesOf = (...lists: (Attachment[] | undefined)[]): string[] =>
+  lists.flatMap((l) => (l ?? []).map((a) => a.imageData).filter((x): x is string => !!x)).slice(-8);
 
 /** Materiale in più per il dibattito: allegati e dossier della ricerca sul web. */
 export type Material = {

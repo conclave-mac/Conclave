@@ -1,6 +1,8 @@
 export interface ChatRequest {
   system: string;
   user: string;
+  /** Immagini allegate (JPEG in base64, senza prefisso): le riceve solo chi ne è idoneo (voci Gemini). */
+  images?: string[];
   maxTokens?: number;
   signal?: AbortSignal;
   /** Un modello della catena non ha risposto in tempo o non esiste più (per spostarlo in fondo). */

@@ -14,6 +14,9 @@ export const MODELS = [
   "empty", "huge", "html", "flaky-critique", "length", "gone", "otpm", "leaky", "titleonly", "tpm", "lag",
 ];
 
+/** Finti modelli Gemini (non in MODELS: li usa solo lo scenario "bc"). "gemini-noimg" rifiuta con 400 le richieste con immagini. */
+export const GEMINI_MODELS = ["gemini-chaos", "gemini-noimg"];
+
 /** Modelli di Groq che supportano browser_search: elencati in /models, non membri del consiglio di prova. */
 export const SEARCH_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
 
@@ -113,7 +116,7 @@ async function handle(req, res) {
   const path = new URL(req.url ?? "/", "http://x").pathname.replace(/\/+$/, "");
 
   if (req.method === "GET" && path.endsWith("/models")) {
-    return send(res, 200, { object: "list", data: [...MODELS, ...SEARCH_MODELS, "paced", "whoami"].map((id) => ({ id, object: "model", owned_by: "chaos" })) });
+    return send(res, 200, { object: "list", data: [...MODELS, ...GEMINI_MODELS, ...SEARCH_MODELS, "paced", "whoami"].map((id) => ({ id, object: "model", owned_by: "chaos" })) });
   }
   const pm = path.match(/\/prompts\/([\w-]+)$/);
   if (req.method === "GET" && pm) return send(res, 200, prompts[pm[1]] ?? []);
@@ -126,7 +129,11 @@ async function handle(req, res) {
   const model = String(body.model ?? "");
   const msgs = Array.isArray(body.messages) ? body.messages : [];
   const system = String(msgs.find((m) => m.role === "system")?.content ?? "");
-  const user = String(msgs.find((m) => m.role === "user")?.content ?? "");
+  // Il contenuto dell'utente è testo, oppure un elenco di parti (testo + image_url) come per le immagini.
+  const uc = msgs.find((m) => m.role === "user")?.content;
+  const parts = Array.isArray(uc) ? uc : [];
+  const images = parts.filter((p) => p?.type === "image_url").map((p) => String(p.image_url?.url ?? ""));
+  const user = Array.isArray(uc) ? parts.filter((p) => p?.type === "text").map((p) => p.text).join("\n") : String(uc ?? "");
   // "whoami": ricorda la chiave ricevuta (solo prove: verifica che arrivi quella data dall'app).
   if (model === "whoami") auths.whoami = String(req.headers.authorization ?? "");
 
@@ -140,11 +147,15 @@ async function handle(req, res) {
   if (/^(web|att|conv)/.test(scenario)) {
     (prompts[scenario] ??= []).push({
       model, phase: searching ? "research" : phaseOf(system, user), system, user,
-      tools: body.tools ?? null, reasoning_effort: body.reasoning_effort ?? null, max_tokens: body.max_tokens ?? null,
+      images: images.length, imageUrls: images.map((u) => u.slice(0, 30)), tools: body.tools ?? null, reasoning_effort: body.reasoning_effort ?? null, max_tokens: body.max_tokens ?? null,
     });
   }
 
   switch (model) {
+    case "gemini-noimg":
+      if (images.length) return send(res, 400, err(`Invalid image payload ${images[0].slice(0, 5000)}`, "invalid_request_error"));
+      return send(res, 200, completion(model, okText(model, user)));
+    case "gemini-chaos":
     case "ok-a":
     case "ok-b":
     case "whoami":

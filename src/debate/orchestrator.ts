@@ -204,6 +204,8 @@ export async function runDebate(
     const meta = opts.attachments.map((a) => ({ name: a.name, kind: a.kind, chars: a.text.length }));
     save(ctx, { model_id: "_attachments", phase: "start", content: JSON.stringify(meta), error: null, ms: null });
   }
+  // Immagini vere (turni ≥ 1: anche quelle della discussione); le riceve solo chi è una voce Gemini.
+  const images = P.imagesOf(opts.conversation?.attachments, opts.attachments);
   const material: P.Material = {
     attachments: opts.attachments?.length ? opts.attachments : undefined,
     followup: opts.conversation && turn > 0
@@ -238,7 +240,7 @@ export async function runDebate(
         try {
           // Ogni intervento ha un tempo massimo: un modello bloccato non ferma il dibattito.
           const r = await withBudget(PARTICIPANT_BUDGET_MS, AbortSignal.any([signal, late.signal]),
-            (budget) => chat(d.def, { system: P.SYSTEM_DEBATER, user: build(d), signal: budget }));
+            (budget) => chat(d.def, { system: P.SYSTEM_DEBATER, user: build(d), images, signal: budget }));
           store(d, r.text);
           save(ctx, { model_id: d.def.id, phase: name, content: r.text, error: null, ms: r.ms, model_used: r.model, replaced: r.replaced });
           emit({ type: "message", phase: name, modelId: d.def.id, text: r.text, ms: r.ms, model: r.model, replaced: r.replaced });
@@ -333,7 +335,7 @@ export async function runDebate(
     let title: string | null = null;
     let confidence: P.Confidence = null;
     await firstInChain(judges, ctx, async (j, budget) => {
-      const r = await chat(j, { system: P.SYSTEM_JUDGE, user: judgeUser, maxTokens: 8192, signal: budget });
+      const r = await chat(j, { system: P.SYSTEM_JUDGE, user: judgeUser, images, maxTokens: 8192, signal: budget });
       // Riga TITOLO e riga AFFIDABILITÀ in qualunque ordine: si tolgono entrambe dal verdetto.
       const split = P.splitTitle(r.text);
       const conf = P.splitConfidence(split.verdict);
@@ -395,7 +397,7 @@ export async function runQuickAnswer(
     const user = P.quickPrompt(question, P.conversationBlock(opts.conversation, true), material);
     const chain = chainOf(chosen, opts.fallbacks.map((m) => withClaudeModel(m, opts.claudeModel)), opts.claudeModel);
     const ok = await firstInChain(chain, ctx, async (m, budget) => {
-      const r = await chat(m, { system: P.SYSTEM_RESPONDER, user, signal: budget });
+      const r = await chat(m, { system: P.SYSTEM_RESPONDER, user, images: P.imagesOf(opts.conversation.attachments, opts.attachments), signal: budget });
       if (!r.text.trim()) throw new Error("risposta vuota");
       const text = m.id === chosen.id ? r.text : `> Risposta di riserva: ${m.label} (${chosen.label} non disponibile)\n\n${r.text}`;
       save(ctx, { model_id: m.id, phase: "answer", content: text, error: null, ms: r.ms, model_used: r.model, replaced: r.replaced });

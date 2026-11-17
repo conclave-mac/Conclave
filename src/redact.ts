@@ -15,6 +15,9 @@ const PATTERNS = [
   /(Bearer\s+)[0-9A-Za-z._~+/=-]{16,}/gi,
 ];
 
+/** Immagini allegate (base64): non devono finire in log né in errori, nemmeno se il provider le ripete. */
+const BASE64_RUN = /[A-Za-z0-9+/]{200,}={0,2}/g;
+
 /** Valori segreti presenti nell'ambiente (chiavi dei provider e token del motore). */
 function secrets(): string[] {
   const out = engineToken ? [engineToken] : [];
@@ -30,7 +33,7 @@ export function redact(text: string): string {
   let s = text;
   for (const v of secrets()) s = s.split(v).join(MASK);
   for (const re of PATTERNS) s = s.replace(re, (_m, bearer) => (typeof bearer === "string" ? bearer + MASK : MASK));
-  return s;
+  return s.replace(BASE64_RUN, "[…dati base64 omessi]");
 }
 
 /** Filtra tutto ciò che il motore scrive su stdout/stderr (l'app lo salva in server.log). */

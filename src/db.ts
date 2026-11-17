@@ -57,6 +57,8 @@ db.exec(`
   if (!mcols.has("turn")) db.exec(`ALTER TABLE messages ADD COLUMN turn INTEGER NOT NULL DEFAULT 0`);
   const acols = new Set((db.prepare(`PRAGMA table_info(attachments)`).all() as { name: string }[]).map((c) => c.name));
   if (!acols.has("turn")) db.exec(`ALTER TABLE attachments ADD COLUMN turn INTEGER NOT NULL DEFAULT 0`);
+  // Immagine ridotta (JPEG base64) di un allegato "image": solo per le voci Gemini, mai restituita all'app.
+  if (!acols.has("image")) db.exec(`ALTER TABLE attachments ADD COLUMN image TEXT`);
 }
 // Dibattiti rimasti a metà per un riavvio del server.
 db.exec(`UPDATE debates SET status = 'interrupted' WHERE status = 'running'`);
@@ -96,15 +98,17 @@ export function saveMessage(debateId: number, m: MessageRow): void {
     .run(debateId, m.model_id, m.phase, m.content, m.error, m.ms, m.model_used ?? null, m.replaced ?? null, m.turn ?? 0, m.confidence ?? null, debateId);
 }
 
-export function saveAttachments(debateId: number, list: { name: string; kind: string; text: string }[], turn = 0): void {
-  const ins = db.prepare(`INSERT INTO attachments (debate_id, name, kind, text, turn) VALUES (?, ?, ?, ?, ?)`);
-  for (const a of list) ins.run(debateId, a.name, a.kind, a.text, turn);
+export function saveAttachments(debateId: number, list: { name: string; kind: string; text: string; imageData?: string }[], turn = 0): void {
+  const ins = db.prepare(`INSERT INTO attachments (debate_id, name, kind, text, turn, image) VALUES (?, ?, ?, ?, ?, ?)`);
+  for (const a of list) ins.run(debateId, a.name, a.kind, a.text, turn, a.imageData ?? null);
 }
 
 /** Testo completo degli allegati di tutti i turni (solo per i prompt, mai restituito all'app). */
 export function getAttachments(debateId: number) {
-  return db.prepare(`SELECT name, kind, text, turn FROM attachments WHERE debate_id = ? ORDER BY turn, id`).all(debateId) as
-    { name: string; kind: "pdf" | "text" | "image"; text: string; turn: number }[];
+  const rows = db.prepare(`SELECT name, kind, text, image, turn FROM attachments WHERE debate_id = ? ORDER BY turn, id`).all(debateId) as
+    { name: string; kind: "pdf" | "text" | "image"; text: string; image: string | null; turn: number }[];
+  return rows.map(({ image, ...a }) => (image ? { ...a, imageData: image } : a)) as
+    { name: string; kind: "pdf" | "text" | "image"; text: string; imageData?: string; turn: number }[];
 }
 
 /** Messaggi con data, per ricostruire la conversazione nei turni successivi. */

@@ -31,8 +31,8 @@ const running = new Map<number, Running>();
 /** Oltre questo numero il dibattito diventa lento e consuma quote senza aggiungere idee nuove. */
 const MAX_PARTICIPANTS = 10;
 const SSE_PING_MS = 10_000;
-/** Corpo massimo di una richiesta: domanda + allegati (60.000 caratteri) con il margine dell'escape JSON. */
-const MAX_BODY = 400_000;
+/** Corpo massimo di una richiesta: domanda + testo degli allegati (60.000) + immagini ridotte (600.000) con il margine dell'escape JSON. */
+const MAX_BODY = 1_000_000;
 
 const CLAUDE_MODELS = ["sonnet", "opus", "haiku"];
 const DEFAULT_ROUNDS: Rounds = 3;
@@ -111,6 +111,9 @@ const MAX_ATTACHMENTS = 5;
 const MAX_ATTACHMENT_TEXT = 40_000;
 const MAX_ATTACHMENTS_TOTAL = 60_000;
 const MAX_ATTACHMENT_NAME = 200;
+const MAX_IMAGE_DATA = 250_000;
+const MAX_IMAGES_TOTAL = 600_000;
+const BASE64_RE = /^[A-Za-z0-9+/]+=*$/;
 const ATTACHMENT_KINDS = ["pdf", "text", "image"] as const;
 
 interface DebateRequest {
@@ -133,6 +136,7 @@ function parseAttachments(raw: unknown): Attachment[] {
   if (!Array.isArray(raw)) throw new BadRequest(400, "attachments deve essere un elenco");
   if (raw.length > MAX_ATTACHMENTS) throw new BadRequest(400, `massimo ${MAX_ATTACHMENTS} allegati`);
   let total = 0;
+  let imagesTotal = 0;
   return raw.map((a, i) => {
     if (a === null || typeof a !== "object" || Array.isArray(a)) throw new BadRequest(400, `allegato ${i + 1} non valido`);
     const { name, kind, text } = a as Record<string, unknown>;
@@ -142,9 +146,20 @@ function parseAttachments(raw: unknown): Attachment[] {
     if (text.length > MAX_ATTACHMENT_TEXT) throw new BadRequest(400, `allegato ${i + 1}: testo troppo lungo (max ${fmt(MAX_ATTACHMENT_TEXT)} caratteri)`);
     total += text.length;
     if (total > MAX_ATTACHMENTS_TOTAL) throw new BadRequest(400, `allegati troppo lunghi in totale (max ${fmt(MAX_ATTACHMENTS_TOTAL)} caratteri)`);
+    // Immagine ridotta (facoltativa, solo kind image): JPEG in base64 senza prefisso data:.
+    let imageData: string | undefined;
+    const rawImage = (a as Record<string, unknown>).imageData;
+    if (rawImage !== undefined) {
+      if (kind !== "image") throw new BadRequest(400, `allegato ${i + 1}: imageData è ammesso solo su kind image`);
+      if (typeof rawImage !== "string" || !BASE64_RE.test(rawImage)) throw new BadRequest(400, `allegato ${i + 1}: imageData deve essere un JPEG in base64`);
+      if (rawImage.length > MAX_IMAGE_DATA) throw new BadRequest(400, `allegato ${i + 1}: immagine troppo grande (max ${fmt(MAX_IMAGE_DATA)} caratteri)`);
+      imagesTotal += rawImage.length;
+      if (imagesTotal > MAX_IMAGES_TOTAL) throw new BadRequest(400, `immagini troppo grandi in totale (max ${fmt(MAX_IMAGES_TOTAL)} caratteri)`);
+      imageData = rawImage;
+    }
     // Il nome finisce in un'intestazione del prompt: una riga sola, senza caratteri di controllo.
     const clean = name.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, " ").replace(/^[#\s]+/, "").trim();
-    return { name: clean || `allegato ${i + 1}`, kind: kind as Attachment["kind"], text: text.replace(/\u0000/g, "") };
+    return { name: clean || `allegato ${i + 1}`, kind: kind as Attachment["kind"], text: text.replace(/\u0000/g, ""), ...(imageData ? { imageData } : {}) };
   });
 }
 

@@ -13,7 +13,7 @@ import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MODELS, FAKE_GOOGLE_KEY, DOSSIER_MARK, DOSSIER_URL } from "./mock-provider.mjs";
+import { MODELS, GEMINI_MODELS, FAKE_GOOGLE_KEY, DOSSIER_MARK, DOSSIER_URL } from "./mock-provider.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..");
@@ -948,7 +948,7 @@ SCENARIOS.ae = async function ae() {
     ["totale 60.002 caratteri", { attachments: [a("x".repeat(30_001)), a("y".repeat(30_001))] }, 400],
     ["webSearch stringa", { webSearch: "yes" }, 400],
     ["webSearch numero", { webSearch: 1 }, 400],
-    ["corpo > 400.000 caratteri", { attachments: [a("x".repeat(410_000))] }, 413],
+    ["corpo > 1.000.000 caratteri", { attachments: [a("x".repeat(1_010_000))] }, 413],
   ];
   const wrong = [];
   for (const [name, extra, want] of cases) {
@@ -1201,7 +1201,7 @@ SCENARIOS.am = async function am() {
     ["6 allegati", { attachments: Array(6).fill(a("x")) }, 400],
     ["allegato di 40.001 caratteri", { attachments: [a("x".repeat(40_001))] }, 400],
     ["kind sconosciuto", { attachments: [a("x", { kind: "exe" })] }, 400],
-    ["corpo > 400.000 caratteri", { attachments: [a("x".repeat(410_000))] }, 413],
+    ["corpo > 1.000.000 caratteri", { attachments: [a("x".repeat(1_010_000))] }, 413],
   ];
   const wrong = [];
   for (const [name, extra, want] of cases) {
@@ -1530,6 +1530,133 @@ const DESCR = {
   az: "giudice senza riga e tempi medi",
   ba: "sintesi del dibattito dopo il verdetto",
   bb: "ruoli assegnabili nel round di critica",
+  bc: "immagini vere solo alle voci Gemini",
+};
+
+// ---------- immagini allegate (solo Gemini) ----------
+
+// Con imageData la voce di famiglia gemini riceve l'immagine vera (data URL nel body), le altre solo il testo
+// OCR; vale per partecipante, giudice e domanda di seguito; imageData non esce mai dall'API né dai log; 400 del
+// provider con immagini → si riprova una volta senza; input ostili → 400.
+SCENARIOS.bc = async function bc() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const B64 = "/9j/" + "QUJD".repeat(600) + "==";
+  // Due motori: le voci della stessa famiglia si fondono, quindi una sola voce gemini per configurazione.
+  const boot = async (gemModel) => {
+    const cfg = {
+      providers: { chaos: { name: "Chaos", baseUrl: `http://127.0.0.1:${mockPort}/v1`, keyEnv: "CHAOS_KEY" } },
+      judge: { id: "j", label: "Giudice", kind: "openai", provider: "chaos", model: "ok-a" },
+      models: [
+        { id: "gem", label: "Gemini", kind: "openai", provider: "chaos", model: gemModel, family: "gemini", default: false },
+        { id: "ok", label: "Altro", kind: "openai", provider: "chaos", model: "ok-a", family: "ok-a", default: false },
+      ],
+    };
+    const tok = randomBytes(32).toString("hex");
+    const eng = await startExtraEngine(cfg, JSON.stringify({ token: tok, keys: { CHAOS_KEY } }));
+    // Il controllo d'avvio dei modelli deve essere finito prima del primo dibattito.
+    for (let i = 0; i < 50; i++) {
+      const ms = (await api("GET", "/api/models", { port: eng.port, headers: authed(tok) })).body?.models ?? [];
+      if (["gem", "ok"].every((id) => ms.find((m) => m.id === id)?.available)) break;
+      await new Promise((res) => setTimeout(res, 300));
+    }
+    return { eng, call: (method, path, body) => api(method, path, { port: eng.port, headers: authed(tok), body }) };
+  };
+  const { eng: e, call } = await boot(GEMINI_MODELS[0]);
+  const { eng: e2, call: call2 } = await boot(GEMINI_MODELS[1]);
+  const waitDone = async (id, c = call) => {
+    for (let i = 0; i < 200; i++) {
+      const r = await c("GET", `/api/debates/${id}`);
+      if (r.body?.status && r.body.status !== "running") return r.body;
+      await new Promise((res) => setTimeout(res, 300));
+    }
+    return null;
+  };
+  const wrong = [];
+  try {
+    const img = { name: "foto.png", kind: "image", text: "OCR-IMG-TESTO", imageData: B64 };
+    // 1. Partecipanti e giudice.
+    const q = (tag) => QUESTION(tag);
+    const c = await call("POST", "/api/debates", { question: q("conv-img-a"), models: ["gem", "ok"], rounds: 0, judge: "gem", claudeModel: "sonnet", attachments: [img] });
+    if (c.status !== 201) return [false, `POST → ${c.status} ${c.text.slice(0, 100)}`, secs()];
+    const st = await waitDone(c.body.id);
+    if (st?.status !== "done") return [false, `stato "${st?.status}"`, secs()];
+    const pr = await promptsOf("conv-img-a");
+    const of = (model, phase) => pr.filter((p) => p.model === model && p.phase === phase);
+    const g = of(GEMINI_MODELS[0], "initial")[0], o = of("ok-a", "initial")[0], gj = of(GEMINI_MODELS[0], "verdict")[0];
+    if (g?.images !== 1 || !g.imageUrls[0].startsWith("data:image/jpeg;base64,")) wrong.push(`gemini initial: ${g?.images} immagini`);
+    if (!g?.user.includes("Le immagini allegate sono unite")) wrong.push("gemini senza la riga sulle immagini");
+    if (!g?.user.includes("OCR-IMG-TESTO")) wrong.push("gemini senza il testo OCR");
+    if (o?.images !== 0 || o.user.includes("Le immagini allegate") || !o.user.includes("OCR-IMG-TESTO")) wrong.push(`non-gemini: ${o?.images} immagini, testo ${o?.user.includes("OCR-IMG-TESTO")}`);
+    if (gj?.images !== 1) wrong.push(`giudice gemini: ${gj?.images} immagini`);
+    // 2. imageData mai restituita.
+    const whole = JSON.stringify([st, (await call("GET", "/api/debates")).body, (await call("GET", `/api/debates/${c.body.id}`)).text]);
+    if (whole.includes(B64.slice(0, 40)) || whole.includes("imageData")) wrong.push("imageData restituita dall'API");
+    const meta = JSON.parse(st.messages.find((m) => m.model_id === "_attachments")?.content ?? "[]");
+    if (Object.keys(meta[0] ?? {}).sort().join() !== "chars,kind,name") wrong.push(`metadati ${JSON.stringify(meta[0])}`);
+    // 3. Domanda di seguito rapida: la voce gemini riceve ancora l'immagine, l'altra no.
+    const t1 = await call("POST", `/api/debates/${c.body.id}/followups`, { question: FQ("conv-img-a", "E poi?"), mode: "quick", responder: "gem", claudeModel: "sonnet" });
+    if (t1.status !== 201) wrong.push(`seguito → ${t1.status}`);
+    else {
+      await waitDone(c.body.id);
+      const a1 = (await promptsOf("conv-img-a")).filter((p) => p.phase === "answer" && p.model === GEMINI_MODELS[0]).at(-1);
+      if (a1?.images !== 1) wrong.push(`seguito gemini: ${a1?.images} immagini`);
+    }
+    const t2 = await call("POST", `/api/debates/${c.body.id}/followups`, { question: FQ("conv-img-a", "E ancora?"), mode: "quick", responder: "ok", claudeModel: "sonnet" });
+    if (t2.status !== 201) wrong.push(`seguito 2 → ${t2.status}`);
+    else {
+      await waitDone(c.body.id);
+      const a2 = (await promptsOf("conv-img-a")).filter((p) => p.phase === "answer" && p.model === "ok-a").at(-1);
+      if (a2?.images !== 0) wrong.push(`seguito non-gemini: ${a2?.images} immagini`);
+    }
+    // 4. 400 del provider con le immagini: una volta senza.
+    const c2 = await call2("POST", "/api/debates", { question: q("conv-img-retry"), models: ["gem", "ok"], rounds: 0, judge: "ok", claudeModel: "sonnet", attachments: [img] });
+    const st2 = c2.status === 201 ? await waitDone(c2.body.id, call2) : null;
+    const rp = (await promptsOf("conv-img-retry")).filter((p) => p.model === GEMINI_MODELS[1]);
+    if (st2?.status !== "done") wrong.push(`retry: stato ${st2?.status ?? c2.status}`);
+    else {
+      if (rp.map((p) => p.images).join() !== "1,0") wrong.push(`retry: immagini per tentativo ${rp.map((p) => p.images).join()}`);
+      if (!okMsgs(st2, "gem", "initial").length) wrong.push("retry: la voce non ha risposto");
+    }
+    // 5. Input ostili.
+    const base = { question: q("conv-img-bad"), models: ["gem", "ok"], rounds: 0, judge: "ok", claudeModel: "sonnet" };
+    const big = (n) => "A".repeat(n);
+    const cases = [
+      ["imageData su kind text", [{ name: "a.txt", kind: "text", text: "x", imageData: "QUJD" }]],
+      ["imageData su kind pdf", [{ name: "a.pdf", kind: "pdf", text: "x", imageData: "QUJD" }]],
+      ["base64 non valido", [{ ...img, imageData: "***non-base64***" }]],
+      ["con prefisso data:", [{ ...img, imageData: "data:image/jpeg;base64,QUJD" }]],
+      ["stringa vuota", [{ ...img, imageData: "" }]],
+      ["non stringa (numero)", [{ ...img, imageData: 42 }]],
+      ["non stringa (elenco)", [{ ...img, imageData: ["QUJD"] }]],
+      ["null", [{ ...img, imageData: null }]],
+      ["250.001 caratteri", [{ ...img, imageData: big(250_001) }]],
+      ["totale 750.000 caratteri", [1, 2, 3].map((n) => ({ ...img, name: `i${n}.png`, imageData: big(250_000) }))],
+    ];
+    for (const [label, attachments] of cases) {
+      const r = await call("POST", "/api/debates", { ...base, attachments });
+      if (r.status !== 400) wrong.push(`${label} → ${r.status}`);
+    }
+    const ok250 = await call("POST", "/api/debates", { ...base, attachments: [{ ...img, imageData: big(250_000) }, { ...img, name: "b.png", imageData: big(250_000) }] });
+    if (ok250.status !== 201) wrong.push(`2 immagini da 250.000 → ${ok250.status}`);
+    else await waitDone(ok250.body.id);
+    // 6. Nessun base64 in log né in cronologia.
+    const logs = [...e.proc.log, ...e2.proc.log].join("\n");
+    if (logs.includes(B64.slice(0, 60))) wrong.push("base64 nel log del motore");
+    const hist = JSON.stringify([st2, (await call2("GET", `/api/debates/${c2.body?.id}`)).body]);
+    if (hist.includes(B64.slice(0, 60))) wrong.push("base64 in cronologia");
+    // 7. Cancellata con la discussione.
+    await call("DELETE", `/api/debates/${c.body.id}`);
+    const db = new DatabaseSync(join(e.dir, "data", "council.db"), { readOnly: true });
+    const left = db.prepare("SELECT COUNT(*) AS n FROM attachments WHERE debate_id = ?").get(c.body.id).n;
+    db.close();
+    if (left !== 0) wrong.push(`${left} allegati rimasti dopo l'eliminazione`);
+  } finally {
+    e.proc.kill("SIGTERM");
+    e2.proc.kill("SIGTERM");
+  }
+  if (wrong.length) return [false, wrong.join("; "), secs()];
+  return [true, "immagine solo a Gemini (partecipante, giudice, seguito), mai nell'API né nei log, retry senza immagini, input ostili 400, eliminata col dibattito", secs()];
 };
 
 // ---------- ruoli assegnabili ----------

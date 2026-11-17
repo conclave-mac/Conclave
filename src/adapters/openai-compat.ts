@@ -91,6 +91,22 @@ export function isHardLimit(message: string): boolean {
   return /exceeded your current quota|limit: 0\b|per day|\(RPD\)|\(TPD\)|reduce your message size|request too large/i.test(message);
 }
 
+/** Solo i modelli Gemini (non Gemma, di cui non si sa se accettino immagini) ricevono le immagini vere. */
+export function imagesFor(model: string, images?: string[]): string[] {
+  return images?.length && /^(models\/)?gemini/i.test(model) ? images : [];
+}
+
+const IMAGES_NOTE = "\n\nLe immagini allegate sono unite a questo messaggio.";
+
+/** Contenuto del messaggio utente: testo semplice, o testo + immagini (data URL) se ce ne sono. */
+function userContent(user: string, images: string[]): string | unknown[] {
+  if (!images.length) return user;
+  return [
+    { type: "text", text: user + IMAGES_NOTE },
+    ...images.map((b64) => ({ type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64}` } })),
+  ];
+}
+
 export async function once(p: Provider, model: string, req: ChatRequest, timeoutMs = TIMEOUT_MS): Promise<string> {
   const key = process.env[p.keyEnv]?.trim();
   if (!key) throw new Error(`chiave ${p.keyEnv} mancante: aggiungila in Impostazioni ▸ Chiavi API`);
@@ -111,7 +127,7 @@ export async function once(p: Provider, model: string, req: ChatRequest, timeout
       model,
       messages: [
         { role: "system", content: req.system },
-        { role: "user", content: req.user },
+        { role: "user", content: userContent(req.user, imagesFor(model, req.images)) },
       ],
       // Margine ampio: nei modelli che "ragionano" anche il ragionamento consuma questo limite.
       max_tokens: Math.min(req.maxTokens ?? 4096, outputCap.get(model) ?? Infinity),
@@ -158,6 +174,7 @@ export async function once(p: Provider, model: string, req: ChatRequest, timeout
  */
 export async function chatOpenAI(p: Provider, models: string[], req: ChatRequest): Promise<ChatResult> {
   const started = Date.now();
+  let imagesDropped = false; // un 400 con le immagini: si riprova una volta con il solo testo
   let lastError: unknown;
   for (const [i, model] of models.entries()) {
     const hasNext = i < models.length - 1;
@@ -170,6 +187,12 @@ export async function chatOpenAI(p: Provider, models: string[], req: ChatRequest
       } catch (e) {
         lastError = e;
         if (req.signal?.aborted) throw e;
+        // Il provider rifiuta le immagini (o il formato): una volta sola si riprova senza, invece di far fallire la voce.
+        if (e instanceof HttpError && e.status === 400 && !imagesDropped && imagesFor(model, req.images).length) {
+          imagesDropped = true;
+          req = { ...req, images: undefined };
+          continue;
+        }
         // Modello che non risponde in tempo o risposta illeggibile: si passa alla riserva, se c'è.
         if (!(e instanceof HttpError)) {
           req.onModelFail?.(model);
