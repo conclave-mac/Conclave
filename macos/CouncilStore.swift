@@ -76,7 +76,8 @@ struct DebateState: Equatable {
     var verdictBy: String?
     /// Affidabilità del verdetto secondo il giudice: "alta", "media", "bassa" (nil se manca).
     var confidence: String?
-    var participants: [String: (label: String, letter: String)] = [:]
+    /// Partecipanti per id: nome, lettera e ruolo scelto dall'utente ("devil", "checker"; nil senza ruolo).
+    var participants: [String: (label: String, letter: String, role: String?)] = [:]
     var judging = false       // il giudice sta scrivendo il verdetto
     var attachments: [AttachmentMeta] = []
     var webSearch = false     // richiesta la ricerca sul web prima del dibattito
@@ -848,10 +849,13 @@ final class CouncilStore: ObservableObject {
         }
     }
 
-    /// Partecipanti `[{id, label, letter}]` dell'evento `start` e del messaggio `_meta`.
+    /// Partecipanti `[{id, label, letter, role?}]` dell'evento `start` e del messaggio `_meta`.
+    /// Il ruolo si riscrive sempre: un turno del consiglio non eredita quelli della discussione.
     private static func readParticipants(_ value: Any?, into d: inout DebateState) {
         for p in value as? [[String: Any]] ?? [] {
-            if let id = p["id"] as? String { d.participants[id] = (p["label"] as? String ?? id, p["letter"] as? String ?? "") }
+            guard let id = p["id"] as? String else { continue }
+            let role = (p["role"] as? String).flatMap { ["devil", "checker"].contains($0) ? $0 : nil }
+            d.participants[id] = (p["label"] as? String ?? id, p["letter"] as? String ?? "", role)
         }
     }
 
@@ -999,6 +1003,14 @@ final class CouncilStore: ObservableObject {
             .filter { id in voices.contains { $0.id == id } }
     }
 
+    /// Ruoli dell'ultimo dibattito della discussione (originale o consiglio rilanciato) per chi può ancora
+    /// partecipare: si rimandano quando si rilancia il consiglio.
+    func discussionRoles(_ d: DebateState) -> [String: String] {
+        let last = d.turns.last { $0.mode == "council" && !$0.participants.isEmpty } ?? d
+        let ids = Set(councilModels(d))
+        return last.participants.compactMapValues(\.role).filter { ids.contains($0.key) }
+    }
+
     /// Giudice della discussione, se ancora disponibile; altrimenti Claude.
     func discussionJudge(_ d: DebateState) -> (id: String, claudeModel: String, label: String) {
         let jid = d.judgeId ?? judge
@@ -1051,6 +1063,8 @@ final class CouncilStore: ObservableObject {
             body["rounds"] = rounds
             body["judge"] = judgeOf.id
             body["claudeModel"] = judgeOf.claudeModel
+            let roles = discussionRoles(d)
+            if rounds >= 1, !roles.isEmpty { body["roles"] = roles }
         } else {
             body["responder"] = who.id
             body["claudeModel"] = who.claudeModel

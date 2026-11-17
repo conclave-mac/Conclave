@@ -43,11 +43,23 @@ struct DebateHeader: View {
             if !participants.isEmpty {
                 FlowLayout(spacing: 6, lineSpacing: 6) {
                     ForEach(participants, id: \.letter) { p in
-                        ParticipantTag(letter: p.letter, label: p.label)
+                        if let role = p.role {
+                            // Ruolo accanto al partecipante, a parole (agisce nel round di critica).
+                            HStack(spacing: 4) {
+                                ParticipantTag(letter: p.letter, label: p.label)
+                                Text(role)
+                                    .font(Brand.Fonts.small)
+                                    .foregroundStyle(Brand.secondaryText)
+                                    .lineLimit(1)
+                            }
+                            .help(L("Ruolo nel round di critica"))
+                        } else {
+                            ParticipantTag(letter: p.letter, label: p.label)
+                        }
                     }
                 }
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel(L("Partecipanti") + ": " + participants.map(\.label).joined(separator: ", "))
+                .accessibilityLabel(L("Partecipanti") + ": " + participants.map { p in p.role.map { "\(p.label) (\($0))" } ?? p.label }.joined(separator: ", "))
             }
 
             if !debate.isRunning, !["done", "cancelled"].contains(debate.status),
@@ -102,8 +114,15 @@ struct DebateHeader: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var participants: [(letter: String, label: String)] {
-        debate.participants.values.map { (letter: $0.letter, label: $0.label) }.sorted { $0.letter < $1.letter }
+    /// Partecipanti in ordine di lettera, con il nome del ruolo già tradotto.
+    private var participants: [(letter: String, label: String, role: String?)] {
+        debate.participants.values
+            .map { (letter: $0.letter, label: $0.label, role: $0.role.map(Self.roleName)) }
+            .sorted { $0.letter < $1.letter }
+    }
+
+    private static func roleName(_ role: String) -> String {
+        role == "devil" ? L("Avvocato del diavolo") : L("Verificatore di fatti")
     }
 
     private static let headerDate: DateFormatter = {
