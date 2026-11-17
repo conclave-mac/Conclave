@@ -182,8 +182,29 @@ enum KeyStore {
     }
 
     private static func store(_ keys: [String: String]) throws {
-        let data = try JSONSerialization.data(withJSONObject: keys.filter { !$0.value.isEmpty }, options: [.sortedKeys])
+        let kept = keys.filter { !$0.value.isEmpty }
+        let data = try JSONSerialization.data(withJSONObject: kept, options: [.sortedKeys])
         try Keychain.conclave.write(account, String(decoding: data, as: UTF8.self), label: "Conclave – API keys")
+        lock.withLock { cache = kept }
+    }
+
+    /// Ultimo contenuto letto o scritto: all'avvio motore (in background) e Impostazioni chiedono le
+    /// stesse chiavi, e ogni lettura è un processo `security` (0,2–1 s su un Mac lento). Si legge una
+    /// volta per sessione; un errore non si conserva (si riprova alla richiesta dopo). Le modifiche
+    /// fatte da fuori (Accesso Portachiavi) ad app aperta si vedono al riavvio.
+    private static let lock = NSRecursiveLock()
+    nonisolated(unsafe) private static var cache: [String: String]?
+
+    /// Come `stored()`, ma dalla cache se c'è (voce assente = nessuna chiave). Il lock resta preso
+    /// durante la lettura: una richiesta contemporanea aspetta quella in corso invece di lanciare
+    /// un altro `security`.
+    private static func cachedStored() throws -> [String: String] {
+        try lock.withLock {
+            if let cache { return cache }
+            let keys = try stored() ?? [:]
+            cache = keys
+            return keys
+        }
     }
 
     /// Valori delle variabili indicate. Una chiave rimasta nel `.env` (passaggio al Portachiavi
@@ -192,7 +213,7 @@ enum KeyStore {
         let env = EnvFile.read()
         guard usesKeychain else { return env }
         let keys: [String: String]
-        do { keys = try stored() ?? [:] }
+        do { keys = try cachedStored() }
         catch { NSLog("Conclave: %@", error.localizedDescription); keys = [:] }
         var out: [String: String] = [:]
         for name in names { out[name] = keys[name] ?? env[name] }
@@ -204,6 +225,7 @@ enum KeyStore {
     /// vecchie: il motore le leggerebbe ancora.
     static func write(_ values: [String: String]) throws {
         guard usesKeychain else { return try EnvFile.write(values) }
+        // Lettura fresca, mai dalla cache: si fondono le chiavi così come sono adesso.
         var keys = try stored() ?? [:]
         for (name, value) in values { keys[name] = value.isEmpty ? nil : value }
         try store(keys)
@@ -213,7 +235,7 @@ enum KeyStore {
     /// Chiavi non vuote da mandare al motore sullo stdin (mai nell'ambiente né su disco).
     static func engineKeys() -> [String: String] {
         guard usesKeychain else { return [:] }
-        do { return try stored() ?? [:] }
+        do { return try cachedStored() }
         catch { NSLog("Conclave: chiavi non lette dal Portachiavi: %@", error.localizedDescription); return [:] }
     }
 
