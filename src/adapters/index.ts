@@ -13,9 +13,9 @@ export async function chat(m: ModelDef, req: ChatRequest): Promise<ChatResult> {
   // Catena della voce: il modello che rispondeva al controllo d'avvio, poi le altre varianti.
   const list = await modelsToTry(m);
   if (list.length === 0) throw new Error("nessun modello disponibile per questa voce");
-  // Le immagini vere solo alle voci Gemini; gli altri provider restano col testo OCR dell'allegato.
-  const images = m.family === "gemini" ? req.images : undefined;
-  const r = await chatOpenAI(p, list, { ...req, images, onModelFail: (model) => demote(m.id, model) });
+  // Chi riceve le immagini vere lo decide `imagesFor` per modello (Gemini, Qwen 3.8 27B su Groq);
+  // gli altri restano col testo OCR dell'allegato.
+  const r = await chatOpenAI(p, list, { ...req, onModelFail: (model) => demote(m.id, model) });
   const replaced = r.model && r.model !== list[0] ? list[0] : undefined;
   // Ha risposto una riserva: la voce resta su di lei (niente nuova attesa del timeout al round dopo).
   if (replaced && r.model) promote(m.id, r.model, list.slice(0, list.indexOf(r.model)));

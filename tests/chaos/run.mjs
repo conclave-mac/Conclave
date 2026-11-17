@@ -13,7 +13,7 @@ import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MODELS, GEMINI_MODELS, FAKE_GOOGLE_KEY, DOSSIER_MARK, DOSSIER_URL } from "./mock-provider.mjs";
+import { MODELS, GEMINI_MODELS, QWEN_VISION, FAKE_GOOGLE_KEY, DOSSIER_MARK, DOSSIER_URL } from "./mock-provider.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..");
@@ -1578,11 +1578,15 @@ SCENARIOS.bc = async function bc() {
   // Due motori: le voci della stessa famiglia si fondono, quindi una sola voce gemini per configurazione.
   const boot = async (gemModel) => {
     const cfg = {
-      providers: { chaos: { name: "Chaos", baseUrl: `http://127.0.0.1:${mockPort}/v1`, keyEnv: "CHAOS_KEY" } },
+      providers: {
+        chaos: { name: "Chaos", baseUrl: `http://127.0.0.1:${mockPort}/v1`, keyEnv: "CHAOS_KEY" },
+        qgroq: { name: "Groq finto", baseUrl: `http://127.0.0.1:${mockPort}/qwen/v1`, keyEnv: "CHAOS_KEY" },
+      },
       judge: { id: "j", label: "Giudice", kind: "openai", provider: "chaos", model: "ok-a" },
       models: [
         { id: "gem", label: "Gemini", kind: "openai", provider: "chaos", model: gemModel, family: "gemini", default: false },
         { id: "ok", label: "Altro", kind: "openai", provider: "chaos", model: "ok-a", family: "ok-a", default: false },
+        { id: "qw", label: "Qwen", kind: "openai", provider: "qgroq", model: QWEN_VISION, family: "qwen", default: false },
       ],
     };
     const tok = randomBytes(32).toString("hex");
@@ -1590,7 +1594,7 @@ SCENARIOS.bc = async function bc() {
     // Il controllo d'avvio dei modelli deve essere finito prima del primo dibattito.
     for (let i = 0; i < 50; i++) {
       const ms = (await api("GET", "/api/models", { port: eng.port, headers: authed(tok) })).body?.models ?? [];
-      if (["gem", "ok"].every((id) => ms.find((m) => m.id === id)?.available)) break;
+      if (["gem", "ok", "qw"].every((id) => ms.find((m) => m.id === id)?.available)) break;
       await new Promise((res) => setTimeout(res, 300));
     }
     return { eng, call: (method, path, body) => api(method, path, { port: eng.port, headers: authed(tok), body }) };
@@ -1610,7 +1614,7 @@ SCENARIOS.bc = async function bc() {
     const img = { name: "foto.png", kind: "image", text: "OCR-IMG-TESTO", imageData: B64 };
     // 1. Partecipanti e giudice.
     const q = (tag) => QUESTION(tag);
-    const c = await call("POST", "/api/debates", { question: q("conv-img-a"), models: ["gem", "ok"], rounds: 0, judge: "gem", claudeModel: "sonnet", attachments: [img] });
+    const c = await call("POST", "/api/debates", { question: q("conv-img-a"), models: ["gem", "ok", "qw"], rounds: 0, judge: "gem", claudeModel: "sonnet", attachments: [img] });
     if (c.status !== 201) return [false, `POST → ${c.status} ${c.text.slice(0, 100)}`, secs()];
     const st = await waitDone(c.body.id);
     if (st?.status !== "done") return [false, `stato "${st?.status}"`, secs()];
@@ -1622,6 +1626,9 @@ SCENARIOS.bc = async function bc() {
     if (!g?.user.includes("OCR-IMG-TESTO")) wrong.push("gemini senza il testo OCR");
     if (o?.images !== 0 || o.user.includes("Le immagini allegate") || !o.user.includes("OCR-IMG-TESTO")) wrong.push(`non-gemini: ${o?.images} immagini, testo ${o?.user.includes("OCR-IMG-TESTO")}`);
     if (gj?.images !== 1) wrong.push(`giudice gemini: ${gj?.images} immagini`);
+    // Qwen 3.8 27B (Groq) riceve l'immagine passando da adapters/index.ts, non solo dall'adapter.
+    const qw = of(QWEN_VISION, "initial")[0];
+    if (qw?.images !== 1) wrong.push(`qwen initial: ${qw?.images} immagini`);
     // 2. imageData mai restituita.
     const whole = JSON.stringify([st, (await call("GET", "/api/debates")).body, (await call("GET", `/api/debates/${c.body.id}`)).text]);
     if (whole.includes(B64.slice(0, 40)) || whole.includes("imageData")) wrong.push("imageData restituita dall'API");

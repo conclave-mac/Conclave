@@ -16,6 +16,8 @@ export const MODELS = [
 
 /** Finti modelli Gemini (non in MODELS: li usa solo lo scenario "bc"). "gemini-noimg" rifiuta con 400 le richieste con immagini. */
 export const GEMINI_MODELS = ["gemini-chaos", "gemini-noimg"];
+/** Qwen che accetta le immagini (come su Groq), servito solo sotto `/qwen/v1` (scenario "bc"). */
+export const QWEN_VISION = "qwen/qwen3.8-27b";
 
 /** Modelli di Groq che supportano browser_search: elencati in /models, non membri del consiglio di prova. */
 export const SEARCH_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
@@ -116,6 +118,9 @@ async function handle(req, res) {
   const path = new URL(req.url ?? "/", "http://x").pathname.replace(/\/+$/, "");
 
   if (req.method === "GET" && path.endsWith("/models")) {
+    // Groq finto con Qwen che vede le immagini (scenario "bc"): catalogo a parte, così le sostituzioni
+    // degli altri scenari non scelgono mai questo modello.
+    if (path.startsWith("/qwen/")) return send(res, 200, { object: "list", data: [{ id: QWEN_VISION, object: "model", owned_by: "chaos" }] });
     return send(res, 200, { object: "list", data: [...MODELS, ...GEMINI_MODELS, ...SEARCH_MODELS, "paced", "whoami"].map((id) => ({ id, object: "model", owned_by: "chaos" })) });
   }
   const pm = path.match(/\/prompts\/([\w-]+)$/);
@@ -156,6 +161,7 @@ async function handle(req, res) {
       if (images.length) return send(res, 400, err(`Invalid image payload ${images[0].slice(0, 5000)}`, "invalid_request_error"));
       return send(res, 200, completion(model, okText(model, user)));
     case "gemini-chaos":
+    case QWEN_VISION:
     case "ok-a":
     case "ok-b":
     case "whoami":
