@@ -1530,7 +1530,7 @@ const DESCR = {
   az: "giudice senza riga e tempi medi",
   ba: "sintesi del dibattito dopo il verdetto",
   bb: "ruoli assegnabili nel round di critica",
-  bc: "immagini vere solo alle voci Gemini",
+  bc: "immagini vere alle voci Gemini, testo OCR alle altre",
   bd: "limite di token al minuto, 400 non legati alle immagini, id organizzazione nascosti",
 };
 
@@ -1836,6 +1836,173 @@ SCENARIOS.ba = async function ba() {
   if (!jp?.user.includes("## Errori emersi nel dibattito") || !jp.user.includes("la sola parola VERDETTO")) wrong.push("prompt del giudice senza le sezioni sul dibattito");
   if (wrong.length) return [false, wrong.slice(0, 4).join("; "), secs()];
   return [true, `${cases.length} casi di separazione corretti; sintesi salvata dopo il verdetto`, secs()];
+};
+
+// ---------- provider: famiglie senza modelli gratuiti, immagini a Qwen (gruppo providers) ----------
+
+DESCR.be = "voce di una famiglia rimasta senza modelli gratuiti (DeepSeek su OpenRouter)";
+DESCR.bf = "immagini vere a Qwen 3.8 27B: massimo 3, riprova senza se la richiesta è troppo grande";
+
+/** Server finto locale per uno scenario: `onChat(model, images, user, body)` → [stato, corpo]. */
+async function miniProvider(models, onChat) {
+  const { createServer } = await import("node:http");
+  const srv = createServer(async (req, res) => {
+    let s = "";
+    for await (const c of req) s += c;
+    const reply = (status, body) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(body)); };
+    if (req.method === "GET" && req.url.endsWith("/models")) return reply(200, { data: models });
+    let body = {};
+    try { body = JSON.parse(s || "{}"); } catch { /* corpo non JSON */ }
+    const uc = body.messages?.find((m) => m.role === "user")?.content;
+    const parts = Array.isArray(uc) ? uc : [];
+    const images = parts.filter((p) => p?.type === "image_url").map((p) => String(p.image_url?.url ?? ""));
+    const user = Array.isArray(uc) ? parts.filter((p) => p?.type === "text").map((p) => p.text).join("\n") : String(uc ?? "");
+    const [status, out] = onChat(String(body.model ?? ""), images, user, body);
+    reply(status, typeof out === "string"
+      ? { choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: out } }] }
+      : out);
+  });
+  await new Promise((ok) => srv.listen(0, "127.0.0.1", ok));
+  return { srv, url: `http://127.0.0.1:${srv.address().port}/api/v1` };
+}
+
+// Il catalogo ":free" di OpenRouter non ha più DeepSeek: la voce salvata dall'utente (anche con un modello
+// fisso ritirato) resta nella selezione, il controllo d'avvio la segna "down" spiegando perché, il motore
+// non chiama mai i DeepSeek a pagamento e un dibattito che la include finisce con un errore leggibile.
+SCENARIOS.be = async function be() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const { readFile } = await import("node:fs/promises");
+  const NEMO = "nvidia/nemotron-3.5-super-vl:free";
+  const price = (p) => ({ prompt: p, completion: p });
+  const chatCalls = [];
+  const { srv, url } = await miniProvider([
+    { id: "deepseek/deepseek-v4", name: "DeepSeek V4", pricing: price("0.0000003") },
+    { id: "deepseek/deepseek-r2", name: "DeepSeek R2", pricing: price("0.000001") },
+    { id: NEMO, name: "Nemotron 3.5 Super VL (free)", pricing: price("0") },
+  ], (model, _img, user) => {
+    if (user.trim() !== "Scrivi solo: OK") chatCalls.push(model);
+    if (!model.startsWith("nvidia/")) return [402, { error: { message: "Insufficient credits" } }];
+    return [200, user.includes("POSIZIONI FINALI") || /giudice|verdetto/i.test(user) ? "TITOLO: Prova\nAFFIDABILITÀ: media\n\n**Risposta di prova**" : "Risposta di prova di Nemotron."];
+  });
+  const dir = await mkdtemp(join(tmpdir(), "council-chaos-be-"));
+  extraDirs.push(dir);
+  const voice = (id, label, family, model, def = true) => ({ id, label, kind: "openai", provider: "openrouter", family, model, default: def });
+  await writeFile(join(dir, "models.json"), JSON.stringify({
+    providers: { openrouter: { name: "OpenRouter finto", baseUrl: url, keyEnv: "CHAOS_KEY" } },
+    judge: { id: "giudice", label: "Giudice", kind: "openai", provider: "openrouter", model: NEMO },
+    models: [voice("nemotron", "Nemotron", "nemotron", "auto")],
+  }));
+  // Selezione salvata da una versione vecchia: DeepSeek con un modello fisso ":free" che non esiste più.
+  await writeFile(join(dir, "selection.json"), JSON.stringify({ auto: true, models: [
+    { id: "deepseek", label: "DeepSeek V3", kind: "openai", provider: "openrouter", model: "deepseek/deepseek-chat-v3-0324:free", default: true },
+    voice("nemotron", "Nemotron", "nemotron", "auto"),
+  ] }));
+  const tok = randomBytes(32).toString("hex");
+  const env = cleanEnv({ COUNCIL_DATA: dir });
+  delete env.COUNCIL_MODELS; // la selezione salvata vale solo senza configurazione alternativa
+  const e = await startProcess(process.execPath, ["--disable-warning=ExperimentalWarning", "src/server.ts"], env, "COUNCIL_PORT",
+    JSON.stringify({ token: tok, keys: { CHAOS_KEY } }));
+  extraProcs.push(e.proc);
+  e.proc.removeAllListeners("exit");
+  e.proc.on("exit", (code) => { e.proc.exited = code ?? "signal"; });
+  const call = (method, path, body) => api(method, path, { port: e.port, headers: authed(tok), body });
+  const wrong = [];
+  try {
+    let ms = null;
+    for (let i = 0; i < 60; i++) {
+      const r = await call("GET", "/api/models");
+      if (r.status === 200 && !r.body.checking && r.body.models.every((m) => m.health?.status !== "checking" && m.health?.status !== "unchecked")) { ms = r.body.models; break; }
+      await new Promise((res) => setTimeout(res, 300));
+    }
+    if (!ms) return [false, "controllo d'avvio non concluso", secs()];
+    const ds = ms.find((m) => m.id === "deepseek"), nm = ms.find((m) => m.id === "nemotron");
+    if (!ds) wrong.push("voce DeepSeek sparita dalla selezione");
+    else {
+      if (ds.health?.status !== "down") wrong.push(`DeepSeek: stato ${ds.health?.status}`);
+      if (!/non ha più modelli gratuiti/.test(ds.health?.note ?? "")) wrong.push(`DeepSeek: nota "${ds.health?.note}"`);
+    }
+    if (nm?.health?.status !== "ok" || nm.health.using !== NEMO) wrong.push(`Nemotron: ${nm?.health?.status} ${nm?.health?.using}`);
+    const saved = JSON.parse(await readFile(join(dir, "selection.json"), "utf8")).models.find((m) => m.id === "deepseek");
+    if (saved?.family !== "deepseek" || saved.model !== "auto" || !saved.default) wrong.push(`selection.json: ${JSON.stringify(saved)?.slice(0, 120)}`);
+    // Dibattito con la voce senza modelli: deve finire, con la voce in errore e l'altra che risponde.
+    const c = await call("POST", "/api/debates", { question: QUESTION("be-deepseek"), models: ["deepseek", "nemotron"], rounds: 0, judge: "nemotron", claudeModel: "sonnet" });
+    if (c.status !== 201) wrong.push(`POST → ${c.status} ${c.text.slice(0, 80)}`);
+    else {
+      let st = null;
+      for (let i = 0; i < 100; i++) {
+        const r = await call("GET", `/api/debates/${c.body.id}`);
+        if (r.body?.status && r.body.status !== "running") { st = r.body; break; }
+        await new Promise((res) => setTimeout(res, 300));
+      }
+      if (st?.status !== "done") wrong.push(`dibattito: ${st?.status ?? "non concluso"}`);
+      else {
+        const dErr = (st.messages ?? []).find((m) => m.model_id === "deepseek" && m.error);
+        if (!dErr || !/nessun modello/.test(dErr.content ?? dErr.error ?? "")) wrong.push(`errore DeepSeek: ${JSON.stringify(dErr)?.slice(0, 120)}`);
+        if (!okMsgs(st, "nemotron", "initial").length) wrong.push("Nemotron non ha risposto");
+      }
+    }
+    if (chatCalls.some((m) => m.startsWith("deepseek/"))) wrong.push(`chiamato un DeepSeek a pagamento: ${chatCalls.filter((m) => m.startsWith("deepseek/")).slice(0, 2)}`);
+    if (e.proc.exitCode !== null || e.proc.exited !== undefined) wrong.push("motore terminato");
+  } finally {
+    srv.close();
+    srv.closeAllConnections?.();
+  }
+  return [wrong.length === 0, wrong.slice(0, 4).join("; ") || "voce salvata intatta, down con spiegazione, nessuna chiamata a pagamento, dibattito concluso", secs()];
+};
+
+// Qwen 3.8 27B su Groq accetta immagini: al massimo 3 per richiesta (la nota lo dice al modello); se il
+// piano gratuito rifiuta la richiesta per dimensione si riprova col solo testo senza spegnere le immagini;
+// "reduce max_tokens" abbassa l'uscita e tiene le immagini; i base64 non compaiono negli errori.
+SCENARIOS.bf = async function bf() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const { chatOpenAI, imagesFor } = await import("../../src/adapters/openai-compat.ts");
+  const QWEN = "qwen/qwen3.8-27b";
+  const B64 = "/9j/" + "QkZC".repeat(600) + "==";
+  const seen = []; // [tag, immagini, max_tokens]
+  const { srv, url } = await miniProvider([], (model, images, user, body) => {
+    const tag = user.match(/\[bf:(\w+)\]/)?.[1] ?? "?";
+    seen.push([tag, images.length, body.max_tokens]);
+    if (images.length > 3) return [400, { error: { message: "Too many images: at most 3 per request" } }];
+    if (tag === "big" && images.length) return [413, { error: { message: `Request too large for model \`${model}\` on tokens per minute (TPM): Limit 8000, Requested 9500` } }];
+    if (tag === "always") return [413, { error: { message: `Request too large: ${images[0] ?? "data:image/jpeg;base64," + B64}` } }];
+    if (tag === "otpm" && body.max_tokens > 800) return [429, { error: { message: "Request too large: expected output tokens exceed the limit, reduce max_tokens. Limit 1000" } }];
+    return [200, `ok ${images.length}`];
+  });
+  process.env.CHAOS_BF_KEY = "chiave-di-prova-bf";
+  const p = { name: "Groq finto", baseUrl: url, keyEnv: "CHAOS_BF_KEY" };
+  const five = Array.from({ length: 5 }, () => B64);
+  const ask = (tag, extra = {}) => chatOpenAI(p, [QWEN], { system: "s", user: `[bf:${tag}] domanda`, images: five, ...extra });
+  const of = (tag) => seen.filter((s) => s[0] === tag);
+  const wrong = [];
+  try {
+    // 1. Solo Qwen 3.8 27B (non altri Qwen né Gemma), al massimo 3.
+    if (imagesFor(QWEN, five).length !== 3) wrong.push(`Qwen: ${imagesFor(QWEN, five).length} immagini`);
+    if (imagesFor("qwen/qwen3-32b", five).length || imagesFor("gemma-4-31b-it", five).length) wrong.push("immagini a un modello che non le accetta");
+    if (imagesFor("gemini-3-flash", five).length !== 5) wrong.push("Gemini limitato");
+    const r1 = await ask("base");
+    if (of("base").map((s) => s[1]).join() !== "3" || r1.text !== "ok 3") wrong.push(`base: ${of("base").map((s) => s[1])}`);
+    // 2. Troppo grande con le immagini: un secondo tentativo senza, la voce risponde, le immagini restano attive.
+    const r2 = await ask("big");
+    if (of("big").map((s) => s[1]).join() !== "3,0" || r2.text !== "ok 0") wrong.push(`big: ${of("big").map((s) => s[1])}`);
+    if (imagesFor(QWEN, five).length !== 3) wrong.push("immagini disattivate dopo un errore di dimensione");
+    await ask("again");
+    if (of("again").map((s) => s[1]).join() !== "3") wrong.push(`dopo big: ${of("again").map((s) => s[1])}`);
+    // 3. Errore finale con il base64 nel messaggio: mascherato.
+    try { await ask("always"); wrong.push("always: nessun errore"); }
+    catch (e) { if (e.message.includes(B64.slice(0, 60))) wrong.push("base64 nell'errore"); }
+    // 4. "reduce max_tokens" con le immagini: si abbassa l'uscita, le immagini restano.
+    const r4 = await ask("otpm", { maxTokens: 4096 });
+    const o = of("otpm");
+    if (r4.text !== "ok 3" || o.at(-1)?.[1] !== 3 || !(o.at(-1)?.[2] <= 800)) wrong.push(`otpm: ${JSON.stringify(o)}`);
+  } catch (e) {
+    wrong.push(`eccezione: ${e.message.slice(0, 120)}`);
+  } finally {
+    srv.close();
+    srv.closeAllConnections?.();
+  }
+  return [wrong.length === 0, wrong.slice(0, 4).join("; ") || "3 immagini su 5, riprova senza solo per dimensione, max_tokens abbassato con le immagini, base64 mascherato", secs()];
 };
 
 // ---------- main ----------
