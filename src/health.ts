@@ -94,7 +94,15 @@ async function checkOne(m: ModelDef): Promise<void> {
       health.set(m.id, { status: "checking", note: `${old} non esiste più: ora la voce sceglie da sola il modello migliore` });
     }
   }
-  if (chain.length === 0) { health.set(m.id, { status: "down", note: "nessun modello di questa famiglia disponibile" }); return; }
+  if (chain.length === 0) {
+    // Famiglia rimasta solo a pagamento (es. DeepSeek tra i ":free" di OpenRouter, nov 2026): lo si dice,
+    // così l'utente sa che deve sostituire la voce. La voce salvata resta com'è: cambiarla è una sua scelta.
+    const paidOnly = catalogOk && (await listCatalog(provider)).some((c) => c.family === voiceFamily(m));
+    health.set(m.id, { status: "down", note: paidOnly
+      ? "questa famiglia non ha più modelli gratuiti presso il provider: sostituisci la voce nelle Impostazioni"
+      : "nessun modello di questa famiglia disponibile" });
+    return;
+  }
 
   let lastBusy = false;
   const notes: string[] = [];
