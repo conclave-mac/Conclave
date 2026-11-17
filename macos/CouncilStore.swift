@@ -612,9 +612,7 @@ final class CouncilStore: ObservableObject {
     private func applyEvent(_ type: String, _ e: [String: Any], to d: inout DebateState) {
         switch type {
         case "start":
-            for p in e["participants"] as? [[String: Any]] ?? [] {
-                if let id = p["id"] as? String { d.participants[id] = (p["label"] as? String ?? id, p["letter"] as? String ?? "") }
-            }
+            Self.readParticipants(e["participants"], into: &d)
             if let r = e["rounds"] as? Int { d.rounds = r }
             if let j = e["judge"] as? String { d.judgeLabel = j }
             d.statusText = Self.statusText("running")
@@ -765,8 +763,7 @@ final class CouncilStore: ObservableObject {
         if let o = opts, let jid = o["judge"] as? String {
             d.judgeId = jid
             d.judgeModel = o["claudeModel"] as? String
-            d.judgeLabel = jid == "claude" ? "Claude \((o["claudeModel"] as? String ?? "sonnet").capitalized)"
-                : (voices.first { $0.id == jid }?.label ?? jid)
+            d.judgeLabel = judgeLabel(jid, claudeModel: o["claudeModel"] as? String ?? "sonnet")
         }
         let messages = j["messages"] as? [[String: Any]] ?? []
         // Messaggi per turno: 0 = dibattito originale, poi le domande di seguito.
@@ -828,6 +825,19 @@ final class CouncilStore: ObservableObject {
         }
     }
 
+    /// Partecipanti `[{id, label, letter}]` dell'evento `start` e del messaggio `_meta`.
+    private static func readParticipants(_ value: Any?, into d: inout DebateState) {
+        for p in value as? [[String: Any]] ?? [] {
+            if let id = p["id"] as? String { d.participants[id] = (p["label"] as? String ?? id, p["letter"] as? String ?? "") }
+        }
+    }
+
+    /// Nome del giudice nell'intestazione: "Claude Sonnet" (o solo "Claude" senza modello), altrimenti la voce.
+    private func judgeLabel(_ id: String, claudeModel: String?) -> String {
+        if id == "claude" { return claudeModel.map { "Claude \($0.capitalized)" } ?? "Claude" }
+        return voices.first { $0.id == id }?.label ?? id
+    }
+
     /// Partecipanti, opzioni del turno e allegati dai messaggi tecnici (`_meta`, `_attachments`, `_user`).
     private func readMeta(_ msgs: [[String: Any]], into d: inout DebateState) {
         for m in msgs {
@@ -838,8 +848,8 @@ final class CouncilStore: ObservableObject {
                 d.question = content
             case "_meta":
                 guard let c = content.data(using: .utf8), let v = try? JSONSerialization.jsonObject(with: c) else { continue }
-                if let parts = v as? [[String: Any]] {
-                    for p in parts { if let pid = p["id"] as? String { d.participants[pid] = (p["label"] as? String ?? pid, p["letter"] as? String ?? "") } }
+                if v is [Any] {
+                    Self.readParticipants(v, into: &d)
                 } else if let o = v as? [String: Any], d.turn > 0 {
                     // Opzioni della domanda di seguito: {"mode","rounds","judge","webSearch"}.
                     d.mode = o["mode"] as? String == "council" ? "council" : "quick"
@@ -847,9 +857,7 @@ final class CouncilStore: ObservableObject {
                     if d.mode == "council" {
                         if d.isRunning { d.statusText = Self.statusText("running") }
                         if let r = o["rounds"] as? Int { d.rounds = r }
-                        if let jid = o["judge"] as? String {
-                            d.judgeLabel = jid == "claude" ? "Claude" : (voices.first { $0.id == jid }?.label ?? jid)
-                        }
+                        if let jid = o["judge"] as? String { d.judgeLabel = judgeLabel(jid, claudeModel: nil) }
                     } else {
                         d.rounds = nil
                         d.judgeLabel = nil
