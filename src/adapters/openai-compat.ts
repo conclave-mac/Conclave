@@ -91,9 +91,12 @@ export function isHardLimit(message: string): boolean {
   return /exceeded your current quota|limit: 0\b|per day|\(RPD\)|\(TPD\)|reduce your message size|request too large/i.test(message);
 }
 
+/** Modelli che hanno risposto 400 alle immagini: non si riprovano più (in memoria fino al riavvio). */
+const imageRefused = new Set<string>();
+
 /** Solo i modelli Gemini (non Gemma, di cui non si sa se accettino immagini) ricevono le immagini vere. */
 export function imagesFor(model: string, images?: string[]): string[] {
-  return images?.length && /^(models\/)?gemini/i.test(model) ? images : [];
+  return images?.length && /^(models\/)?gemini/i.test(model) && !imageRefused.has(model) ? images : [];
 }
 
 const IMAGES_NOTE = "\n\nLe immagini allegate sono unite a questo messaggio.";
@@ -190,6 +193,7 @@ export async function chatOpenAI(p: Provider, models: string[], req: ChatRequest
         // Il provider rifiuta le immagini (o il formato): una volta sola si riprova senza, invece di far fallire la voce.
         if (e instanceof HttpError && e.status === 400 && !imagesDropped && imagesFor(model, req.images).length) {
           imagesDropped = true;
+          imageRefused.add(model);
           console.error(`[immagini] ${model} ha risposto 400 con le immagini: riprovo con il solo testo`);
           req = { ...req, images: undefined };
           continue;
