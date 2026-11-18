@@ -628,7 +628,8 @@ final class CouncilStore: ObservableObject {
                             statusText: mode == "quick" ? L("Risposta in corso…") : Self.statusText("running"), startedAt: .now)
         t.turn = n
         t.mode = mode
-        if mode == "council" { t.participants = d.participants }
+        // Dal dibattito originale solo nomi e lettere: i ruoli del turno arrivano dal suo `start`/`_meta`.
+        if mode == "council" { t.participants = d.participants.mapValues { ($0.label, $0.letter, nil) } }
         return t
     }
 
@@ -824,7 +825,7 @@ final class CouncilStore: ObservableObject {
             for n in 1...lastTurn {
                 guard let msgs = byTurn[n] else { continue }
                 var t = newTurn(d, n: n, question: "", mode: "quick")
-                t.participants = d.participants
+                t.participants = d.participants.mapValues { ($0.label, $0.letter, nil) }
                 t.startedAt = Self.date(msgs.first?["created_at"])
                 t.status = n < lastTurn ? (Self.hasResult(msgs) ? "done" : "failed") : (live ? "running" : status)
                 t.statusText = t.isRunning ? t.statusText : Self.statusText(t.status)
@@ -1003,14 +1004,6 @@ final class CouncilStore: ObservableObject {
             .filter { id in voices.contains { $0.id == id } }
     }
 
-    /// Ruoli dell'ultimo dibattito della discussione (originale o consiglio rilanciato) per chi può ancora
-    /// partecipare: si rimandano quando si rilancia il consiglio.
-    func discussionRoles(_ d: DebateState) -> [String: String] {
-        let last = d.turns.last { $0.mode == "council" && !$0.participants.isEmpty } ?? d
-        let ids = Set(councilModels(d))
-        return last.participants.compactMapValues(\.role).filter { ids.contains($0.key) }
-    }
-
     /// Giudice della discussione, se ancora disponibile; altrimenti Claude.
     func discussionJudge(_ d: DebateState) -> (id: String, claudeModel: String, label: String) {
         let jid = d.judgeId ?? judge
@@ -1063,8 +1056,7 @@ final class CouncilStore: ObservableObject {
             body["rounds"] = rounds
             body["judge"] = judgeOf.id
             body["claudeModel"] = judgeOf.claudeModel
-            let roles = discussionRoles(d)
-            if rounds >= 1, !roles.isEmpty { body["roles"] = roles }
+            // Ruoli: senza `roles` il motore riusa quelli dell'ultimo dibattito con round (una sola fonte).
         } else {
             body["responder"] = who.id
             body["claudeModel"] = who.claudeModel
