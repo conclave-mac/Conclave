@@ -2149,6 +2149,43 @@ SCENARIOS.bh = async function bh() {
 DESCR.bg = "ruoli visibili e riusati in Rilancia il consiglio";
 DESCR.bh = "immagini nei turni di seguito: iniziali + turno corrente, con tetto";
 
+// Lingua del verdetto dichiarata al giudice per nome (Gemini scriveva in inglese un verdetto su una domanda
+// italiana). Unità su detectLanguage + prompt, e dal vivo: il giudice riceve la riga "la domanda è in italiano".
+SCENARIOS.bi = async function bi() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const { detectLanguage, judgePrompt } = await import("../../src/debate/prompts.ts");
+  const wrong = [];
+  const cases = [
+    ["miglior fornetto elettrico sui 20 litri multifunzione massimo 90euro venduto su amazon per fare tipo lasagne patate etc", "italiano"],
+    ["meglio columbia patagonia o northface", "italiano"],
+    ["What is the best laptop for coding under 1000 dollars?", "inglese"],
+    ["¿Cuál es el mejor portátil para programar?", "spagnolo"],
+    ["Quel est le meilleur ordinateur pour coder ?", "francese"],
+    ["Welche ist die beste Kamera für Anfänger?", "tedesco"],
+    ["iPhone 17 vs Pixel 10", null],
+  ];
+  for (const [q, want] of cases) if (detectLanguage(q) !== want) wrong.push(`${q.slice(0, 25)}… → ${detectLanguage(q)}`);
+  const last = (q, finals) => judgePrompt(q, finals, []).split("\n").at(-1);
+  if (!last(cases[0][0], []).includes("è in italiano")) wrong.push("prompt: italiano non dichiarato");
+  if (!last(cases[2][0], []).includes("è in inglese")) wrong.push("prompt: inglese non dichiarato");
+  // Domanda di soli nomi: decide la lingua dei membri; senza esito resta la regola generale.
+  if (!last("iPhone 17 vs Pixel 10", [{ label: "A", text: "Meglio il Pixel per le foto, ma l'iPhone dura di più ed è più fluido." }]).includes("è in italiano")) wrong.push("ripiego sui membri");
+  if (!last("iPhone 17 vs Pixel 10", []).includes("nel dubbio")) wrong.push("regola generale persa");
+  if (/tradott|Traduci/.test(judgePrompt(cases[0][0], [], []))) wrong.push("il prompt chiede ancora di tradurre");
+  // Dal vivo: il prompt che arriva al giudice.
+  const r = await debate("conv-lang", ["ok-a", "ok-b"], 0, "ok-a", 60_000);
+  const bad = expectDone(r, 60);
+  if (bad) wrong.push(bad);
+  else {
+    const j = (await promptsOf("conv-lang")).filter((p) => p.phase === "verdict").at(-1);
+    if (!j?.user.includes("Lingua: la domanda è in italiano")) wrong.push("dal vivo: lingua non dichiarata al giudice");
+  }
+  if (wrong.length) return [false, wrong.slice(0, 4).join("; "), secs()];
+  return [true, `${cases.length} lingue riconosciute, lingua dichiarata al giudice, ripiego sui membri`, secs()];
+};
+DESCR.bi = "lingua del verdetto dichiarata al giudice";
+
 // ---------- main ----------
 
 async function main() {
