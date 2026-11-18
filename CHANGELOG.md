@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-18
+
+### Added
+- Roles are shown next to each participant in the discussion header and on the critique cards, and "Relaunch the
+  council" keeps the roles of the discussion.
+- Qwen 3.8 27B on Groq now receives attached images as real images (up to 3 per request), like Gemini.
+- Accessibility: VoiceOver reads each answer card as one item, a "Phases" rotor jumps between phases, and a
+  finished answer is announced once. "Increase contrast" and "Reduce transparency" make the sidebar opaque and
+  secondary text darker.
+- Reopening a discussion brings you back to where you were reading.
+
+### Changed
+- The default OpenRouter voice is now Nemotron: OpenRouter no longer offers DeepSeek for free. Saved DeepSeek
+  voices are kept and the app explains that they need a paid model.
+- Cerebras is shown as credits-only: it no longer has a permanent free plan.
+- Follow-up questions no longer resend the images of every earlier turn.
+- The keychain is read once per launch instead of twice (about 0.7 s faster startup on an older Intel Mac).
+
+### Fixed
+- In-app updates: the disk image is unmounted even if the first attempt fails, temporary files are removed when
+  quitting during a download, Cancel during "Verifying…" stops at once, the swap waits for a second running copy
+  of the app, and an update postponed by cancelling the quit is installed at the next quit instead of being lost.
+- Groq: Qwen no longer skips rounds when it hits the per-minute output token limit.
+- Attached photos and charts without recognizable text are accepted when a picture can be sent.
+- The new app's signature is checked again right before an update replaces the old one.
+
 ## [0.5.0] - 2026-11-17
 
 ### Added
@@ -149,7 +175,9 @@ versions.
 - Data folder `0700`, files `0600`; atomic writes for settings and health cache.
 - Claude CLI run without tools, MCP servers or user settings, and stopped on shutdown.
 
-[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/peppolone/Conclave/releases/tag/v0.5.1
+[0.5.0]: https://github.com/peppolone/Conclave/releases/tag/v0.5.0
 [0.4.1]: https://github.com/peppolone/Conclave/releases/tag/v0.4.1
 [0.4.0]: https://github.com/peppolone/Conclave/releases/tag/v0.4.0
 [0.3.1]: https://github.com/peppolone/Conclave/releases/tag/v0.3.1
