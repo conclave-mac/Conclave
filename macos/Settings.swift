@@ -1058,6 +1058,17 @@ final class SettingsNav: ObservableObject {
     }
 }
 
+/// "Riduci trasparenza" acceso ad app aperta: SwiftUI non rilegge `Brand.sidebarTint`, quindi il fondo
+/// opaco lo mette la barra stessa (come `SidebarView`).
+private struct OpaqueWhenReducedTransparency: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    func body(content: Content) -> some View {
+        content.background {
+            if reduceTransparency || DisplayOptions.opaque { Brand.sidebarTintOpaque.ignoresSafeArea() }
+        }
+    }
+}
+
 struct SettingsSidebar: View {
     @ObservedObject var nav: SettingsNav
     @State private var query = ""
@@ -1159,7 +1170,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // comunque delle modifiche non salvate nell'altra.
         let close: () -> Void = { [weak self] in self?.window?.performClose(nil) }
 
-        let sidebarVC = NSHostingController(rootView: SettingsSidebar(nav: nav).background(Brand.sidebarTint.ignoresSafeArea()).rebuildOnAppearanceChange())
+        let sidebarVC = NSHostingController(rootView: SettingsSidebar(nav: nav).modifier(OpaqueWhenReducedTransparency()).background(Brand.sidebarTint.ignoresSafeArea()).rebuildOnAppearanceChange())
         let detailVC = NSHostingController(rootView: SettingsDetail(nav: nav, keys: model, models: models, ui: ui, close: close).rebuildOnAppearanceChange())
         // Solo il vincolo di dimensione massima: con [] la vista SwiftUI resta fuori da Auto Layout
         // e alla prima apertura gli interruttori comparivano senza pomello; con il predefinito
