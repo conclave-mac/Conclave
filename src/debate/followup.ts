@@ -42,7 +42,13 @@ export function buildConversation(debateId: number, question: string, turn: numb
  * letti dai partecipanti salvati in `_meta`. Valori rovinati o sconosciuti si ignorano.
  */
 export function discussionRoles(debateId: number): Record<string, Role> {
-  const meta = getConversationRows(debateId).filter((r) => r.model_id === "_meta" && r.phase === "start" && r.content).at(-1);
+  const rows = getConversationRows(debateId);
+  // Un consiglio rilanciato con 0 round non salva ruoli (lì non agiscono): non deve cancellare quelli di prima.
+  const roundsOf = (turn: number): number => {
+    try { return Number(JSON.parse(rows.find((r) => r.model_id === "_meta" && r.phase === "turn" && r.turn === turn)?.content ?? "{}").rounds ?? 1); }
+    catch { return 1; }
+  };
+  const meta = rows.filter((r) => r.model_id === "_meta" && r.phase === "start" && r.content && (r.turn === 0 || roundsOf(r.turn) >= 1)).at(-1);
   const out: Record<string, Role> = {};
   try {
     const list: unknown = JSON.parse(meta?.content ?? "[]");
