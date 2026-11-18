@@ -2052,6 +2052,11 @@ SCENARIOS.bg = async function bg() {
   // 3. Riuso dall'ultimo consiglio rilanciato, non dal dibattito originale.
   const t3 = await turnOf(r.id, { ...council, question: FQ(TAG, "E in inverno?") }, 60_000);
   if (JSON.stringify(roleMap(startOf(t3.events)?.participants)) !== JSON.stringify({ "ok-b": "devil" })) wrong.push("turno 3: non riusa l'ultimo consiglio");
+  // 3b. Un rilancio con 0 round (ruoli inattivi, non salvati) non cancella quelli della discussione.
+  const t3z = await turnOf(r.id, { ...council, rounds: 0, question: FQ(TAG, "In breve?") }, 60_000);
+  if (t3z.state?.status !== "done") wrong.push(`turno a 0 round → ${t3z.state?.status}`);
+  const t3b = await turnOf(r.id, { ...council, question: FQ(TAG, "E all'alba?") }, 60_000);
+  if (JSON.stringify(roleMap(startOf(t3b.events)?.participants)) !== JSON.stringify({ "ok-b": "devil" })) wrong.push("dopo un turno a 0 round i ruoli si perdono");
   // 4. {} esplicito: nessun ruolo.
   const t4 = await turnOf(r.id, { ...council, question: FQ(TAG, "E di notte?"), roles: {} }, 60_000);
   if (Object.keys(roleMap(startOf(t4.events)?.participants)).length) wrong.push("turno 4: {} non toglie i ruoli");
