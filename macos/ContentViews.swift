@@ -1264,7 +1264,8 @@ struct DebateView: View {
         // deve riusare l'altezza misurata per la riga a card singola (il testo uscirebbe dalla card).
         // Card senza rientro: a tutta larghezza, non nella colonna del percorso.
         ForEach(Array(rows.enumerated()), id: \.offset) { i, row in
-            CardsRow(cards: row, cols: cols, running: d.isRunning, since: p.startedAt)
+            CardsRow(cards: row, cols: cols, running: d.isRunning, since: p.startedAt,
+                     roles: p.id == "critique" ? d.participants.compactMapValues(\.role) : [:])
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, i == 0 ? 10 : 12)
                 .padding(.bottom, i == rows.count - 1 ? gap : 0)
@@ -2043,6 +2044,8 @@ private struct CardsRow: View {
     let cols: Int
     let running: Bool
     let since: Date?
+    /// Ruoli scelti (solo nella fase di critica, dove agiscono): id voce → "devil"/"checker".
+    var roles: [String: String] = [:]
 
     var body: some View {
         // Grid e non HStack: misura il testo alla larghezza finale della colonna, mentre l'HStack
@@ -2050,7 +2053,7 @@ private struct CardsRow: View {
         Grid(alignment: .topLeading, horizontalSpacing: 12, verticalSpacing: 0) {
             GridRow {
                 ForEach(cards) { c in
-                    CardView(card: c, running: running, since: since)
+                    CardView(card: c, running: running, since: since, role: roles[c.id])
                 }
                 if cards.count < cols {
                     Color.clear
@@ -2067,6 +2070,7 @@ private struct CardView: View {
     let card: CardState
     let running: Bool
     let since: Date?
+    var role: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -2077,6 +2081,12 @@ private struct CardView: View {
                         Circle().fill(Brand.participant(letter)).frame(width: 8, height: 8)
                     }
                     Text(card.title).font(Brand.Fonts.bodyMedium)
+                    if let role {
+                        // Ruolo a parole, come nell'intestazione della discussione.
+                        Text(role == "devil" ? L("Avvocato del diavolo") : L("Verificatore di fatti"))
+                            .font(Brand.Fonts.small)
+                            .foregroundStyle(Brand.secondaryText)
+                    }
                     Spacer(minLength: 6)
                     if let s = card.seconds {
                         Text(String(format: "%.1f s", locale: AppLanguage.locale, s))
@@ -2186,6 +2196,7 @@ private struct CardView: View {
     /// Chi ha risposto e come: "Gemini · Risposta B, ha risposto in 3,2 s", "…, non ha risposto".
     private var accessibilityStatus: String {
         var parts = [card.title]
+        if let role { parts.append(role == "devil" ? L("Avvocato del diavolo") : L("Verificatore di fatti")) }
         if card.text != nil {
             parts.append(card.seconds.map { String(format: L("ha risposto in %@ s"), String(format: "%.1f", locale: AppLanguage.locale, $0)) } ?? L("ha risposto"))
             if let m = card.usedModel { parts.append(m) }
