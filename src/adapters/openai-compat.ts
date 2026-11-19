@@ -114,18 +114,41 @@ export function isHardLimit(message: string): boolean {
 const imageRefused = new Set<string>();
 
 /**
- * Modelli che ricevono le immagini vere, con il massimo per richiesta. Gemini sì (Gemma no: non si sa
- * se le accetti); su Groq solo Qwen 3.8 27B, al massimo 3 immagini (2.048 token l'una).
+ * Modelli che ricevono le immagini vere, con il massimo per richiesta e i token che costa ognuna. Gemini sì
+ * (Gemma no: non si sa se le accetti); su Groq solo Qwen 3.8 27B, al massimo 3 immagini (2.048 token l'una).
+ * `provider`: la regola vale solo su quel provider (stesso id di Qwen su OpenRouter = un altro servizio, che
+ * non sappiamo se accetti le immagini). Si confronta con indirizzo e nome del provider.
  */
-const IMAGE_MODELS: { test: RegExp; max: number }[] = [
-  { test: /^(models\/)?gemini/i, max: Infinity },
-  { test: /^qwen\/qwen3\.8-27b$/i, max: 3 },
+const IMAGE_MODELS: { test: RegExp; max: number; tokens: number; provider?: RegExp }[] = [
+  { test: /^(models\/)?gemini/i, max: Infinity, tokens: 258 },
+  { test: /^qwen\/qwen3\.8-27b$/i, max: 3, tokens: 2048, provider: /groq/i },
 ];
 
-/** Immagini da mandare a questo modello: nessuna se non le accetta, al massimo quante ne accetta. */
-export function imagesFor(model: string, images?: string[]): string[] {
+const imageRule = (model: string, p?: Provider) => {
   const rule = IMAGE_MODELS.find((r) => r.test.test(model));
+  if (!rule || (p && rule.provider && !rule.provider.test(`${p.baseUrl} ${p.name ?? ""}`))) return undefined;
+  return rule;
+};
+
+/**
+ * Immagini da mandare a questo modello: nessuna se non le accetta, al massimo quante ne accetta. Senza
+ * provider (prove) conta solo il modello.
+ */
+export function imagesFor(model: string, images?: string[], p?: Provider): string[] {
+  const rule = imageRule(model, p);
   return images?.length && rule && !imageRefused.has(model) ? images.slice(0, rule.max) : [];
+}
+
+/**
+ * Richiesta troppo grande anche senza immagini: Groq scrive "Limit 8000, Requested 9500" (token). Se togliendo
+ * la stima dei token delle immagini si resta oltre il limite, riprovare con il solo testo non serve.
+ * Senza numeri nel messaggio non si sa: si prova (false).
+ */
+export function textAloneTooLarge(message: string, model: string, images: number, p?: Provider): boolean {
+  const m = message.match(/Limit\s+(\d+)(?:,\s*Used\s+\d+)?,\s*Requested\s+(\d+)/i);
+  if (!m) return false;
+  const perImage = imageRule(model, p)?.tokens ?? 0;
+  return Number(m[2]) - images * perImage > Number(m[1]);
 }
 
 const IMAGES_NOTE = "\n\nLe immagini allegate sono unite a questo messaggio.";
@@ -278,7 +301,7 @@ export async function once(p: Provider, model: string, req: ChatRequest, timeout
           model,
           messages: [
             { role: "system", content: req.system },
-            { role: "user", content: userContent(req.user, imagesFor(model, req.images), req.images?.length ?? 0) },
+            { role: "user", content: userContent(req.user, imagesFor(model, req.images, p), req.images?.length ?? 0) },
           ],
           // Margine ampio: nei modelli che "ragionano" anche il ragionamento consuma questo limite.
           max_tokens: Math.min(req.maxTokens ?? 4096, outputCap.get(model) ?? Infinity),
@@ -364,14 +387,18 @@ export async function chatOpenAI(p: Provider, models: string[], req: ChatRequest
         lastError = e;
         if (req.signal?.aborted) throw e;
         // Il provider rifiuta le immagini (o il formato): una volta sola si riprova senza, invece di far fallire la voce.
-        if (e instanceof HttpError && e.status === 400 && !withoutImages && imagesFor(model, req.images).length) {
+        // Un 400 per max_tokens oltre il limite (Groq, Qwen) non riguarda le immagini: lo gestisce il tetto più sotto,
+        // e il riprova senza immagini le toglierebbe a questo modello fino al riavvio.
+        const sent = imagesFor(model, req.images, p).length;
+        if (e instanceof HttpError && e.status === 400 && !withoutImages && sent && outputLimitFrom(e.message) === 0) {
           withoutImages = true;
           console.error(`[immagini] ${model} ha risposto 400 con le immagini: riprovo con il solo testo`);
           continue;
         }
         // Immagini oltre il tetto di token del piano gratuito (Qwen su Groq: ~8.000 al minuto): prima di
         // accorciare la risposta o rinunciare, si riprova senza. Le immagini restano attive per le prossime chiamate.
-        if (e instanceof HttpError && tooLarge(e) && !withoutImages && imagesFor(model, req.images).length) {
+        // Se è troppo grande anche il solo testo (stima dai numeri del provider), togliere le immagini non serve.
+        if (e instanceof HttpError && tooLarge(e) && !withoutImages && sent && !textAloneTooLarge(e.message, model, sent, p)) {
           withoutImages = true;
           imagesTooBig = true;
           console.error(`[immagini] ${model}: richiesta troppo grande con le immagini, riprovo con il solo testo`);
