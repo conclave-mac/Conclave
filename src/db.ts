@@ -52,7 +52,7 @@ db.exec(`
   db.exec(`UPDATE debates SET updated_at = created_at WHERE updated_at IS NULL`);
   // Modello che ha risposto davvero e quello che ha sostituito (riserve della stessa famiglia).
   const mcols = new Set((db.prepare(`PRAGMA table_info(messages)`).all() as { name: string }[]).map((c) => c.name));
-  for (const name of ["model_used", "replaced", "confidence"]) if (!mcols.has(name)) db.exec(`ALTER TABLE messages ADD COLUMN ${name} TEXT`);
+  for (const name of ["model_used", "replaced", "confidence", "error_code"]) if (!mcols.has(name)) db.exec(`ALTER TABLE messages ADD COLUMN ${name} TEXT`);
   // Turni della chat continua: 0 = il dibattito originale (anche per tutte le righe già esistenti).
   if (!mcols.has("turn")) db.exec(`ALTER TABLE messages ADD COLUMN turn INTEGER NOT NULL DEFAULT 0`);
   const acols = new Set((db.prepare(`PRAGMA table_info(attachments)`).all() as { name: string }[]).map((c) => c.name));
@@ -75,6 +75,8 @@ export interface MessageRow {
   confidence?: string | null;
   /** Turno della chat (0 = dibattito originale). */
   turn?: number;
+  /** Codice stabile dell'errore (vedi errors.ts), solo con `error`; le righe vecchie non l'hanno. */
+  error_code?: string | null;
 }
 
 export interface StoredOptions {
@@ -93,9 +95,9 @@ export function createDebate(question: string, models: string[], options: Stored
 
 export function saveMessage(debateId: number, m: MessageRow): void {
   // Solo se il dibattito esiste ancora: una risposta arrivata dopo l'eliminazione non lascia righe orfane.
-  db.prepare(`INSERT INTO messages (debate_id, model_id, phase, content, error, ms, model_used, replaced, turn, confidence)
-              SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM debates WHERE id = ?)`)
-    .run(debateId, m.model_id, m.phase, m.content, m.error, m.ms, m.model_used ?? null, m.replaced ?? null, m.turn ?? 0, m.confidence ?? null, debateId);
+  db.prepare(`INSERT INTO messages (debate_id, model_id, phase, content, error, ms, model_used, replaced, turn, confidence, error_code)
+              SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM debates WHERE id = ?)`)
+    .run(debateId, m.model_id, m.phase, m.content, m.error, m.ms, m.model_used ?? null, m.replaced ?? null, m.turn ?? 0, m.confidence ?? null, m.error_code ?? null, debateId);
 }
 
 export function saveAttachments(debateId: number, list: { name: string; kind: string; text: string; imageData?: string }[], turn = 0): void {
@@ -166,7 +168,7 @@ export function getDebate(id: number) {
       }
     | undefined;
   if (!d) return undefined;
-  const messages = db.prepare(`SELECT model_id, phase, content, error, ms, model_used, replaced, turn, confidence FROM messages WHERE debate_id = ? ORDER BY turn, id`).all(id) as unknown as MessageRow[];
+  const messages = db.prepare(`SELECT model_id, phase, content, error, ms, model_used, replaced, turn, confidence, error_code FROM messages WHERE debate_id = ? ORDER BY turn, id`).all(id) as unknown as MessageRow[];
   let options: StoredOptions | null = null;
   try { options = d.options ? (JSON.parse(d.options) as StoredOptions) : null; } catch { /* valore rovinato */ }
   return { ...d, models: JSON.parse(d.models) as string[], options, messages };
