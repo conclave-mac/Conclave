@@ -12,6 +12,7 @@ import { pathToFileURL } from "node:url";
 export const MODELS = [
   "ok-a", "ok-b", "hang", "slow", "ratelimit", "quota", "crash500",
   "empty", "huge", "html", "flaky-critique", "length", "gone", "otpm", "leaky", "titleonly", "tpm", "lag",
+  "stream-stall", "stream-cut", "stream-error", "drip",
 ];
 
 /** Finti modelli Gemini (non in MODELS: li usa solo lo scenario "bc"). "gemini-noimg" rifiuta con 400 le richieste con immagini. */
@@ -94,8 +95,68 @@ const HTML_TEXT = `Testo ostile:
 Fine.`;
 
 function send(res, status, body, headers = {}) {
+  // Richiesta con `stream: true`: una risposta riuscita arriva come Server-Sent Events (formato OpenAI).
+  if (res.streaming && status === 200 && body?.object === "chat.completion") return sendStream(res, body);
   res.writeHead(status, { "Content-Type": "application/json", ...headers });
   res.end(typeof body === "string" ? body : JSON.stringify(body));
+}
+
+/** Pezzi di una risposta in streaming: come i provider veri, a gruppi di pochi caratteri. */
+function chunksOf(text, size = 24) {
+  const out = [];
+  for (let i = 0; i < text.length; i += size) out.push(text.slice(i, i + size));
+  return out;
+}
+
+const sseChunk = (model, delta, finish = null) => `data: ${JSON.stringify({
+  id: "chatcmpl-chaos", object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model,
+  choices: [{ index: 0, delta, finish_reason: finish }],
+})}\n\n`;
+
+function startStream(res) {
+  if (!res.headersSent) res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
+}
+
+/**
+ * Risposta in streaming: primo pezzo col ruolo, il testo a pezzi, l'ultimo con `finish_reason`, poi [DONE].
+ * `overMs`: pezzi distribuiti nel tempo (modelli lenti che scrivono piano); `stopAfter`: si ferma dopo tanti
+ * pezzi ("stall": resta muto; "cut": chiude la connessione; "error": chunk d'errore come OpenRouter).
+ */
+function sendStream(res, body, { overMs = 0, stopAfter = Infinity, stop } = {}) {
+  const c = body.choices[0];
+  const pieces = chunksOf(c.message.content ?? "");
+  startStream(res);
+  res.write(sseChunk(body.model, { role: "assistant", content: "" }));
+  let i = 0;
+  const step = overMs ? overMs / Math.max(pieces.length, 1) : 0;
+  const next = () => {
+    if (res.destroyed) return;
+    if (i >= stopAfter) {
+      if (stop === "cut") return res.destroy();
+      if (stop === "error") {
+        res.write(`data: ${JSON.stringify({ error: { code: 502, message: "Upstream error from provider: stream reset" }, choices: [{ index: 0, delta: { content: "" }, finish_reason: "error" }] })}\n\n`);
+        return res.end();
+      }
+      hanging++;
+      res.on("close", () => hanging--);
+      return; // "stall": muto per sempre
+    }
+    if (i < pieces.length) {
+      res.write(sseChunk(body.model, { content: pieces[i++] }));
+      return step ? setTimeout(next, step) : next();
+    }
+    res.write(sseChunk(body.model, {}, c.finish_reason));
+    res.write("data: [DONE]\n\n");
+    res.end();
+  };
+  next();
+}
+
+/** Risposta che arriva dopo `ms`: in streaming scritta a pezzi in quel tempo, altrimenti tutta alla fine. */
+function later(res, ms, body) {
+  if (res.streaming) return sendStream(res, body, { overMs: ms });
+  const t = setTimeout(() => send(res, 200, body), ms);
+  res.on("close", () => clearTimeout(t));
 }
 
 function completion(model, content, finish = "stop") {
@@ -132,6 +193,7 @@ async function handle(req, res) {
 
   const body = await readJson(req);
   const model = String(body.model ?? "");
+  res.streaming = body.stream === true;
   const msgs = Array.isArray(body.messages) ? body.messages : [];
   const system = String(msgs.find((m) => m.role === "system")?.content ?? "");
   // Il contenuto dell'utente è testo, oppure un elenco di parti (testo + image_url) come per le immagini.
@@ -171,25 +233,16 @@ async function handle(req, res) {
       req.socket.setTimeout(0);
       res.on("close", () => hanging--);
       return; // non risponde mai
-    case "paced": {
-      // Per provare l'interfaccia dal vivo: 3–7 s di attesa e una risposta lunga.
-      const t = setTimeout(() => send(res, 200, completion(model, Array(user.includes("POSIZIONI FINALI DEI MEMBRI") ? 1 : 6).fill(okText(model, user)).join("\n\n"))),
-        3000 + Math.random() * 4000);
-      res.on("close", () => clearTimeout(t));
-      return;
-    }
-    case "lag": {
-      // Sotto il tempo massimo per intervento (45 s) ma molto dopo gli altri: va fermato dalla regola
+    case "paced":
+      // Per provare l'interfaccia dal vivo: 3–7 s e una risposta lunga (in streaming: scritta in quel tempo).
+      return later(res, 3000 + Math.random() * 4000,
+        completion(model, Array(user.includes("POSIZIONI FINALI DEI MEMBRI") ? 1 : 6).fill(okText(model, user)).join("\n\n")));
+    case "lag":
+      // Sotto il tetto per intervento ma molto dopo gli altri (scrive piano per 40 s): va fermato dalla regola
       // del ritardatario nei round, mentre la risposta iniziale la attende.
-      const t = setTimeout(() => send(res, 200, completion(model, okText(model, user))), 40_000);
-      res.on("close", () => clearTimeout(t));
-      return;
-    }
-    case "slow": {
-      const t = setTimeout(() => send(res, 200, completion(model, okText(model, user))), 20_000);
-      res.on("close", () => clearTimeout(t));
-      return;
-    }
+      return later(res, 40_000, completion(model, okText(model, user)));
+    case "slow":
+      return later(res, 20_000, completion(model, okText(model, user)));
     case "ratelimit": {
       const key = `${scenarioOf(user)}|${phaseOf(system, user)}`;
       if (!seenPhase.has(key)) {
@@ -265,6 +318,18 @@ async function handle(req, res) {
     }
     case "gone":
       return send(res, 404, err(`The model \`${model}\` does not exist or you do not have access to it. model not found`, "invalid_request_error"));
+    // Streaming a metà (scenari bj–bm): scrive qualche pezzo poi si blocca, chiude la connessione o manda un
+    // chunk d'errore. Senza `stream: true` rispondono come ok-a.
+    case "drip":
+      // Scrive un pezzo ogni 5 s per 10 minuti: un turno che resta vivo a lungo senza mai fermarsi (scenario au).
+      if (!res.streaming) { hanging++; res.on("close", () => hanging--); return; }
+      return sendStream(res, completion(model, ".".repeat(120 * 24)), { overMs: 600_000 });
+    case "stream-stall":
+    case "stream-cut":
+    case "stream-error":
+      if (!res.streaming) return send(res, 200, completion(model, okText(model, user)));
+      // Pezzi distanziati (~4 s in tutto): arrivano al motore e diventano `delta` prima della caduta anche sotto carico.
+      return sendStream(res, completion(model, okText(model, user)), { overMs: 4000, stopAfter: 4, stop: model.slice(7) });
     default:
       return send(res, 404, err(`model not found: ${model}`, "invalid_request_error"));
   }
