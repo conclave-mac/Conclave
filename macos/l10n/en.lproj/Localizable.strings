@@ -576,3 +576,33 @@
 "Fasi" = "Phases";
 "Ha risposto %@" = "%@ answered";
 "Hanno risposto: %@" = "Answered: %@";
+
+/* Errori del motore per codice (ErrorText.swift) */
+"Servizio occupato o limite di richieste raggiunto." = "Service busy or request limit reached.";
+"Riprova tra qualche minuto." = "Try again in a few minutes.";
+"Quota del piano esaurita." = "The plan's quota is used up.";
+"Riprova domani o togli questa voce dal consiglio." = "Try again tomorrow or remove this voice from the council.";
+"Chiave API rifiutata dal provider." = "The provider rejected the API key.";
+"Controllala in Impostazioni ▸ Chiavi API." = "Check it in Settings ▸ API Keys.";
+"Chiave API mancante." = "API key missing.";
+"Aggiungila in Impostazioni ▸ Chiavi API." = "Add it in Settings ▸ API Keys.";
+"Provider non raggiungibile." = "The provider can't be reached.";
+"Controlla la connessione a Internet." = "Check your internet connection.";
+"Modello ritirato dal provider." = "The provider has retired this model.";
+"Scegline un altro in Impostazioni ▸ Modelli." = "Choose another one in Settings ▸ Models.";
+"Nessuna risposta in tempo." = "No answer in time.";
+"Il servizio è lento: riprova più tardi." = "The service is slow: try again later.";
+"Risposta interrotta a metà." = "The answer was cut off halfway.";
+"Rilancia la domanda." = "Ask the question again.";
+"Domanda o allegati troppo lunghi per questo modello." = "The question or attachments are too long for this model.";
+"Accorcia la domanda o togli qualche allegato." = "Shorten the question or remove some attachments.";
+"Il modello ha restituito una risposta vuota." = "The model returned an empty answer.";
+"Riprova o scegli un altro modello." = "Try again or choose another model.";
+"Claude non si avvia." = "Claude doesn't start.";
+"Controlla che Claude Code sia installato e collegato al tuo account." = "Check that Claude Code is installed and signed in to your account.";
+"Errore del provider." = "Provider error.";
+"Riprova più tardi." = "Try again later.";
+"Nessun modello ha risposto." = "No model answered.";
+"Controlla chiavi e modelli nelle Impostazioni." = "Check keys and models in Settings.";
+"Nessun giudice ha prodotto il verdetto." = "No judge produced the verdict.";
+"Rilancia la domanda o scegli un altro giudice." = "Ask the question again or choose another judge.";

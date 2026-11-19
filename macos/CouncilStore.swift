@@ -36,7 +36,18 @@ struct CardState: Identifiable, Equatable {
     var seconds: Double?
     var usedModel: String?
     var replaced: String?
+    /// Codice stabile dell'errore (`error_code` del motore); nil nelle discussioni vecchie.
+    var errorCode: String?
+    /// Streaming: testo arrivato finora mentre il modello scrive (nil quando arriva `text` o `error`).
+    /// Resta separato da `text`: per le viste `text != nil` vuol dire risposta conclusa.
+    var partial: String?
+    /// Streaming: variante che sta scrivendo (può cambiare se riparte una riserva).
+    var partialModel: String?
     var waiting: Bool { text == nil && error == nil }
+    /// Errore da mostrare: tradotto con l'azione da fare se il codice è noto, altrimenti il testo del motore.
+    var errorText: String? { error.map { ErrorText.text(code: errorCode, raw: $0) } }
+    /// Azione suggerita per l'errore (nil se il codice non è noto).
+    var errorAction: String? { error == nil ? nil : ErrorText.info(errorCode)?.action }
 }
 
 struct PhaseState: Identifiable, Equatable {
@@ -74,6 +85,9 @@ struct DebateState: Equatable {
     var phases: [PhaseState] = []
     var verdict: String?
     var verdictBy: String?
+    /// Streaming: verdetto mentre il giudice lo scrive (senza righe TITOLO/AFFIDABILITÀ); nil quando
+    /// arriva `verdict`. La sintesi del dibattito si sposta in fondo solo nel testo definitivo.
+    var verdictDraft: String?
     /// Affidabilità del verdetto secondo il giudice: "alta", "media", "bassa" (nil se manca).
     var confidence: String?
     /// Partecipanti per id: nome, lettera e ruolo scelto dall'utente ("devil", "checker"; nil senza ruolo).
@@ -101,7 +115,7 @@ struct DebateState: Equatable {
         a.id == b.id && a.status == b.status && a.phases == b.phases && a.verdict == b.verdict
             && a.statusText == b.statusText && a.question == b.question && a.title == b.title && a.finishedAt == b.finishedAt
             && a.judging == b.judging && a.attachments == b.attachments && a.webSearch == b.webSearch
-            && a.verdictBy == b.verdictBy && a.confidence == b.confidence && a.turn == b.turn && a.mode == b.mode && a.answer == b.answer && a.turns == b.turns
+            && a.verdictBy == b.verdictBy && a.verdictDraft == b.verdictDraft && a.confidence == b.confidence && a.turn == b.turn && a.mode == b.mode && a.answer == b.answer && a.turns == b.turns
     }
 }
 
@@ -542,6 +556,7 @@ final class CouncilStore: ObservableObject {
     /// così cronologia, notifica e badge arrivano anche guardando altro.
     private func leaveCurrent() {
         stream?.cancel()
+        resetStreams()
         if let d = current, d.busy { watch(d.id, title: d.displayTitle, turn: d.turns.last(where: \.isRunning)?.turn ?? 0) }
     }
 
@@ -580,11 +595,71 @@ final class CouncilStore: ObservableObject {
     }
     private var followed: Set<Int> = []
 
+    // MARK: Streaming del testo
+
+    /// Ritmo massimo con cui i pezzi arrivati aggiornano la vista (il Markdown si ricalcola a ogni
+    /// aggiornamento): come Claude, che non ridisegna a ogni pezzo ma a intervalli.
+    static let deltaFlushInterval: Duration = .milliseconds(80)
+    /// Testo accumulato per messaggio in corso ("debate|turn|phase|modelId") e ultimo evento da applicare.
+    private var streamTexts: [String: String] = [:]
+    private var pendingDeltas: [String: (debateId: Int, event: [String: Any])] = [:]
+    private var flushTask: Task<Void, Never>?
+
+    private static func streamKey(_ debateId: Int, _ e: [String: Any]) -> String {
+        "\(debateId)|\(e["turn"] as? Int ?? 0)|\(e["phase"] as? String ?? "")|\(e["modelId"] as? String ?? "")"
+    }
+
+    /// Un pezzo (`delta`): si accumula subito, la vista si aggiorna al più ogni `deltaFlushInterval`.
+    private func bufferDelta(_ e: [String: Any], debateId: Int) {
+        let key = Self.streamKey(debateId, e)
+        let piece = e["text"] as? String ?? ""
+        let text = (e["reset"] as? Bool == true) ? piece : (streamTexts[key] ?? "") + piece
+        streamTexts[key] = text
+        var merged = e
+        merged["text"] = text
+        pendingDeltas[key] = (debateId, merged)
+        guard flushTask == nil else { return }
+        flushTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.deltaFlushInterval)
+            guard let self, !Task.isCancelled else { return }
+            self.flushTask = nil
+            let batch = self.pendingDeltas
+            self.pendingDeltas = [:]
+            for (_, p) in batch { self.apply(p.event, debateId: p.debateId, flushing: true) }
+        }
+    }
+
+    /// Messaggio concluso (o fallito): il testo in corso non serve più e nessun pezzo in coda deve arrivare dopo.
+    private func dropStream(_ e: [String: Any], debateId: Int) {
+        let key = Self.streamKey(debateId, e)
+        streamTexts[key] = nil
+        pendingDeltas[key] = nil
+    }
+
+    /// Discussione lasciata o finita: via tutti i pezzi in corso.
+    private func resetStreams() {
+        flushTask?.cancel()
+        flushTask = nil
+        streamTexts = [:]
+        pendingDeltas = [:]
+    }
+
+    /// Toglie i testi a metà (fine del turno: annullato o fallito).
+    private static func clearPartials(_ d: inout DebateState) {
+        d.verdictDraft = nil
+        for i in d.phases.indices { for j in d.phases[i].cards.indices { d.phases[i].cards[j].partial = nil; d.phases[i].cards[j].partialModel = nil } }
+        d.answer?.partial = nil
+        d.answer?.partialModel = nil
+    }
+
     /// true se un dibattito è in corso, mostrato o in background.
     var hasRunning: Bool { current?.busy == true || !watchers.isEmpty }
 
-    private func apply(_ e: [String: Any], debateId: Int) {
-        guard var d = current, d.id == debateId, let type = e["type"] as? String else { return }
+    private func apply(_ e: [String: Any], debateId: Int, flushing: Bool = false) {
+        guard let type = e["type"] as? String else { return }
+        if type == "delta" && !flushing { bufferDelta(e, debateId: debateId); return }
+        if type == "message" || type == "error" { dropStream(e, debateId: debateId) }
+        guard var d = current, d.id == debateId else { return }
         let n = e["turn"] as? Int ?? 0
         if type == "turn" {
             // Inizio di una domanda di seguito: di solito il turno c'è già (aggiunto all'invio).
@@ -661,18 +736,38 @@ final class CouncilStore: ObservableObject {
                 d.phases.sort { Self.sortIndex($0.id) < Self.sortIndex($1.id) }
             }
             d.statusText = "\(Self.phaseTitles[phase] ?? phase)…"
+        case "delta":
+            let phase = e["phase"] as? String ?? ""
+            let modelId = e["modelId"] as? String ?? ""
+            let text = e["text"] as? String ?? ""
+            let model = e["model"] as? String
+            if phase == "verdict" {
+                if d.verdict == nil { d.verdictDraft = text.isEmpty ? nil : text }
+            } else if phase == "answer" {
+                guard d.answer?.text == nil else { break }
+                setAnswer(&d, modelId: modelId) { $0.partial = text.isEmpty ? nil : text; $0.partialModel = model }
+            } else if phase != "research" {
+                // Solo card ancora in attesa: un pezzo in ritardo non riapre una risposta già arrivata.
+                guard let p = d.phases.first(where: { $0.id == phase }),
+                      p.cards.first(where: { $0.id == modelId })?.waiting ?? true else { break }
+                upsert(&d, phase: phase, modelId: modelId) { $0.partial = text.isEmpty ? nil : text; $0.partialModel = model }
+            }
         case "message":
             let phase = e["phase"] as? String ?? ""
             let modelId = e["modelId"] as? String ?? ""
             let text = e["text"] as? String ?? ""
             if phase == "verdict" {
+                d.verdictDraft = nil
                 d.verdict = text
                 d.verdictBy = judgeName(modelId.replacingOccurrences(of: "judge:", with: ""), in: d)
                 if let c = e["confidence"] as? String { d.confidence = c }
             } else if phase == "answer" {
                 setAnswer(&d, modelId: modelId) {
                     $0.text = text
+                    $0.partial = nil
+                    $0.partialModel = nil
                     $0.error = nil
+                    $0.errorCode = nil
                     $0.seconds = (e["ms"] as? Double).map { $0 / 1000 }
                     $0.usedModel = e["model"] as? String
                     $0.replaced = e["replaced"] as? String
@@ -680,7 +775,10 @@ final class CouncilStore: ObservableObject {
             } else {
                 upsert(&d, phase: phase, modelId: modelId) {
                     $0.text = text
+                    $0.partial = nil
+                    $0.partialModel = nil
                     $0.error = nil
+                    $0.errorCode = nil
                     $0.seconds = (e["ms"] as? Double).map { $0 / 1000 }
                     $0.usedModel = e["model"] as? String
                     $0.replaced = e["replaced"] as? String
@@ -690,14 +788,19 @@ final class CouncilStore: ObservableObject {
             let phase = e["phase"] as? String ?? ""
             let modelId = e["modelId"] as? String ?? ""
             let error = e["error"] as? String ?? L("errore")
+            let code = e["error_code"] as? String
             if phase == "verdict" {
+                d.verdictDraft = nil
                 d.statusText = L("Giudice non disponibile, provo un altro modello…")
             } else if phase == "answer" {
-                setAnswer(&d, modelId: modelId) { $0.error = error }
+                setAnswer(&d, modelId: modelId) { $0.error = error; $0.errorCode = code; $0.partial = nil; $0.partialModel = nil }
             } else {
                 upsert(&d, phase: phase, modelId: modelId) {
                     $0.error = error
+                    $0.errorCode = code
                     $0.skipped = error.hasPrefix("ha saltato")
+                    $0.partial = nil
+                    $0.partialModel = nil
                 }
             }
         case "done":
@@ -706,7 +809,9 @@ final class CouncilStore: ObservableObject {
             d.judging = false
             d.finishedAt = .now
             if let c = e["confidence"] as? String { d.confidence = c }
-            d.statusText = status == "done" ? Self.statusText("done") : (e["error"] as? String ?? Self.statusText(status))
+            Self.clearPartials(&d)
+            let failure = (e["error"] as? String).map { ErrorText.text(code: e["error_code"] as? String, raw: $0) }
+            d.statusText = status == "done" ? Self.statusText("done") : (failure ?? Self.statusText(status))
         default:
             break
         }
@@ -769,7 +874,7 @@ final class CouncilStore: ObservableObject {
     // MARK: Apertura, nuova discussione, annullamento
 
     func open(_ id: Int) async {
-        if current?.id == id { stream?.cancel() } else { leaveCurrent() }
+        if current?.id == id { stream?.cancel(); resetStreams() } else { leaveCurrent() }
         // Due aperture ravvicinate: vale solo l'ultima richiesta, anche se risponde prima l'altra.
         openSeq += 1
         let seq = openSeq
@@ -922,6 +1027,7 @@ final class CouncilStore: ObservableObject {
             let change: (inout CardState) -> Void = {
                 $0.text = m["content"] as? String
                 $0.error = m["error"] as? String
+                $0.errorCode = m["error_code"] as? String
                 $0.skipped = ($0.error ?? "").hasPrefix("ha saltato")
                 $0.seconds = (m["ms"] as? Double).map { $0 / 1000 }
                 $0.usedModel = m["model_used"] as? String
