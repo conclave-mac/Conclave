@@ -394,3 +394,16 @@ export function splitConfidence(text: string): { confidence: Confidence; verdict
   const verdict = (text.slice(0, m.index) + text.slice(text[end] === "\n" ? end + 1 : end)).replace(/^\s+/, "");
   return { confidence, verdict };
 }
+
+/**
+ * Testo del verdetto da mostrare mentre il giudice scrive: senza righe TITOLO e AFFIDABILITÀ. Le righe
+ * macchina stanno in testa, quindi finché non ci sono almeno tre righe complete l'ultima (a metà) non
+ * si mostra: un "TITOLO: Lav" comparirebbe per poi sparire. La sintesi del dibattito si sposta solo a fine
+ * verdetto (`splitDebate`): l'app riceve allora il testo definitivo con il messaggio `message`.
+ */
+export function draftVerdict(raw: string): string {
+  const lines = raw.split("\n");
+  const complete = lines.slice(0, -1).filter((l) => l.trim()).length;
+  const t = complete < 3 ? lines.slice(0, -1).join("\n") : raw;
+  return splitConfidence(splitTitle(t).verdict).verdict;
+}

@@ -11,6 +11,7 @@ import { listCatalog, probe } from "./catalog.ts";
 import { getHealth, runHealthCheck, isChecking } from "./health.ts";
 import { engineToken } from "./bootstrap.ts";
 import { redact, redactProcessOutput } from "./redact.ts";
+import { errorCode } from "./errors.ts";
 import { killClaudeChildren } from "./adapters/claude-cli.ts";
 
 redactProcessOutput();
@@ -26,6 +27,11 @@ interface Running {
   clients: Set<ServerResponse>;
   controller: AbortController;
   finished: boolean;
+  /**
+   * Streaming: testo accumulato dei messaggi in corso, per chi si collega a metà (i `delta` non stanno in
+   * `events`: sarebbero migliaia). Chiave fase + voce; si toglie quando arriva il loro `message` o `error`.
+   */
+  partials: Map<string, Extract<DebateEvent, { type: "delta" }>>;
 }
 const running = new Map<number, Running>();
 /** Oltre questo numero il dibattito diventa lento e consuma quote senza aggiungere idee nuove. */
@@ -79,14 +85,24 @@ async function readObject(req: IncomingMessage): Promise<Record<string, unknown>
 }
 
 function send(r: Running, e: DebateEvent) {
-  r.events.push(e);
+  if (e.type === "delta") {
+    const k = `${e.phase}|${e.modelId}`;
+    const prev = r.partials.get(k);
+    const text = e.reset || !prev ? e.text : prev.text + e.text;
+    // Accumulato sempre come `reset`: a chi arriva dopo basta un evento con tutto il testo.
+    r.partials.set(k, { ...e, text, reset: true });
+  } else {
+    if (e.type === "message" || e.type === "error") r.partials.delete(`${e.phase}|${e.modelId}`);
+    if (e.type === "done") r.partials.clear();
+    r.events.push(e);
+  }
   const line = `data: ${JSON.stringify(e)}\n\n`;
   for (const c of r.clients) c.write(line);
 }
 
 /** Registra il lavoro di una discussione e, alla fine, chiude i flussi e lo toglie dopo 60 s. */
 function track(id: number, turn: number, work: (r: Running) => Promise<void>): void {
-  const r: Running = { turn, events: [], clients: new Set(), controller: new AbortController(), finished: false };
+  const r: Running = { turn, events: [], clients: new Set(), controller: new AbortController(), finished: false, partials: new Map() };
   running.set(id, r);
   // Anche un'eccezione sincrona di `work` diventa un rifiuto: il turno non resta "in corso".
   Promise.resolve().then(() => work(r)).catch((e) => {
@@ -94,7 +110,7 @@ function track(id: number, turn: number, work: (r: Running) => Promise<void>): v
     // Lavoro finito senza "done": stato e flussi si chiudono qui, o ogni turno nuovo darebbe 409.
     if (r.events.some((x) => x.type === "done")) return;
     try { if (turn) finishTurn(id, "failed"); else finishDebate(id, "failed", null); } catch (err) { logError(`chiusura ${id}`)(err); }
-    send(r, { type: "done", status: "failed", error: redact((e as Error)?.message ?? String(e)), ...(turn ? { turn } : {}) } as DebateEvent);
+    send(r, { type: "done", status: "failed", error: redact((e as Error)?.message ?? String(e)), error_code: errorCode(e), ...(turn ? { turn } : {}) } as DebateEvent);
   }).finally(() => {
     r.finished = true;
     for (const c of r.clients) c.end();
@@ -382,6 +398,8 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       if (!r) return json(res, 404, { error: "dibattito non in corso" });
       res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
       for (const e of r.events) res.write(`data: ${JSON.stringify(e)}\n\n`);
+      // Messaggi a metà: tutto il testo arrivato finora in un solo pezzo (`reset`), poi i pezzi nuovi.
+      for (const e of r.partials.values()) res.write(`data: ${JSON.stringify(e)}\n\n`);
       if (r.finished || r.events.some((e) => e.type === "done")) return res.end();
       r.clients.add(res);
       // Commento SSE periodico: durante un giudice lento il flusso non resta muto per minuti.

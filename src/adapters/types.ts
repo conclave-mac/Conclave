@@ -11,6 +11,14 @@ export interface ChatRequest {
   webSearch?: boolean;
   /** Tempo massimo per un singolo tentativo (al posto di quello predefinito dell'adapter). */
   timeoutMs?: number;
+  /**
+   * Streaming: riceve il testo visibile accumulato del tentativo in corso a ogni pezzo nuovo, con il
+   * modello che lo sta scrivendo. Un testo che non prolunga il precedente (es. "" quando un tentativo
+   * fallisce a metà e riparte una riserva) sostituisce quello mostrato. Senza callback niente streaming.
+   */
+  onText?: (text: string, model: string) => void;
+  /** Streaming: tempo massimo senza alcun dato dal provider (prima del primo pezzo o tra due pezzi). */
+  idleMs?: number;
 }
 
 export interface ChatResult {

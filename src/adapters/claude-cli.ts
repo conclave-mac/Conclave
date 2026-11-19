@@ -5,6 +5,10 @@ import { join } from "node:path";
 import type { ChatRequest, ChatResult } from "./types.ts";
 import { redact } from "../redact.ts";
 import { appKeyNames } from "../bootstrap.ts";
+import { CodedError } from "../errors.ts";
+
+/** Streaming: tempo massimo senza alcuna riga dalla CLI (vedi STREAM_IDLE_MS in openai-compat.ts). */
+const STREAM_IDLE_MS = 20_000;
 
 // Cartella vuota come cwd: Claude non vede file di progetto.
 const SANDBOX_DIR = mkdtempSync(join(tmpdir(), "conclave-"));
@@ -35,9 +39,13 @@ export function chatClaude(model: string, req: ChatRequest): Promise<ChatResult>
     if (/_API_KEY$/.test(k) || k.startsWith("COUNCIL_") || appKeyNames.includes(k)) delete env[k];
   }
 
+  // Streaming (`stream-json` con i pezzi del messaggio): eventi `stream_event` con i `content_block_delta`
+  // dell'API, poi la riga finale `result`, che resta l'unica fonte del testo definitivo. La ricerca sul web
+  // resta in `json`: con gli strumenti la CLI tace a lungo tra una pagina e l'altra.
+  const streaming = !!req.onText && !req.webSearch;
   const args = [
     "-p",
-    "--output-format", "json",
+    ...(streaming ? ["--output-format", "stream-json", "--verbose", "--include-partial-messages"] : ["--output-format", "json"]),
     ...(req.webSearch
       ? ["--tools", WEB_TOOLS, "--allowedTools", WEB_TOOLS]
       : ["--tools", ""]),
@@ -53,33 +61,78 @@ export function chatClaude(model: string, req: ChatRequest): Promise<ChatResult>
     let out = "";
     let err = "";
     let timedOut = false;
+    let stalled = false;
+    // Streaming: righe JSON lette finora, testo del messaggio in corso, esito finale (riga `result`).
+    let pending = "";
+    let text = "";
+    let shown = false;
+    let final: { result?: string; is_error?: boolean } | undefined;
+    const idleMs = req.idleMs ?? STREAM_IDLE_MS;
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    const touch = () => {
+      if (!streaming) return;
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => { stalled = true; child.kill("SIGTERM"); }, idleMs);
+    };
+    const line = (l: string) => {
+      if (!l.trim()) return;
+      let j: any;
+      try { j = JSON.parse(l); } catch { return; }
+      // Riga finale; senza `type` è il formato `json` (una CLI che ignora lo streaming).
+      if (j?.type === "result" || (j && j.type === undefined && "result" in j)) { final = j; return; }
+      const ev = j?.type === "stream_event" ? j.event : undefined;
+      // Un messaggio nuovo dell'assistente riparte da capo (succede solo con gli strumenti).
+      if (ev?.type === "message_start" && text) { text = ""; req.onText!("", model); }
+      if (ev?.type === "content_block_delta" && ev.delta?.type === "text_delta" && typeof ev.delta.text === "string") {
+        text += ev.delta.text;
+        const vis = text.trimStart();
+        if (vis) { shown = true; req.onText!(vis, model); }
+      }
+    };
     children.add(child);
     const timer = setTimeout(() => { timedOut = true; child.kill("SIGTERM"); }, TIMEOUT_MS);
     const onAbort = () => child.kill("SIGTERM");
     req.signal?.addEventListener("abort", onAbort, { once: true });
+    touch();
 
-    child.stdout.on("data", (d) => (out += d));
+    child.stdout.on("data", (d) => {
+      touch();
+      if (!streaming) { out += d; return; }
+      pending += d;
+      let nl: number;
+      while ((nl = pending.indexOf("\n")) >= 0) { line(pending.slice(0, nl)); pending = pending.slice(nl + 1); }
+    });
     child.stderr.on("data", (d) => (err += d));
     child.on("error", (e) => {
       clearTimeout(timer);
+      clearTimeout(idleTimer);
       children.delete(child);
-      reject(new Error(`claude non avviabile: ${e.message}`));
+      reject(new CodedError("claude_unavailable", `claude non avviabile: ${e.message}`));
     });
     child.on("close", (code) => {
       clearTimeout(timer);
+      clearTimeout(idleTimer);
       children.delete(child);
       req.signal?.removeEventListener("abort", onAbort);
+      if (streaming) line(pending);
+      const fail = (e: Error) => { if (shown) req.onText!("", model); reject(e); };
       // Fermato da noi: l'output vuoto non è un errore di Claude ma un tempo scaduto.
-      if (timedOut) return reject(Object.assign(new Error(`Claude: nessuna risposta entro ${TIMEOUT_MS / 1000} s`), { name: "TimeoutError" }));
+      if (timedOut) return fail(Object.assign(new Error(`Claude: nessuna risposta entro ${TIMEOUT_MS / 1000} s`), { name: "TimeoutError" }));
+      if (stalled && !req.signal?.aborted) return fail(new CodedError("timeout", `Claude: nessun testo da ${Math.round(idleMs / 1000)} s`, "StallError"));
       try {
-        const j = JSON.parse(out) as { result?: string; is_error?: boolean };
+        const j = streaming ? final : (JSON.parse(out) as { result?: string; is_error?: boolean });
+        if (!j) {
+          // Flusso finito senza la riga `result`: se era già arrivato del testo, la risposta è interrotta.
+          if (text) return fail(new CodedError("interrupted", `Claude: risposta interrotta (exit ${code})`));
+          throw new Error("nessun esito");
+        }
         if (j.is_error || typeof j.result !== "string") {
-          reject(new Error(`Claude: ${String(j.result ?? "errore sconosciuto").slice(0, 300)}`));
+          fail(new Error(`Claude: ${String(j.result ?? "errore sconosciuto").slice(0, 300)}`));
           return;
         }
         resolve({ text: j.result.trim(), ms: Date.now() - started });
       } catch {
-        reject(new Error(`Claude (exit ${code}): ${redact((err || out).slice(0, 300)) || "nessun output"}`));
+        fail(new Error(`Claude (exit ${code}): ${redact((err || out || pending).slice(0, 300)) || "nessun output"}`));
       }
     });
     // Se claude esce prima di leggere tutto il prompt (annullamento, timeout, errore d'avvio)
