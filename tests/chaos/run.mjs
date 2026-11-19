@@ -1466,7 +1466,7 @@ SCENARIOS.au = async function au() {
   const started = Date.now();
   const secs = () => (Date.now() - started) / 1000;
   const r = await baseDebate("conv-timer");
-  const p = await api("POST", followupPath(r.id), { body: { question: FQ("conv-timer", "E poi?"), responder: "hang", claudeModel: "sonnet" } });
+  const p = await api("POST", followupPath(r.id), { body: { question: FQ("conv-timer", "E poi?"), responder: "drip", claudeModel: "sonnet" } });
   if (p.status !== 201) return [false, `POST followups → ${p.status}`, secs()];
   await new Promise((res) => setTimeout(res, 63_000));
   const st = (await api("GET", `/api/debates/${r.id}`)).body;
@@ -2185,6 +2185,249 @@ SCENARIOS.bi = async function bi() {
   return [true, `${cases.length} lingue riconosciute, lingua dichiarata al giudice, ripiego sui membri`, secs()];
 };
 DESCR.bi = "lingua del verdetto dichiarata al giudice";
+
+// ---------- streaming, codici d'errore, riprova con le immagini (gruppo motore-live) ----------
+
+DESCR.bj = "streaming: pezzi additivi coerenti col messaggio, ricollegamento a metà col testo accumulato";
+DESCR.bk = "streaming fermo, interrotto o con errore a metà: testo scartato, codici timeout/interrupted";
+DESCR.bl = "streaming: la riserva riparte da capo; Claude CLI in stream-json (finta)";
+DESCR.bm = "codici d'errore stabili e casi limite del riprova con le immagini";
+
+/** Testo accumulato dai `delta` di una voce in una fase (`reset` sostituisce). */
+function deltaText(events, modelId, phase) {
+  let t = "";
+  for (const e of events) {
+    if (e.type !== "delta" || e.modelId !== modelId || e.phase !== phase) continue;
+    t = e.reset ? e.text : t + e.text;
+  }
+  return t;
+}
+
+/** Come followEvents, su un motore qualsiasi (porta e intestazioni). */
+function followOn(port, headers, id, timeoutMs) {
+  return new Promise((resolve) => {
+    const events = [];
+    let finished = false;
+    const finish = (timedOut) => { if (finished) return; finished = true; clearTimeout(timer); req.destroy(); resolve({ events, timedOut }); };
+    const timer = setTimeout(() => finish(true), timeoutMs);
+    const req = request({ host: "127.0.0.1", port, path: `/api/debates/${id}/events`, headers: { Host: `127.0.0.1:${port}`, ...headers } }, (res) => {
+      if (res.statusCode !== 200) { res.resume(); return finish(false); }
+      let buf = "";
+      res.setEncoding("utf8");
+      res.on("data", (c) => {
+        buf += c;
+        let i;
+        while ((i = buf.indexOf("\n\n")) >= 0) {
+          const line = buf.slice(0, i).split("\n").find((l) => l.startsWith("data: "));
+          buf = buf.slice(i + 2);
+          if (!line) continue;
+          try { const e = JSON.parse(line.slice(6)); events.push(e); if (e.type === "done") return finish(false); } catch { /* non JSON */ }
+        }
+      });
+      res.on("end", () => finish(false));
+      res.on("error", () => finish(false));
+    });
+    req.on("error", () => finish(false));
+    req.end();
+  });
+}
+
+// "slow" scrive per 20 s: i pezzi arrivano come `delta` (solo additivi), il loro testo è l'inizio del messaggio
+// finale, nessun pezzo dopo il messaggio, eventi esistenti invariati; chi si collega a metà riceve subito tutto il
+// testo accumulato (`reset`) e poi i pezzi nuovi. Il verdetto in diretta non mostra le righe macchina.
+SCENARIOS.bj = async function bj() {
+  let late;
+  const res = await debate("bj", ["slow", "ok-a"], 0, "slow", 90_000, {
+    onStart: (id) => { late = new Promise((ok) => setTimeout(() => ok(followEvents(id, 60_000)), 8000)); },
+  });
+  const l = await late;
+  const err = expectDone(res, 90);
+  if (err) return [false, err, res.secs];
+  const wrong = [];
+  const msg = res.events.find((e) => e.type === "message" && e.modelId === "slow");
+  const acc = deltaText(res.events, "slow", "initial");
+  const deltas = res.events.filter((e) => e.type === "delta" && e.modelId === "slow");
+  if (deltas.length < 5) wrong.push(`solo ${deltas.length} pezzi da slow`);
+  if (!msg || !acc || !msg.text.startsWith(acc.trimEnd()) || acc.length < msg.text.length / 2) wrong.push(`testo dei pezzi (${acc.length}) non è l'inizio del messaggio (${msg?.text.length})`);
+  if (deltas.some((e) => e.reset)) wrong.push("reset senza riserve");
+  const after = res.events.slice(res.events.indexOf(msg) + 1).some((e) => e.type === "delta" && e.modelId === "slow" && e.phase === "initial");
+  if (after) wrong.push("pezzi dopo il messaggio");
+  const extra = res.events.filter((e) => e.type === "message").flatMap((e) => Object.keys(e)).filter((k) => !["type", "phase", "modelId", "text", "ms", "model", "replaced", "confidence"].includes(k));
+  if (extra.length) wrong.push(`campi nuovi in message: ${[...new Set(extra)]}`);
+  const first = l.events.find((e) => e.type === "delta" && e.modelId === "slow");
+  if (!first?.reset || !first.text || !msg?.text.startsWith(first.text.trimEnd())) wrong.push(`ricollegamento: primo pezzo ${JSON.stringify(first)?.slice(0, 80)}`);
+  const lateAcc = deltaText(l.events, "slow", "initial");
+  if (!lateAcc || !msg?.text.startsWith(lateAcc.trimEnd()) || lateAcc.length < acc.length / 2) wrong.push("ricollegamento: testo accumulato incoerente");
+  const vd = deltaText(res.events, "judge:slow", "verdict");
+  if (!vd) wrong.push("nessun pezzo del verdetto");
+  if (/AFFIDABILIT|TITOLO/.test(vd)) wrong.push("righe macchina nel verdetto in diretta");
+  if ((res.state?.messages ?? []).some((m) => m.phase === "delta")) wrong.push("pezzi salvati nel DB");
+  return [wrong.length === 0, wrong.slice(0, 4).join("; ") || `${deltas.length} pezzi additivi, ricollegamento con ${first.text.length} caratteri accumulati`, res.secs];
+};
+
+// Pezzi e poi silenzio (stall), connessione chiusa (cut) o chunk d'errore (error): il testo mostrato si
+// scarta (`reset` vuoto), la voce esce con codice timeout (dopo ~20 s senza pezzi) o interrupted.
+SCENARIOS.bk = async function bk() {
+  const res = await debate("bk", ["stream-stall", "stream-cut", "stream-error", "ok-a"], 0, "ok-a", 90_000);
+  const err = expectDone(res, 90);
+  if (err) return [false, err, res.secs];
+  const wrong = [];
+  const want = { "stream-stall": "timeout", "stream-cut": "interrupted", "stream-error": "interrupted" };
+  for (const [id, code] of Object.entries(want)) {
+    const ev = res.events.find((e) => e.type === "error" && e.modelId === id);
+    const row = errMsgs(res.state, id)[0];
+    if (ev?.error_code !== code) wrong.push(`${id}: evento ${ev?.error_code} (${ev?.error?.slice(0, 60)})`);
+    if (row?.error_code !== code) wrong.push(`${id}: salvato ${row?.error_code}`);
+    const ds = res.events.filter((e) => e.type === "delta" && e.modelId === id);
+    if (!ds.length) wrong.push(`${id}: nessun pezzo prima dell'errore`);
+    else if (deltaText(res.events, id, "initial") !== "") wrong.push(`${id}: testo parziale non scartato`);
+  }
+  if (res.secs > 45) wrong.push(`troppo lento: ${res.secs.toFixed(0)} s`);
+  if (okMsgs(res.state, "ok-a", "initial").length !== 1) wrong.push("ok-a senza risposta");
+  return [wrong.length === 0, wrong.slice(0, 4).join("; ") || "stall → timeout, cut/error → interrupted, testo scartato", res.secs];
+};
+
+// Voce di famiglia: il principale scrive e poi cade, la riserva riparte da capo (reset vuoto, poi il suo testo
+// con `model` = riserva). Claude CLI finta in stream-json: pezzi `text_delta`, testo finale dalla riga `result`.
+SCENARIOS.bl = async function bl() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const tok = randomBytes(32).toString("hex");
+  const bin = await mkdtemp(join(tmpdir(), "council-chaos-bin-"));
+  extraDirs.push(bin);
+  const FINAL = "Risposta finale di Claude finta, scritta a pezzi.";
+  await writeFile(join(bin, "claude"), `#!${process.execPath}
+const a = process.argv.slice(2);
+process.stdin.resume();
+process.stdin.on("end", async () => {
+  if (!a.includes("stream-json") || !a.includes("--include-partial-messages") || !a.includes("--verbose")) {
+    process.stdout.write(JSON.stringify({ result: "SENZA STREAMING" }));
+    return;
+  }
+  const out = (o) => process.stdout.write(JSON.stringify(o) + "\\n");
+  out({ type: "system", subtype: "init" });
+  out({ type: "stream_event", event: { type: "message_start", message: {} } });
+  for (const w of ${JSON.stringify(FINAL)}.match(/.{1,8}/g)) {
+    out({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: w } } });
+    await new Promise((r) => setTimeout(r, 60));
+  }
+  out({ type: "assistant", message: { content: [{ type: "text", text: ${JSON.stringify(FINAL)} }] } });
+  out({ type: "result", subtype: "success", is_error: false, result: ${JSON.stringify(FINAL)} });
+});
+`);
+  await chmod(join(bin, "claude"), 0o755);
+  const cfg = {
+    providers: { chaos: { name: "Chaos", baseUrl: `http://127.0.0.1:${mockPort}/v1`, keyEnv: "CHAOS_KEY" } },
+    judge: { id: "j", label: "Giudice", kind: "openai", provider: "chaos", model: "ok-a" },
+    models: [
+      { id: "fam", label: "Famiglia", kind: "openai", provider: "chaos", model: "stream-cut", fallback: ["ok-b"], family: "fam", default: false },
+      { id: "fakeclaude", label: "Finta Claude", kind: "claude-cli", model: "sonnet", default: false },
+      { id: "okb", label: "B", kind: "openai", provider: "chaos", model: "ok-b", family: "okb", default: false },
+    ],
+  };
+  const e = await startExtraEngine(cfg, JSON.stringify({ token: tok, keys: { CHAOS_KEY } }), { env: { PATH: `${bin}:${process.env.PATH}` } });
+  const c = await api("POST", "/api/debates", { port: e.port, headers: authed(tok),
+    body: { question: QUESTION("bl"), models: ["fam", "fakeclaude"], rounds: 0, judge: "okb", claudeModel: "sonnet" } });
+  if (c.status !== 201) return [false, `POST /api/debates → ${c.status} ${c.text?.slice(0, 100)}`, secs()];
+  const { events, timedOut } = await followOn(e.port, authed(tok), c.body.id, 60_000);
+  e.proc.kill("SIGTERM");
+  if (timedOut) return [false, "nessun done entro 60 s", secs()];
+  const wrong = [];
+  const fam = events.filter((x) => x.type === "delta" && x.modelId === "fam" && x.phase === "initial");
+  const cut = fam.findIndex((x) => x.reset && x.text === "");
+  if (cut < 1) wrong.push(`famiglia: nessun reset vuoto dopo i pezzi del principale (${fam.length} pezzi)`);
+  const rest = fam.slice(cut + 1);
+  // ok-b risponde in un colpo: il messaggio arriva prima del primo raggruppamento, i pezzi possono mancare.
+  if (rest.some((x) => x.model !== "ok-b")) wrong.push(`famiglia: pezzi dopo il reset da ${JSON.stringify(rest.map((x) => x.model))}`);
+  const fm = events.find((x) => x.type === "message" && x.modelId === "fam");
+  if (fm?.model !== "ok-b" || fm?.replaced !== "stream-cut") wrong.push(`famiglia: messaggio da ${fm?.model} al posto di ${fm?.replaced}`);
+  if (!fm?.text.startsWith(deltaText(events, "fam", "initial").trimEnd())) wrong.push("famiglia: pezzi della riserva non sono l'inizio del messaggio");
+  const cm = events.find((x) => x.type === "message" && x.modelId === "fakeclaude");
+  const cd = events.filter((x) => x.type === "delta" && x.modelId === "fakeclaude");
+  if (cm?.text !== FINAL) wrong.push(`claude: messaggio ${JSON.stringify(cm?.text)?.slice(0, 60)}`);
+  if (cd.length < 2 || !FINAL.startsWith(deltaText(events, "fakeclaude", "initial"))) wrong.push(`claude: ${cd.length} pezzi`);
+  return [wrong.length === 0, wrong.slice(0, 4).join("; ") || `riserva da capo dopo ${cut} pezzi; Claude in ${cd.length} pezzi`, secs()];
+};
+
+// Codici d'errore: dal testo (unità) e su eventi e righe salvate (quota, 500, vuota, chiave rifiutata).
+// Immagini: Qwen solo sul provider Groq; 400 "reduce max_tokens" non toglie le immagini a Qwen; 413 dovuto al
+// solo testo non riprova senza immagini.
+SCENARIOS.bm = async function bm() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const wrong = [];
+  const { errorCode } = await import("../../src/errors.ts");
+  const table = [
+    ["HTTP 429: Rate limit reached for model x on tokens per minute (TPM): Limit 6000. Please try again in 2s", "rate_limited"],
+    ["HTTP 429: You exceeded your current quota, please check your plan", "quota_exhausted"],
+    ["HTTP 429: Request too large for model x on tokens per minute (TPM): Limit 8000, Requested 9500, please reduce your message size", "too_long"],
+    ["HTTP 413: Request too large", "too_long"],
+    ["HTTP 400: API key not valid. Please pass a valid API key.", "invalid_key"],
+    ["HTTP 401: Incorrect API key provided: ***", "invalid_key"],
+    ["chiave GROQ_API_KEY mancante: aggiungila in Impostazioni ▸ Chiavi API", "missing_key"],
+    ["HTTP 404: The model `x` does not exist", "model_retired"],
+    ["ha saltato questo round (nessuna risposta entro 90 s)", "timeout"],
+    ["troppo lento: gli altri avevano finito, nessuna risposta entro 31 s", "timeout"],
+    ["risposta interrotta a metà: Upstream error", "interrupted"],
+    ["provider non raggiungibile (ECONNREFUSED): fetch failed", "network"],
+    ["risposta vuota dal modello", "empty"],
+    ["Claude: Claude AI usage limit reached|1700000000", "quota_exhausted"],
+    ["claude non avviabile: spawn claude ENOENT", "claude_unavailable"],
+    ["HTTP 503: The model is overloaded", "rate_limited"],
+    ["HTTP 500: Internal server error", "provider_error"],
+    ["Nessun giudice ha prodotto il verdetto.", "no_verdict"],
+    ["qualcosa di strano", "unknown"],
+  ];
+  for (const [m, c] of table) if (errorCode(m) !== c) wrong.push(`"${m.slice(0, 40)}" → ${errorCode(m)} (atteso ${c})`);
+
+  const res = await debate("bm", ["quota", "crash500", "empty", "leaky", "ok-a"], 0, "ok-a", 60_000);
+  const want = { quota: "quota_exhausted", crash500: "provider_error", empty: "empty", leaky: "invalid_key" };
+  for (const [id, c] of Object.entries(want)) {
+    const ev = res.events.find((x) => x.type === "error" && x.modelId === id);
+    if (ev?.error_code !== c) wrong.push(`${id}: evento ${ev?.error_code}`);
+    if (errMsgs(res.state, id)[0]?.error_code !== c) wrong.push(`${id}: salvato ${errMsgs(res.state, id)[0]?.error_code}`);
+  }
+  const bad = await debate("bm-fail", ["quota", "crash500"], 0, "quota", 60_000);
+  const d = doneEvent(bad.events);
+  if (d?.status !== "failed" || d?.error_code !== "no_answer") wrong.push(`done fallito: ${d?.status} ${d?.error_code}`);
+
+  const { chatOpenAI, imagesFor, textAloneTooLarge } = await import("../../src/adapters/openai-compat.ts");
+  const QWEN = "qwen/qwen3.8-27b";
+  const img = "/9j/" + "QkZC".repeat(100) + "==";
+  const imgs = [img, img];
+  const groq = { name: "Groq", baseUrl: "https://api.groq.com/openai/v1", keyEnv: "X" };
+  const orouter = { name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", keyEnv: "X" };
+  if (imagesFor(QWEN, imgs, groq).length !== 2) wrong.push("Qwen su Groq senza immagini");
+  if (imagesFor(QWEN, imgs, orouter).length) wrong.push("immagini a Qwen su OpenRouter");
+  if (imagesFor("gemini-3-flash", imgs, orouter).length !== 2) wrong.push("Gemini limitato a un provider");
+  if (!textAloneTooLarge("Limit 8000, Requested 20000", QWEN, 2, groq)) wrong.push("413 del solo testo non riconosciuto");
+  if (textAloneTooLarge("Limit 8000, Requested 9500", QWEN, 2, groq)) wrong.push("413 dovuto alle immagini scambiato per testo");
+
+  const seen = [];
+  const { srv, url } = await miniProvider([], (model, images, user, body) => {
+    const tag = user.match(/\[bm:(\w+)\]/)?.[1] ?? "?";
+    seen.push([tag, images.length, body.max_tokens]);
+    if (tag === "mt" && body.max_tokens > 800) return [400, { error: { message: "`max_tokens` is too large: reduce max_tokens. Limit 1000", type: "invalid_request_error" } }];
+    if (tag === "big") return [413, { error: { message: `Request too large for model \`${model}\` on tokens per minute (TPM): Limit 8000, Requested 30000` } }];
+    return [200, `ok ${images.length}`];
+  });
+  process.env.CHAOS_BM_KEY = "chiave-di-prova-bm";
+  const p = { name: "Groq finto", baseUrl: url, keyEnv: "CHAOS_BM_KEY" };
+  const of = (tag) => seen.filter((s) => s[0] === tag).map((s) => s[1]).join();
+  try {
+    const r = await chatOpenAI(p, [QWEN], { system: "s", user: "[bm:mt] domanda", images: imgs, maxTokens: 4096 });
+    if (r.text !== "ok 2" || !seen.filter((s) => s[0] === "mt").every((s) => s[1] === 2)) wrong.push(`reduce max_tokens: ${r.text}, immagini ${of("mt")}`);
+    if (imagesFor(QWEN, imgs, p).length !== 2) wrong.push("immagini tolte a Qwen dopo un 400 per max_tokens");
+    try { await chatOpenAI(p, [QWEN], { system: "s", user: "[bm:big] domanda", images: imgs }); wrong.push("big: nessun errore"); } catch { /* atteso */ }
+    if (of("big") !== "2") wrong.push(`413 del solo testo: tentativi con immagini ${of("big")}`);
+  } catch (e) {
+    wrong.push(`eccezione: ${e.message.slice(0, 120)}`);
+  } finally {
+    srv.close();
+    srv.closeAllConnections?.();
+  }
+  return [wrong.length === 0, wrong.slice(0, 4).join("; ") || `${table.length} testi classificati, codici su eventi e righe, 3 casi immagini`, secs()];
+};
 
 // ---------- main ----------
 
