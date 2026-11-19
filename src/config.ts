@@ -25,6 +25,8 @@ export function writeFileAtomic(path: string, text: string): void {
 export interface Provider {
   baseUrl: string;
   keyEnv: string;
+  /** Nome mostrato (da models.json). */
+  name?: string;
   /** Campi aggiunti a ogni richiesta di chat verso questo provider. */
   extraBody?: Record<string, unknown>;
 }
