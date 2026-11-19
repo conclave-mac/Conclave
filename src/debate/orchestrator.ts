@@ -4,6 +4,7 @@ import { saveMessage, finishDebate, finishTurn, type MessageRow } from "../db.ts
 import * as P from "./prompts.ts";
 import { redact } from "../redact.ts";
 import { findResearcher, runResearch } from "./research.ts";
+import { CodedError, errorCode, type ErrorCode } from "../errors.ts";
 
 export type Phase = "research" | "initial" | "critique" | "revise" | "final" | "verdict" | "answer";
 
@@ -42,8 +43,14 @@ export type DebateEvent = (
     }
   | { type: "phase"; phase: Phase; note?: string }
   | { type: "message"; phase: Phase; modelId: string; text: string; ms: number; model?: string; replaced?: string; confidence?: "alta" | "media" | "bassa" | null }
-  | { type: "error"; phase: Phase; modelId: string; error: string }
-  | { type: "done"; status: "done" | "failed" | "cancelled"; verdict?: string; title?: string; confidence?: "alta" | "media" | "bassa" | null; error?: string }
+  | { type: "error"; phase: Phase; modelId: string; error: string; error_code?: ErrorCode }
+  | { type: "done"; status: "done" | "failed" | "cancelled"; verdict?: string; title?: string; confidence?: "alta" | "media" | "bassa" | null; error?: string; error_code?: ErrorCode }
+  /**
+   * Streaming (additivo): pezzo di testo del messaggio in corso di `modelId` in `phase`. `reset` = il testo
+   * sostituisce quello accumulato (riserva che riparte, "" = tentativo fallito a metà). Il messaggio completo
+   * arriva poi con `message` (o `error`), che vince sul testo accumulato. `model`: variante che sta scrivendo.
+   */
+  | { type: "delta"; phase: Phase; modelId: string; text: string; reset?: true; model?: string }
   | { type: "turn"; question: string; mode: "quick" | "council" }
 ) & { turn?: number };
 
@@ -59,9 +66,18 @@ interface Debater {
 
 const LETTERS = "ABCDEFGHIJKL";
 
-/** Tempo massimo per un intervento (riserve e attese comprese): oltre, il modello salta il round.
- *  45 s dai tempi reali (nov 2026): Claude CLI al massimo 26 s, Nemotron oltre 50 s solo in 1 caso su 5. */
-const PARTICIPANT_BUDGET_MS = 45_000;
+/** Tetto totale per un intervento (riserve e attese comprese): oltre, il modello salta il round. Con lo
+ *  streaming un modello fermo lo ferma prima l'attesa senza pezzi (`STREAM_IDLE_MS`), quindi il tetto
+ *  serve solo per chi scrive piano: 90 s dai tempi reali (nov 2026) lasciano finire Nemotron (fino a 57 s)
+ *  anche con una riserva dietro. Nella risposta iniziale non c'è la regola del ritardatario: lì si può
+ *  attendere fino a 90 s un modello che sta ancora scrivendo (prima: 45 s, senza vedere nulla). */
+const PARTICIPANT_BUDGET_MS = 90_000;
+/** Streaming: nessun pezzo da tanto = tentativo fermo, si passa alla riserva (vedi openai-compat.ts). */
+const STREAM_IDLE_MS = 20_000;
+/** Giudice e risposta rapida: richieste lunghe (tutto il dibattito o la conversazione), primo pezzo più lento. */
+const JUDGE_IDLE_MS = 30_000;
+/** Pezzi raggruppati al massimo ogni 50 ms: meno eventi SSE, il ritmo della vista lo decide l'app. */
+const DELTA_EVERY_MS = 50;
 /** Nei round: quando hanno risposto tutti tranne uno, l'ultimo ha ancora al massimo 15 s, ma mai meno di
  *  30 s dall'inizio del round (la Claude CLI impiega ~24 s anche quando gli altri finiscono in 3). */
 const STRAGGLER_GRACE_MS = 15_000;
@@ -100,8 +116,49 @@ export async function withBudget<T>(ms: number, signal: AbortSignal, run: (budge
     return await run(AbortSignal.any([signal, timeout]));
   } catch (e) {
     const timedOut = timeout.aborted || (e as Error).name === "TimeoutError";
-    throw new Error(timedOut ? `nessuna risposta entro ${ms / 1000} s` : redact((e as Error).message));
+    // Il codice si decide qui, sull'errore originale: il messaggio riscritto non basta sempre a ritrovarlo.
+    throw timedOut
+      ? new CodedError("timeout", `nessuna risposta entro ${ms / 1000} s`)
+      : new CodedError(errorCode(e), redact((e as Error).message));
   }
+}
+
+/**
+ * Streaming di un messaggio verso l'app: riceve il testo accumulato dall'adapter e lo manda come eventi
+ * `delta` (solo la parte nuova, o `reset` se il testo non prolunga quello già mandato), raggruppati ogni
+ * DELTA_EVERY_MS. `close()` prima di `message`/`error`: dopo, nessun pezzo in ritardo.
+ */
+export function streamer(ctx: TurnCtx, phase: Phase, modelId: string, transform?: (raw: string) => string) {
+  let sent = "";
+  let latest = "";
+  let model: string | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let closed = false;
+  const flush = () => {
+    timer = undefined;
+    if (closed || latest === sent) return;
+    const extra = model ? { model } : {};
+    if (sent && latest.startsWith(sent)) ctx.emit({ type: "delta", phase, modelId, text: latest.slice(sent.length), ...extra });
+    else ctx.emit({ type: "delta", phase, modelId, text: latest, ...(sent ? { reset: true as const } : {}), ...extra });
+    sent = latest;
+  };
+  return {
+    onText: (raw: string, m: string) => {
+      if (closed) return;
+      latest = transform ? transform(raw) : raw;
+      model = m;
+      // Un testo che non prolunga quello mandato (riserva, tentativo fallito) parte subito: niente pezzi vecchi in coda.
+      if (!latest.startsWith(sent)) { clearTimeout(timer); flush(); return; }
+      timer ??= setTimeout(flush, DELTA_EVERY_MS);
+    },
+    close: () => { closed = true; clearTimeout(timer); },
+  };
+}
+
+/** Evento `error` e messaggio salvato con lo stesso codice. */
+function failure(ctx: TurnCtx, phase: Phase, modelId: string, error: string, code: ErrorCode): void {
+  save(ctx, { model_id: modelId, phase, content: null, error, ms: null, error_code: code });
+  ctx.emit({ type: "error", phase, modelId, error, error_code: code });
 }
 
 /** Catena di riserve del giudice: prima la scelta, poi Claude, poi gli altri (senza doppioni). */
@@ -120,7 +177,7 @@ export function chainOf(chosen: ModelDef, others: ModelDef[], claudeModel: strin
 export async function firstInChain(
   chain: ModelDef[], ctx: TurnCtx,
   attempt: (m: ModelDef, budget: AbortSignal) => Promise<void>,
-  fail: (m: ModelDef, error: string) => void,
+  fail: (m: ModelDef, error: string, code: ErrorCode) => void,
 ): Promise<boolean> {
   for (const m of chain) {
     try {
@@ -128,7 +185,7 @@ export async function firstInChain(
       return true;
     } catch (e) {
       if (ctx.signal.aborted) throw new Error("cancelled");
-      fail(m, (e as Error).message);
+      fail(m, (e as Error).message, errorCode(e));
     }
   }
   return false;
@@ -155,9 +212,7 @@ export async function researchPhase(ctx: TurnCtx, question: string, claudeModel:
     return { text: r.text, date: new Date().toISOString().slice(0, 10) };
   } catch (e) {
     if (ctx.signal.aborted) throw new Error("cancelled");
-    const error = `ricerca non riuscita, si prosegue senza (${(e as Error).message})`;
-    save(ctx, { model_id: "research", phase: "research", content: null, error, ms: null });
-    ctx.emit({ type: "error", phase: "research", modelId: "research", error });
+    failure(ctx, "research", "research", `ricerca non riuscita, si prosegue senza (${(e as Error).message})`, errorCode(e));
     return undefined;
   }
 }
@@ -242,24 +297,27 @@ export async function runDebate(
     };
     await Promise.all(
       running.map(async ({ d, late }) => {
+        const live = streamer(ctx, name, d.def.id);
         try {
           // Ogni intervento ha un tempo massimo: un modello bloccato non ferma il dibattito.
           const r = await withBudget(PARTICIPANT_BUDGET_MS, AbortSignal.any([signal, late.signal]),
-            (budget) => chat(d.def, { system: P.SYSTEM_DEBATER, user: build(d), images, signal: budget }));
+            (budget) => chat(d.def, { system: P.SYSTEM_DEBATER, user: build(d), images, signal: budget, onText: live.onText, idleMs: STREAM_IDLE_MS }));
+          live.close();
           store(d, r.text);
           save(ctx, { model_id: d.def.id, phase: name, content: r.text, error: null, ms: r.ms, model_used: r.model, replaced: r.replaced });
           emit({ type: "message", phase: name, modelId: d.def.id, text: r.text, ms: r.ms, model: r.model, replaced: r.replaced });
         } catch (e) {
+          live.close();
           if (signal.aborted) return;
           const raw = late.signal.aborted
             ? `troppo lento: gli altri avevano finito, nessuna risposta entro ${Math.round((Date.now() - started) / 1000)} s`
             : (e as Error).message;
+          const code: ErrorCode = late.signal.aborted ? "timeout" : errorCode(e);
           // Senza risposta iniziale il modello esce; nei round successivi salta il round,
           // mantiene la posizione precedente e rientra nel round dopo.
           let error = raw;
           if (keep) { keep(d); error = `ha saltato questo round (${raw})`; } else d.alive = false;
-          save(ctx, { model_id: d.def.id, phase: name, content: null, error, ms: null });
-          emit({ type: "error", phase: name, modelId: d.def.id, error });
+          failure(ctx, name, d.def.id, error, code);
         } finally {
           finished();
         }
@@ -327,7 +385,7 @@ export async function runDebate(
     const finals = alive()
       .map((d) => ({ label: d.letter, text: d.final ?? d.revised ?? d.initial ?? "" }))
       .filter((f) => f.text);
-    if (finals.length === 0) throw new Error("Nessun modello ha risposto. Controlla le chiavi con: npm run check");
+    if (finals.length === 0) throw new CodedError("no_answer", "Nessun modello ha risposto. Controlla le chiavi con: npm run check");
     const critiques = ds.filter((d) => d.critique).map((d) => ({ label: d.letter, text: d.critique! }));
 
     // Verdetto: prima il giudice scelto, poi Claude, poi gli altri partecipanti attivi
@@ -340,7 +398,9 @@ export async function runDebate(
     let title: string | null = null;
     let confidence: P.Confidence = null;
     await firstInChain(judges, ctx, async (j, budget) => {
-      const r = await chat(j, { system: P.SYSTEM_JUDGE, user: judgeUser, images, maxTokens: 8192, signal: budget });
+      const live = streamer(ctx, "verdict", `judge:${j.id}`, P.draftVerdict);
+      const r = await chat(j, { system: P.SYSTEM_JUDGE, user: judgeUser, images, maxTokens: 8192, signal: budget, onText: live.onText, idleMs: JUDGE_IDLE_MS })
+        .finally(live.close);
       // Riga TITOLO e riga AFFIDABILITÀ in qualunque ordine: si tolgono entrambe dal verdetto.
       const split = P.splitTitle(r.text);
       const conf = P.splitConfidence(split.verdict);
@@ -354,11 +414,8 @@ export async function runDebate(
       verdict = j.id === chosenJudge.id ? split.verdict : `> Giudice di riserva: ${j.label} (${chosenJudge.label} non disponibile)\n\n${split.verdict}`;
       save(ctx, { model_id: `judge:${j.id}`, phase: "verdict", content: verdict, error: null, ms: r.ms, confidence });
       emit({ type: "message", phase: "verdict", modelId: `judge:${j.id}`, text: verdict, ms: r.ms, confidence });
-    }, (j, error) => {
-      save(ctx, { model_id: `judge:${j.id}`, phase: "verdict", content: null, error, ms: null });
-      emit({ type: "error", phase: "verdict", modelId: `judge:${j.id}`, error });
-    });
-    if (!verdict) throw new Error("Nessun giudice ha prodotto il verdetto.");
+    }, (j, error, code) => failure(ctx, "verdict", `judge:${j.id}`, error, code));
+    if (!verdict) throw new CodedError("no_verdict", "Nessun giudice ha prodotto il verdetto.");
 
     finish(ctx, "done", verdict, title, confidence);
     emit({ type: "done", status: "done", verdict, ...(title ? { title } : {}), confidence });
@@ -366,7 +423,7 @@ export async function runDebate(
     const cancelled = signal.aborted;
     const error = cancelled ? (turn > 0 ? "Turno annullato" : "Dibattito annullato") : redact((e as Error).message);
     finish(ctx, cancelled ? "cancelled" : "failed", null);
-    emit({ type: "done", status: cancelled ? "cancelled" : "failed", error });
+    emit({ type: "done", status: cancelled ? "cancelled" : "failed", error, error_code: cancelled ? "cancelled" : errorCode(e) });
   }
 }
 
@@ -402,21 +459,20 @@ export async function runQuickAnswer(
     const user = P.quickPrompt(question, P.conversationBlock(opts.conversation, true), material);
     const chain = chainOf(chosen, opts.fallbacks.map((m) => withClaudeModel(m, opts.claudeModel)), opts.claudeModel);
     const ok = await firstInChain(chain, ctx, async (m, budget) => {
-      const r = await chat(m, { system: P.SYSTEM_RESPONDER, user, images: P.imagesOf(opts.conversation.attachments, opts.attachments), signal: budget });
+      const live = streamer(ctx, "answer", m.id);
+      const r = await chat(m, { system: P.SYSTEM_RESPONDER, user, images: P.imagesOf(opts.conversation.attachments, opts.attachments), signal: budget, onText: live.onText, idleMs: JUDGE_IDLE_MS })
+        .finally(live.close);
       if (!r.text.trim()) throw new Error("risposta vuota");
       const text = m.id === chosen.id ? r.text : `> Risposta di riserva: ${m.label} (${chosen.label} non disponibile)\n\n${r.text}`;
       save(ctx, { model_id: m.id, phase: "answer", content: text, error: null, ms: r.ms, model_used: r.model, replaced: r.replaced });
       emit({ type: "message", phase: "answer", modelId: m.id, text, ms: r.ms, model: r.model, replaced: r.replaced });
-    }, (m, error) => {
-      save(ctx, { model_id: m.id, phase: "answer", content: null, error, ms: null });
-      emit({ type: "error", phase: "answer", modelId: m.id, error });
-    });
-    if (!ok) throw new Error("Nessun modello ha risposto alla domanda.");
+    }, (m, error, code) => failure(ctx, "answer", m.id, error, code));
+    if (!ok) throw new CodedError("no_answer", "Nessun modello ha risposto alla domanda.");
     finishTurn(debateId, "done");
     emit({ type: "done", status: "done" });
   } catch (e) {
     const cancelled = signal.aborted;
     finishTurn(debateId, cancelled ? "cancelled" : "failed");
-    emit({ type: "done", status: cancelled ? "cancelled" : "failed", error: cancelled ? "Turno annullato" : redact((e as Error).message) });
+    emit({ type: "done", status: cancelled ? "cancelled" : "failed", error: cancelled ? "Turno annullato" : redact((e as Error).message), error_code: cancelled ? "cancelled" : errorCode(e) });
   }
 }
