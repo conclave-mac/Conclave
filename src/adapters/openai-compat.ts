@@ -235,30 +235,35 @@ async function readStream(res: Response, model: string, req: ChatRequest, touch:
       if (vis !== shown) { shown = vis; req.onText?.(vis, model); }
     }
   };
-  for (;;) {
-    let chunk: ReadableStreamReadResult<Uint8Array>;
-    try {
-      chunk = await reader.read();
-    } catch (e) {
-      // Annullamento e attese scadute restano tali; il resto è la connessione caduta a metà ("terminated").
-      if (["AbortError", "TimeoutError", "StallError"].includes((e as Error).name)) throw e;
-      throw new CodedError("interrupted", `risposta interrotta: connessione chiusa a metà (${redact((e as Error).message).slice(0, 120)})`);
+  try {
+    for (;;) {
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await reader.read();
+      } catch (e) {
+        // Annullamento e attese scadute restano tali; il resto è la connessione caduta a metà ("terminated").
+        if (["AbortError", "TimeoutError", "StallError"].includes((e as Error).name)) throw e;
+        throw new CodedError("interrupted", `risposta interrotta: connessione chiusa a metà (${redact((e as Error).message).slice(0, 120)})`);
+      }
+      const { value, done: end } = chunk;
+      if (end) break;
+      touch();
+      buf += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).replace(/\r$/, "");
+        buf = buf.slice(nl + 1);
+        if (line === "") { if (data.length) onEvent(data.join("\n")); data = []; }
+        else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
+        // Altre righe (commenti ":", "event:", "id:") non portano testo.
+      }
+      if (done) break;
     }
-    const { value, done: end } = chunk;
-    if (end) break;
-    touch();
-    buf += decoder.decode(value, { stream: true });
-    let nl: number;
-    while ((nl = buf.indexOf("\n")) >= 0) {
-      const line = buf.slice(0, nl).replace(/\r$/, "");
-      buf = buf.slice(nl + 1);
-      if (line === "") { if (data.length) onEvent(data.join("\n")); data = []; }
-      else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
-      // Altre righe (commenti ":", "event:", "id:") non portano testo.
-    }
-    if (done) break;
+    if (data.length) onEvent(data.join("\n"));
+  } finally {
+    // Errore nel flusso o [DONE] prima della fine del corpo: la connessione non resta aperta.
+    reader.cancel().catch(() => {});
   }
-  if (data.length) onEvent(data.join("\n"));
   if (finish === "error") throw new CodedError("interrupted", "risposta interrotta a metà dal provider");
   if (!done && !finish) throw new CodedError("interrupted", "risposta interrotta: la connessione si è chiusa prima della fine");
   return finalText(content, finish, req);
@@ -281,9 +286,15 @@ export async function once(p: Provider, model: string, req: ChatRequest, timeout
     idleTimer = setTimeout(() => idle.abort(new CodedError("timeout", `nessun testo dal modello da ${Math.round(idleMs / 1000)} s`, "StallError")), idleMs);
   };
   if (streaming) { signals.push(idle.signal); touch(); }
+  // Primo testo entro `firstTextMs` (solo con una riserva dietro): i commenti SSE non bastano.
+  let firstTimer: ReturnType<typeof setTimeout> | undefined;
+  if (streaming && req.firstTextMs) {
+    const s = Math.round(req.firstTextMs / 1000);
+    firstTimer = setTimeout(() => idle.abort(new CodedError("timeout", `nessun testo dal modello entro ${s} s`, "StallError")), req.firstTextMs);
+  }
   // Testo mostrato e poi scartato (tentativo fallito a metà): la card torna vuota per chi riparte.
   let shown = false;
-  const r: ChatRequest = streaming ? { ...req, onText: (t, m) => { shown = true; req.onText!(t, m); } } : req;
+  const r: ChatRequest = streaming ? { ...req, onText: (t, m) => { shown = true; clearTimeout(firstTimer); req.onText!(t, m); } } : req;
 
   try {
     let res: Response;
@@ -351,6 +362,7 @@ export async function once(p: Provider, model: string, req: ChatRequest, timeout
     throw e;
   } finally {
     clearTimeout(idleTimer);
+    clearTimeout(firstTimer);
   }
 }
 
@@ -379,7 +391,10 @@ export async function chatOpenAI(p: Provider, models: string[], req: ChatRequest
       try {
         // Se c'è una riserva, un modello lento non deve consumare tutto il tempo del round. In streaming lo
         // decide l'attesa senza pezzi (`idleMs`): un modello che sta scrivendo non si taglia a metà.
-        const text = await once(p, model, r, req.timeoutMs ?? (hasNext && !req.onText ? ATTEMPT_WITH_RESERVE_MS : TIMEOUT_MS));
+        // Con una riserva il primo testo deve arrivare entro 35 s come prima (un modello in coda su OpenRouter
+        // manda solo commenti e terrebbe vivo il tentativo fino al tetto dell'intervento).
+        const text = await once(p, model, { ...r, ...(hasNext && req.onText ? { firstTextMs: ATTEMPT_WITH_RESERVE_MS } : {}) },
+          req.timeoutMs ?? (hasNext && !req.onText ? ATTEMPT_WITH_RESERVE_MS : TIMEOUT_MS));
         // Le immagini erano la causa del 400 solo se il solo testo passa: allora non si riprovano più.
         if (withoutImages && !imagesTooBig) imageRefused.add(model);
         return { text, ms: Date.now() - started, model };

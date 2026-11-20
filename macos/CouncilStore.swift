@@ -745,7 +745,12 @@ final class CouncilStore: ObservableObject {
                 if d.verdict == nil { d.verdictDraft = text.isEmpty ? nil : text }
             } else if phase == "answer" {
                 guard d.answer?.text == nil else { break }
-                setAnswer(&d, modelId: modelId) { $0.partial = text.isEmpty ? nil : text; $0.partialModel = model }
+                setAnswer(&d, modelId: modelId) {
+                    $0.partial = text.isEmpty ? nil : text
+                    $0.partialModel = model
+                    // Scrive una riserva: l'errore del modello precedente non vale più.
+                    if !text.isEmpty { $0.error = nil; $0.errorCode = nil }
+                }
             } else if phase != "research" {
                 // Solo card ancora in attesa: un pezzo in ritardo non riapre una risposta già arrivata.
                 guard let p = d.phases.first(where: { $0.id == phase }),
