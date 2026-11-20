@@ -100,7 +100,8 @@ struct HoverIconStyle: ButtonStyle {
                 .foregroundStyle(enabled ? AnyShapeStyle(Brand.secondaryText) : AnyShapeStyle(Brand.tertiaryText))
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.primary.opacity(configuration.isPressed ? 0.12 : hover && enabled ? 0.06 : 0))
+                        .fill(configuration.isPressed ? AnyShapeStyle(Color.primary.opacity(0.12))
+                              : hover && enabled ? AnyShapeStyle(Brand.hover) : AnyShapeStyle(Color.clear))
                 )
                 .onHover { hover = $0 }
         }
