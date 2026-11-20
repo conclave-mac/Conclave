@@ -1,7 +1,7 @@
 import type { Provider } from "../config.ts";
 import type { ChatRequest, ChatResult } from "./types.ts";
 import { redact } from "../redact.ts";
-import { CodedError } from "../errors.ts";
+import { CodedError, isDailyOrPlanLimit } from "../errors.ts";
 
 const TIMEOUT_MS = 120_000;
 const MAX_RETRIES = 2;
@@ -12,6 +12,8 @@ const ATTEMPT_WITH_RESERVE_MS = 35_000;
  * l'avvio del processo; Nemotron (OpenRouter, fino a 57 s) manda commenti e ragionamento mentre pensa.
  */
 export const STREAM_IDLE_MS = 20_000;
+/** Attesa delle intestazioni con lo streaming: chi ignora `stream: true` le manda solo a risposta pronta. */
+export const HEADERS_WAIT_MS = 45_000;
 
 export class HttpError extends Error {
   status: number;
@@ -107,7 +109,9 @@ export function outputRoomFrom(message: string): number {
 
 /** Errore 429 che non si risolve aspettando qualche secondo. */
 export function isHardLimit(message: string): boolean {
-  return /exceeded your current quota|limit: 0\b|per day|\(RPD\)|\(TPD\)|reduce your message size|request too large/i.test(message);
+  // Google scrive "exceeded your current quota" anche per il limite al minuto, con "retry in Xs": lì si aspetta.
+  return isDailyOrPlanLimit(message) || /reduce your message size|request too large/i.test(message)
+    || (/exceeded your current quota/i.test(message) && !/retry in|try again in|per ?minute|PerMinute/i.test(message));
 }
 
 /** Modelli che hanno risposto 400 alle immagini: non si riprovano più (in memoria fino al riavvio). */
@@ -259,6 +263,9 @@ async function readStream(res: Response, model: string, req: ChatRequest, touch:
       }
       if (done) break;
     }
+    // Ultima riga senza a capo finale (flusso chiuso subito dopo): si legge comunque.
+    const tail = buf.replace(/\r$/, "");
+    if (tail.startsWith("data:")) data.push(tail.slice(5).replace(/^ /, ""));
     if (data.length) onEvent(data.join("\n"));
   } finally {
     // Errore nel flusso o [DONE] prima della fine del corpo: la connessione non resta aperta.
@@ -281,11 +288,13 @@ export async function once(p: Provider, model: string, req: ChatRequest, timeout
   const idle = new AbortController();
   const idleMs = req.idleMs ?? STREAM_IDLE_MS;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
-  const touch = () => {
+  const touch = (ms = idleMs) => {
     clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => idle.abort(new CodedError("timeout", `nessun testo dal modello da ${Math.round(idleMs / 1000)} s`, "StallError")), idleMs);
+    idleTimer = setTimeout(() => idle.abort(new CodedError("timeout", `nessun testo dal modello da ${Math.round(ms / 1000)} s`, "StallError")), ms);
   };
-  if (streaming) { signals.push(idle.signal); touch(); }
+  // Prima delle intestazioni un'attesa più lunga: un provider che ignora `stream: true` le manda solo a
+  // risposta pronta (prima del 20 nov il limite per tentativo era 35–45 s).
+  if (streaming) { signals.push(idle.signal); touch(Math.max(idleMs, HEADERS_WAIT_MS)); }
   // Primo testo entro `firstTextMs` (solo con una riserva dietro): i commenti SSE non bastano.
   let firstTimer: ReturnType<typeof setTimeout> | undefined;
   if (streaming && req.firstTextMs) {
@@ -342,7 +351,12 @@ export async function once(p: Provider, model: string, req: ChatRequest, timeout
       throw new HttpError(res.status, `HTTP ${res.status}: ${redact(msg)}`, Number.isFinite(ra) && ra > 0 ? ra : hinted);
     }
 
-    if (streaming && /text\/event-stream/i.test(res.headers.get("content-type") ?? "")) return await readStream(res, model, r, touch);
+    if (streaming && /text\/event-stream/i.test(res.headers.get("content-type") ?? "")) {
+      touch();
+      return await readStream(res, model, r, () => touch());
+    }
+    // Risposta intera: niente attesa tra pezzi, vale il tempo massimo del tentativo.
+    clearTimeout(idleTimer);
 
     // Risposta intera (anche da un provider che ignora `stream: true`).
     const raw = await res.text();
