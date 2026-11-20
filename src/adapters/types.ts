@@ -19,6 +19,11 @@ export interface ChatRequest {
   onText?: (text: string, model: string) => void;
   /** Streaming: tempo massimo senza alcun dato dal provider (prima del primo pezzo o tra due pezzi). */
   idleMs?: number;
+  /**
+   * Streaming: tempo massimo per il primo pezzo di testo (non bastano commenti o ragionamento). Lo usa la
+   * catena quando c'è una riserva: OpenRouter manda commenti anche mentre il modello è in coda.
+   */
+  firstTextMs?: number;
 }
 
 export interface ChatResult {

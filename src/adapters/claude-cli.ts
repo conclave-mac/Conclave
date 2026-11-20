@@ -89,6 +89,9 @@ export function chatClaude(model: string, req: ChatRequest): Promise<ChatResult>
         if (vis) { shown = true; req.onText!(vis, model); }
       }
     };
+    // Testo e non Buffer: un carattere accentato a cavallo di due pezzi non diventa "�".
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     children.add(child);
     const timer = setTimeout(() => { timedOut = true; child.kill("SIGTERM"); }, TIMEOUT_MS);
     const onAbort = () => child.kill("SIGTERM");
