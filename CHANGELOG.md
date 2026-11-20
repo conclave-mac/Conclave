@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-11-20
+
+### Added
+- Answers and the verdict now stream in while the models write them, with a "Writing…" note under the card.
+- Errors say what happened and what to do (busy service, exhausted quota, rejected key, network, retired model,
+  interrupted answer, too long…), in the interface language. The provider's original message stays in the tooltip.
+
+### Changed
+- Faster startup: the engine starts while the window is being built and the keychain is read off the main thread
+  (on an older Intel Mac the window is ready about 1.5 s sooner).
+- The sidebar reacts faster to the pointer: hovering a row no longer redraws the whole list. Resizing the window is
+  lighter too.
+- A Gemini per-minute limit is no longer reported as an exhausted quota: Conclave waits and tries again.
+
+### Fixed
+- Reopening a discussion brings back the exact reading position (it was off by the toolbar height).
+- The last rows of the history no longer slide under the settings button.
+- In-app updates: the swap is undone if another copy of the app starts at that moment, and leftover temporary files
+  are cleaned up after quitting during a download or after a crash.
+- Image retries: Qwen keeps receiving images after an output-limit error, and a request that is too long because of
+  its text is no longer retried without images for nothing.
+
 ## [0.5.2] - 2026-11-18
 
 ### Fixed
@@ -181,7 +203,8 @@ versions.
 - Data folder `0700`, files `0600`; atomic writes for settings and health cache.
 - Claude CLI run without tools, MCP servers or user settings, and stopped on shutdown.
 
-[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/peppolone/Conclave/releases/tag/v0.5.3
 [0.5.2]: https://github.com/peppolone/Conclave/releases/tag/v0.5.2
 [0.5.1]: https://github.com/peppolone/Conclave/releases/tag/v0.5.1
 [0.5.0]: https://github.com/peppolone/Conclave/releases/tag/v0.5.0
