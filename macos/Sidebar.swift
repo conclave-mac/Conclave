@@ -179,10 +179,11 @@ struct SidebarView: View {
                     if let first { proxy.scrollTo(first, anchor: .top) }
                 }
             }
-        }
-        // Barra fissa in fondo: solo l'ingranaggio delle Impostazioni, a sinistra (scelta dell'utente).
-        // Nessuno sfondo opaco: resta sul vetro della barra laterale di sistema.
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+
+            // Barra fissa in fondo: solo l'ingranaggio delle Impostazioni, a sinistra (scelta dell'utente).
+            // Nessuno sfondo opaco: resta sul vetro della barra laterale di sistema. Sta sotto la lista
+            // nella pila, come in Note e Mail: con `safeAreaInset` le righe le scorrevano sotto e il
+            // testo si sovrapponeva all'ingranaggio; `safeAreaBar` disegnava invece una fascia bianca.
             VStack(spacing: 0) {
                 Divider()
                 HStack(spacing: 8) {
