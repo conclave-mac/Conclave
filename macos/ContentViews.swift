@@ -672,6 +672,7 @@ struct DebateView: View {
     /// non dell'utente (vedi la rotella in `onScrollGeometryChange`).
     @State private var programmaticUntil = Date.distantPast
     /// Larghezza della colonna del contenuto: decide le card per riga.
+    /// Larghezza della colonna a gradini: 0 (non ancora misurata), 1 (< 600), 600 (< 652) o 652.
     @State private var contentWidth: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Spazio dei nomi delle voci del rotore "Fasi" di VoiceOver.
@@ -749,7 +750,12 @@ struct DebateView: View {
 
                     Color.clear.frame(height: 1).id(Self.endID)
                 }
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { contentWidth = $0 }
+                // A gradini (0, stretta, una colonna, due colonne): conta solo per le soglie, e con la
+                // larghezza esatta ogni pixel di ridimensionamento ricalcolava tutta la discussione.
+                .onGeometryChange(for: CGFloat.self) { g in
+                    let w = g.size.width
+                    return w <= 0 ? 0 : w < 600 ? 1 : w < 652 ? 600 : 652
+                } action: { contentWidth = $0 }
                 .padding(.horizontal, 28)
                 .padding(.vertical, 24)
                 .frame(maxWidth: 980, alignment: .leading)

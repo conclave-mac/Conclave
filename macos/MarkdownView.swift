@@ -581,10 +581,37 @@ private struct MarkdownTableView: View {
     let baseFont: Font
     @Environment(\.textZoom) private var zoom
 
+    /// Misure delle colonne per testo e zoom: misurare ogni parola di ogni cella a ogni rivalutazione
+    /// (scorrimento, ridimensionamento) era il costo principale delle tabelle.
+    private final class Bounds {
+        let value: [(min: CGFloat, max: CGFloat)]
+        init(_ value: [(min: CGFloat, max: CGFloat)]) { self.value = value }
+    }
+    private static let boundsCache: NSCache<NSString, Bounds> = {
+        let c = NSCache<NSString, Bounds>()
+        c.countLimit = 300
+        return c
+    }()
+
+    private var columnBounds: [(min: CGFloat, max: CGFloat)] {
+        // Numero di colonne e separatore dopo l'intestazione: senza, intestazione [A, B] + riga [C] e
+        // intestazione [A] + riga [B, C] avevano la stessa chiave, e misure con meno colonne mandavano
+        // `widths[col]` fuori indice.
+        var parts: [String] = ["\(zoom)", "\(header.count)"]
+        parts += header
+        parts.append("\u{1}")
+        for row in rows { parts += row; parts.append("\u{1}") }
+        let key = parts.joined(separator: "\u{2}") as NSString
+        if let hit = Self.boundsCache.object(forKey: key) { return hit.value }
+        let value = measuredBounds
+        Self.boundsCache.setObject(Bounds(value), forKey: key)
+        return value
+    }
+
     /// Larghezze misurate di ogni colonna, come il layout automatico delle tabelle HTML (quello di
     /// claude.ai): minima = la parola più larga (mai spezzata a metà), massima = la riga più lunga
     /// (al massimo 320 pt). Misura in semibold: per titoli e grassetti non resta mai corta.
-    private var columnBounds: [(min: CGFloat, max: CGFloat)] {
+    private var measuredBounds: [(min: CGFloat, max: CGFloat)] {
         let font = NSFont.systemFont(ofSize: Brand.bodySize * zoom, weight: .semibold)
         let attrs: [NSAttributedString.Key: Any] = [.font: font]
         func width(_ s: Substring) -> CGFloat { ceil((String(s) as NSString).size(withAttributes: attrs).width) }
