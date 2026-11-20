@@ -20,7 +20,7 @@ enum ErrorText {
         case "rate_limited":
             return Info(message: L("Servizio occupato o limite di richieste raggiunto."), action: L("Riprova tra qualche minuto."))
         case "quota_exhausted":
-            return Info(message: L("Quota del piano esaurita."), action: L("Riprova domani o togli questa voce dal consiglio."))
+            return Info(message: L("Quota del piano esaurita."), action: L("Riprova più tardi (le quote giornaliere tornano il giorno dopo) o togli questa voce dal consiglio."))
         case "invalid_key":
             return Info(message: L("Chiave API rifiutata dal provider."), action: L("Controllala in Impostazioni ▸ Chiavi API."))
         case "missing_key":

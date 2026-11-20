@@ -2370,6 +2370,9 @@ SCENARIOS.bm = async function bm() {
   const table = [
     ["HTTP 429: Rate limit reached for model x on tokens per minute (TPM): Limit 6000. Please try again in 2s", "rate_limited"],
     ["HTTP 429: You exceeded your current quota, please check your plan", "quota_exhausted"],
+    // Gemini usa la stessa frase per il limite al minuto (con "retry in") e per quello giornaliero.
+    ["HTTP 429: You exceeded your current quota, please check your plan and billing details. Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 10, model: gemini-3-flash. Please retry in 39.2s.", "rate_limited"],
+    ["HTTP 429: You exceeded your current quota. Quota exceeded for quota id: GenerateRequestsPerDayPerProjectPerModel-FreeTier, limit: 20. Please retry in 14h.", "quota_exhausted"],
     ["HTTP 429: Request too large for model x on tokens per minute (TPM): Limit 8000, Requested 9500, please reduce your message size", "too_long"],
     ["HTTP 413: Request too large", "too_long"],
     ["HTTP 400: API key not valid. Please pass a valid API key.", "invalid_key"],
@@ -2498,7 +2501,9 @@ async function main() {
 
   const keys = Object.keys(SCENARIOS).filter((k) => !only || only.includes(k));
   if (keys.includes("j")) await run("j");
-  await Promise.all(keys.filter((k) => k !== "j").map(run));
+  // Partenze scaglionate: tutti gli scenari insieme aprivano più connessioni della coda d'ascolto di
+  // macOS (kern.ipc.somaxconn = 128) e qualcuno riceveva ECONNRESET a 0,0 s. 100 ms l'uno: ~7 s in tutto.
+  await Promise.all(keys.filter((k) => k !== "j").map((k, i) => new Promise((ok) => setTimeout(ok, i * 100)).then(() => run(k))));
 
   // k. dopo tutto: motore vivo e raggiungibile.
   const r = await api("GET", "/api/models").catch((err) => ({ status: err.message }));

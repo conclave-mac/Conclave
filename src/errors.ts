@@ -41,6 +41,11 @@ export class CodedError extends Error {
  * `withBudget` e le catene di riserve che li riscrivono, ma il testo conserva "HTTP 429: …" e le
  * frasi del motore. L'ordine conta: "Request too large" arriva con un 429 ma è un problema di lunghezza.
  */
+/** Limite che non si libera tra pochi secondi: quota giornaliera, crediti finiti, limite di utilizzo di Claude. */
+export function isDailyOrPlanLimit(m: string): boolean {
+  return /insufficient_quota|limit: 0\b|per ?day|PerDay|\(RPD\)|\(TPD\)|usage limit|credit balance|out of credits/i.test(m);
+}
+
 export function errorCode(e: unknown): ErrorCode {
   const c = (e as { code?: unknown })?.code;
   if (typeof c === "string" && CODES.has(c)) return c as ErrorCode;
@@ -49,7 +54,9 @@ export function errorCode(e: unknown): ErrorCode {
   if (/chiave \S+ mancante/i.test(m)) return "missing_key";
   if (/HTTP 40[13]\b|api key not valid|invalid api key|incorrect api key|invalid_api_key|unauthori[sz]ed|authentication|permission denied/i.test(m)) return "invalid_key";
   if (/HTTP 413\b|request too large|reduce your message size|context length|maximum context|context window|prompt is too long|too many tokens/i.test(m)) return "too_long";
-  if (/exceeded your current quota|insufficient_quota|limit: 0\b|per day|\(RPD\)|\(TPD\)|usage limit|credit balance|out of credits|quota/i.test(m)) return "quota_exhausted";
+  if (isDailyOrPlanLimit(m)) return "quota_exhausted";
+  // Google usa "exceeded your current quota" anche per il limite al minuto (con "retry in Xs"): quello passa.
+  if (/exceeded your current quota|quota/i.test(m) && !/retry in|try again in|per ?minute|PerMinute/i.test(m)) return "quota_exhausted";
   if (/HTTP 429\b|HTTP 50[23]\b|HTTP 529\b|overloaded|rate limit|too many requests|sovraccaric/i.test(m)) return "rate_limited";
   if (/HTTP 404\b|model not found|does not exist|decommissioned|has been deprecated|no longer (supported|available)/i.test(m)) return "model_retired";
   if (/risposta interrotta/i.test(m)) return "interrupted";
