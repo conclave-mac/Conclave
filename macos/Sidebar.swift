@@ -108,8 +108,10 @@ final class SidebarModel: ObservableObject {
 
 struct SidebarView: View {
     @ObservedObject var model: SidebarModel
-    /// Riga sotto il puntatore: fondo grigio arrotondato come in Claude.
-    @State private var hovered: Int?
+    /// Riga sotto il puntatore: fondo grigio arrotondato come in Claude. Sta in un oggetto osservabile
+    /// letto solo dai fondi delle righe: con uno `@State` qui ogni movimento del puntatore ricalcolava
+    /// tutta la lista (e il `SystemHighlightRemover` di ogni riga), e l'hover arrivava in ritardo.
+    @State private var hover = SidebarHover<Int>()
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
@@ -140,19 +142,11 @@ struct SidebarView: View {
                     if let id { model.onOpen?(id) }
                 })) {
                     ForEach(model.items) { d in
-                        DebateRow(debate: d, selected: model.selected == d.id) { model.requestDelete(d.id) }
+                        DebateRow(debate: d, selected: model.selected == d.id, hover: hover) { model.requestDelete(d.id) }
                             .tag(d.id)
                             // Selezione nel colore del marchio al posto dell'accento di sistema.
-                            .listRowBackground(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(model.selected == d.id ? Brand.selection
-                                          : hovered == d.id ? Brand.hover : .clear)
-                                    .padding(.horizontal, 10)
-                            )
+                            .listRowBackground(SidebarRowBackground(id: d.id, selected: model.selected == d.id, hover: hover))
                             .background(SystemHighlightRemover(selected: model.selected == d.id))
-                            .onHover { inside in
-                                if inside { hovered = d.id } else if hovered == d.id { hovered = nil }
-                            }
                             // Solo le azioni più probabili, distruttive in fondo, niente scorciatoie.
                             .contextMenu {
                                 if d.status == "done" {
@@ -323,6 +317,8 @@ struct SidebarActionRow: View {
 struct DebateRow: View {
     let debate: DebateSummary
     var selected = false
+    /// Riga sotto il puntatore, condivisa con il fondo della riga (`SidebarRowBackground`).
+    let hover: SidebarHover<Int>
     let onDelete: () -> Void
     @State private var hovering = false
 
@@ -382,11 +378,44 @@ struct DebateRow: View {
         .padding(.vertical, 1)
         .contentShape(Rectangle())
         .help(debate.question)
-        .onHover { hovering = $0 }
+        .onHover { inside in
+            hovering = inside
+            hover.set(debate.id, inside)
+        }
+        // Riga tolta mentre è sotto il puntatore (eliminata, filtrata dalla ricerca): l'uscita non arriva
+        // e la riga ricomparirebbe grigia.
+        .onDisappear { hover.set(debate.id, false) }
         // VoiceOver: un solo elemento "titolo, stato" con l'azione Elimina (il ✕ è visibile solo al mouse).
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(detail.isEmpty ? debate.displayTitle : "\(debate.displayTitle), \(detail)")
         .accessibilityAction(named: Text("Elimina discussione"), onDelete)
+    }
+}
+
+/// Riga della cronologia sotto il puntatore. Osservabile (Observation): al suo cambio si ridisegnano
+/// solo i fondi delle righe che la leggono, non la lista.
+@Observable
+final class SidebarHover<ID: Hashable> {
+    var id: ID?
+
+    func set(_ row: ID, _ inside: Bool) {
+        if inside { if id != row { id = row } } else if id == row { id = nil }
+    }
+}
+
+/// Fondo di una riga della cronologia: selezione nel colore del marchio, altrimenti grigio al passaggio
+/// del mouse. Vista a sé, così solo lei legge `hover.id`.
+struct SidebarRowBackground<ID: Hashable>: View {
+    let id: ID
+    let selected: Bool
+    let hover: SidebarHover<ID>
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(selected ? Brand.selection : hover.id == id ? Brand.hover : .clear)
+            .padding(.horizontal, 10)
+            // L'hover segue subito il puntatore: nessuna animazione ereditata da un aggiornamento animato.
+            .transaction { $0.animation = nil }
     }
 }
 

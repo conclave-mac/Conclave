@@ -1072,7 +1072,8 @@ private struct OpaqueWhenReducedTransparency: ViewModifier {
 struct SettingsSidebar: View {
     @ObservedObject var nav: SettingsNav
     @State private var query = ""
-    @State private var hovered: SettingsTab?
+    /// Scheda sotto il puntatore: letta solo dai fondi delle righe (vedi `SidebarHover`).
+    @State private var hover = SidebarHover<SettingsTab>()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1098,15 +1099,10 @@ struct SettingsSidebar: View {
                                     .padding(.vertical, 4)
                                     .tag(t)
                                     .listItemTint(.fixed(Brand.text))
-                                    .listRowBackground(
-                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                            .fill(nav.tab == t ? Brand.selection : hovered == t ? Brand.hover : .clear)
-                                            .padding(.horizontal, 10)
-                                    )
+                                    .listRowBackground(SidebarRowBackground(id: t, selected: nav.tab == t, hover: hover))
                                     .background(SystemHighlightRemover(selected: nav.tab == t))
-                                    .onHover { inside in
-                                        if inside { hovered = t } else if hovered == t { hovered = nil }
-                                    }
+                                    .onHover { hover.set(t, $0) }
+                                    .onDisappear { hover.set(t, false) }
                             }
                         } header: {
                             SidebarSectionHeader(title: group.title)
