@@ -2188,6 +2188,12 @@ DESCR.bi = "lingua del verdetto dichiarata al giudice";
 
 // ---------- streaming, codici d'errore, riprova con le immagini (gruppo motore-live) ----------
 
+/**
+ * Partenza ritardata di 2 s: all'avvio tutti gli scenari aprono connessioni insieme e oltre ~128 (coda di
+ * ascolto di macOS, kern.ipc.somaxconn) le ultime ricevono ECONNRESET.
+ */
+const offPeak = () => new Promise((ok) => setTimeout(ok, 2000));
+
 DESCR.bj = "streaming: pezzi additivi coerenti col messaggio, ricollegamento a metà col testo accumulato";
 DESCR.bk = "streaming fermo, interrotto o con errore a metà: testo scartato, codici timeout/interrupted";
 DESCR.bl = "streaming: la riserva riparte da capo; Claude CLI in stream-json (finta)";
@@ -2236,6 +2242,7 @@ function followOn(port, headers, id, timeoutMs) {
 // finale, nessun pezzo dopo il messaggio, eventi esistenti invariati; chi si collega a metà riceve subito tutto il
 // testo accumulato (`reset`) e poi i pezzi nuovi. Il verdetto in diretta non mostra le righe macchina.
 SCENARIOS.bj = async function bj() {
+  await offPeak();
   let late;
   const res = await debate("bj", ["slow", "ok-a"], 0, "slow", 90_000, {
     onStart: (id) => { late = new Promise((ok) => setTimeout(() => ok(followEvents(id, 60_000)), 8000)); },
@@ -2268,6 +2275,7 @@ SCENARIOS.bj = async function bj() {
 // Pezzi e poi silenzio (stall), connessione chiusa (cut) o chunk d'errore (error): il testo mostrato si
 // scarta (`reset` vuoto), la voce esce con codice timeout (dopo ~20 s senza pezzi) o interrupted.
 SCENARIOS.bk = async function bk() {
+  await offPeak();
   const res = await debate("bk", ["stream-stall", "stream-cut", "stream-error", "ok-a"], 0, "ok-a", 90_000);
   const err = expectDone(res, 90);
   if (err) return [false, err, res.secs];
@@ -2290,6 +2298,7 @@ SCENARIOS.bk = async function bk() {
 // Voce di famiglia: il principale scrive e poi cade, la riserva riparte da capo (reset vuoto, poi il suo testo
 // con `model` = riserva). Claude CLI finta in stream-json: pezzi `text_delta`, testo finale dalla riga `result`.
 SCENARIOS.bl = async function bl() {
+  await offPeak();
   const started = Date.now();
   const secs = () => (Date.now() - started) / 1000;
   const tok = randomBytes(32).toString("hex");
@@ -2353,6 +2362,7 @@ process.stdin.on("end", async () => {
 // Immagini: Qwen solo sul provider Groq; 400 "reduce max_tokens" non toglie le immagini a Qwen; 413 dovuto al
 // solo testo non riprova senza immagini.
 SCENARIOS.bm = async function bm() {
+  await offPeak();
   const started = Date.now();
   const secs = () => (Date.now() - started) / 1000;
   const wrong = [];
