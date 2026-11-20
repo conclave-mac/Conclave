@@ -8,6 +8,8 @@ struct DebateResult: View {
     @ObservedObject var store: CouncilStore
     let debate: DebateState
     let text: String?
+    /// Verdetto in arrivo (streaming): si mostra al posto del segnaposto finché non arriva `text`.
+    var draft: String? = nil
     let verdictBy: String?
     let confidence: String?
     /// "verdict" o "turn-<n>": quale verdetto è stato appena copiato.
@@ -75,9 +77,30 @@ struct DebateResult: View {
             let parts = CouncilStore.verdictParts(text)
             verdictBox(parts.verdict, summary: parts.debate, by: verdictBy, confidence: confidence, key: key,
                        copyText: CouncilStore.plainVerdict(text))
+        } else if let draft, !draft.isEmpty {
+            draftBox(draft)
         } else {
             judgingPlaceholder
         }
+    }
+
+    /// Bozza del verdetto mentre il giudice scrive: solo testo, senza azioni (copia ed esportazione valgono per
+    /// il verdetto definitivo, che la sostituisce per intero).
+    private func draftBox(_ draft: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(L("Il giudice sta scrivendo il verdetto…")).font(Brand.Fonts.small)
+                    .foregroundStyle(Brand.secondaryText)
+            }
+            .accessibilityHidden(true)
+            MarkdownView(draft)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .surfaceBox(radius: Brand.Radius.panel, stroke: Brand.hairline)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(L("Il giudice sta scrivendo il verdetto…"))
     }
 
     /// Su cosa concordano, errori emersi, disaccordi irrisolti: area interna in fondo al verdetto,
