@@ -122,9 +122,9 @@ enum LegacyMigration {
 
 // MARK: - Motore Node
 
-/// Stdin del motore, scritto dal thread che lo avvia e chiuso dal main thread (stop): il lock
-/// impedisce di scrivere su un handle già chiuso.
-final class EngineStdin: @unchecked Sendable {
+/// Stdin e registro del motore: scritti da altri thread (avvio, output del motore) e chiusi dal
+/// main thread (stop). Il lock impedisce di scrivere su un handle già chiuso, che chiuderebbe l'app.
+final class LockedHandle: @unchecked Sendable {
     private let lock = NSLock()
     private var handle: FileHandle?
 
@@ -144,8 +144,13 @@ final class EngineStdin: @unchecked Sendable {
 
 final class ServerController {
     private var process: Process?
-    private var stdin: EngineStdin?
-    private var log: FileHandle?
+    private var stdin: LockedHandle?
+    private var log: LockedHandle?
+    /// Motore lanciato dal background e non ancora consegnato al main thread, con la generazione
+    /// ancora valida: `stop()` lo chiude anche in quell'intervallo, così non girano mai due motori.
+    private let launchLock = NSLock()
+    private var launching: Process?
+    private var liveGeneration = 0
     private var buffer = ""
     private var stopping = false
     private var output: Pipe?
@@ -214,6 +219,7 @@ final class ServerController {
         portFound = false
         generation += 1
         let generation = generation
+        launchLock.withLock { liveGeneration = generation }
         let saved = UserDefaults.standard.string(forKey: Self.pathKey)
         let refresh = saved != nil && !pathRefreshed
         if refresh { pathRefreshed = true }
@@ -248,7 +254,7 @@ final class ServerController {
     /// frattempo non c'è stato uno stop o un riavvio; altrimenti il processo appena nato si chiude.
     private func launch(node: String, path: String, generation: Int) {
         FileManager.default.createFile(atPath: Paths.logFile.path, contents: nil, attributes: [.posixPermissions: 0o600])
-        let log = try? FileHandle(forWritingTo: Paths.logFile)
+        let log = (try? FileHandle(forWritingTo: Paths.logFile)).map(LockedHandle.init)
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: node)
@@ -264,7 +270,7 @@ final class ServerController {
 
         let input = Pipe()
         let output = Pipe()
-        let stdin = EngineStdin(input.fileHandleForWriting)
+        let stdin = LockedHandle(input.fileHandleForWriting)
         p.standardInput = input
         p.standardOutput = output
         p.standardError = output
@@ -289,24 +295,40 @@ final class ServerController {
             }
         }
 
+        let started: Bool
         do {
-            try p.run()
+            // Sotto il lock: uno stop arrivato prima annulla l'avvio, uno arrivato dopo trova il processo.
+            started = try launchLock.withLock {
+                guard liveGeneration == generation else { return false }
+                try p.run()
+                launching = p
+                return true
+            }
         } catch {
             output.fileHandleForReading.readabilityHandler = nil
-            try? log?.close()
+            log?.close()
             DispatchQueue.main.async {
                 guard generation == self.generation else { return }
                 self.onCrash?(String(format: L("Impossibile avviare il motore: %@"), error.localizedDescription))
             }
             return
         }
+        guard started else {
+            output.fileHandleForReading.readabilityHandler = nil
+            log?.close()
+            return
+        }
         DispatchQueue.main.async {
-            guard generation == self.generation else {
-                // Stop o riavvio arrivati mentre il motore partiva: questo non serve più.
+            let mine = self.launchLock.withLock {
+                guard self.launching === p else { return false }
+                self.launching = nil
+                return true
+            }
+            // Stop o riavvio arrivati mentre il motore partiva: lo ha già chiuso `stop()`.
+            guard mine, generation == self.generation else {
                 output.fileHandleForReading.readabilityHandler = nil
                 stdin.close()
-                p.terminate()
-                try? log?.close()
+                log?.close()
                 return
             }
             self.process = p
@@ -343,10 +365,18 @@ final class ServerController {
         output = nil
         stdin?.close()
         stdin = nil
-        process?.terminate()
-        process?.waitUntilExit()
+        // Anche un motore appena lanciato e non ancora consegnato (vedi `launch`).
+        let pending = launchLock.withLock {
+            liveGeneration = 0
+            defer { launching = nil }
+            return launching
+        }
+        for p in [process, pending].compactMap({ $0 }) {
+            p.terminate()
+            p.waitUntilExit()
+        }
         process = nil
-        try? log?.close()
+        log?.close()
     }
 }
 
@@ -406,9 +436,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         AppAppearance.apply()
         buildMenu()
         buildWindow()
-        // Primo avvio senza chiavi: apre le impostazioni con la guida. Dopo il primo disegno della
-        // finestra: creare le Impostazioni e leggere le chiavi costa fino a 1–2 s su un Mac lento
-        // (il motore intanto le legge in background, quindi qui di solito arrivano dalla cache).
+        // Primo avvio senza chiavi: apre le impostazioni con la guida. Dopo applicationDidFinishLaunching:
+        // creare le Impostazioni e leggere le chiavi costa fino a 1–2 s su un Mac lento (il motore
+        // intanto le legge in background, quindi qui di solito arrivano dalla cache).
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if !self.settings.hasAnyKey { self.settings.show() }
