@@ -122,9 +122,29 @@ enum LegacyMigration {
 
 // MARK: - Motore Node
 
+/// Stdin del motore, scritto dal thread che lo avvia e chiuso dal main thread (stop): il lock
+/// impedisce di scrivere su un handle già chiuso.
+final class EngineStdin: @unchecked Sendable {
+    private let lock = NSLock()
+    private var handle: FileHandle?
+
+    init(_ handle: FileHandle) { self.handle = handle }
+
+    func write(_ data: Data) {
+        lock.withLock { try? handle?.write(contentsOf: data) }
+    }
+
+    func close() {
+        lock.withLock {
+            try? handle?.close()
+            handle = nil
+        }
+    }
+}
+
 final class ServerController {
     private var process: Process?
-    private var stdinPipe: Pipe?
+    private var stdin: EngineStdin?
     private var log: FileHandle?
     private var buffer = ""
     private var stopping = false
@@ -212,19 +232,23 @@ final class ServerController {
                 DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5) { _ = Self.loginPath() }
             }
             guard let node else {
-                DispatchQueue.main.async { self.onCrash?(L("Node.js non trovato. Installalo (es. con nvm) e riapri l'app.")) }
+                DispatchQueue.main.async {
+                    guard generation == self.generation else { return }
+                    self.onCrash?(L("Node.js non trovato. Installalo (es. con nvm) e riapri l'app."))
+                }
                 return
             }
-            DispatchQueue.main.async {
-                guard generation == self.generation else { return }
-                self.launch(node: node, path: path)
-            }
+            // Il motore parte subito da qui, senza passare dal main thread: lì l'avvio aspettava la
+            // costruzione e il primo disegno della finestra (secondi su un Mac lento).
+            self.launch(node: node, path: path, generation: generation)
         }
     }
 
-    private func launch(node: String, path: String) {
+    /// In background. Lo stato (`process`, pipe, registro) si consegna al main thread solo se nel
+    /// frattempo non c'è stato uno stop o un riavvio; altrimenti il processo appena nato si chiude.
+    private func launch(node: String, path: String, generation: Int) {
         FileManager.default.createFile(atPath: Paths.logFile.path, contents: nil, attributes: [.posixPermissions: 0o600])
-        log = try? FileHandle(forWritingTo: Paths.logFile)
+        let log = try? FileHandle(forWritingTo: Paths.logFile)
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: node)
@@ -240,23 +264,25 @@ final class ServerController {
 
         let input = Pipe()
         let output = Pipe()
-        self.output = output
+        let stdin = EngineStdin(input.fileHandleForWriting)
         p.standardInput = input
         p.standardOutput = output
         p.standardError = output
-        stdinPipe = input
 
         output.fileHandleForReading.readabilityHandler = { [weak self] h in
             let data = h.availableData
-            guard !data.isEmpty, let self else { return }
-            self.log?.write(data)
+            guard !data.isEmpty else { return }
+            log?.write(data)
             guard let text = String(data: data, encoding: .utf8) else { return }
-            DispatchQueue.main.async { self.consume(text) }
-        }
-        p.terminationHandler = { [weak self] ended in
             DispatchQueue.main.async {
-                // Ignora la chiusura voluta (stop/riavvio) e quella di un processo ormai sostituito.
-                guard let self, !self.stopping, self.process === ended else { return }
+                guard let self, generation == self.generation else { return }
+                self.consume(text)
+            }
+        }
+        p.terminationHandler = { [weak self] _ in
+            DispatchQueue.main.async {
+                // Ignora la chiusura voluta (stop/riavvio, che cambiano `generation`) e quella di un processo ormai sostituito.
+                guard let self, !self.stopping, generation == self.generation else { return }
                 let tail = (try? String(contentsOf: Paths.logFile, encoding: .utf8))?
                     .split(separator: "\n").suffix(8).joined(separator: "\n") ?? ""
                 self.onCrash?(String(format: L("Il motore si è fermato inaspettatamente.\n\n%@"), tail))
@@ -265,15 +291,37 @@ final class ServerController {
 
         do {
             try p.run()
-            process = p
-            // Prima riga dello stdin: il token dell'API e le chiavi dei provider dal Portachiavi
-            // (vedi src/bootstrap.ts), mai nell'ambiente: altri processi lo leggerebbero. Poi lo
-            // stdin resta aperto: quando l'app si chiude, il motore lo vede chiudersi e termina.
-            let hello = try JSONSerialization.data(withJSONObject: ["token": Engine.token, "keys": KeyStore.engineKeys()])
-            try input.fileHandleForWriting.write(contentsOf: hello + Data("\n".utf8))
         } catch {
-            onCrash?(String(format: L("Impossibile avviare il motore: %@"), error.localizedDescription))
+            output.fileHandleForReading.readabilityHandler = nil
+            try? log?.close()
+            DispatchQueue.main.async {
+                guard generation == self.generation else { return }
+                self.onCrash?(String(format: L("Impossibile avviare il motore: %@"), error.localizedDescription))
+            }
+            return
         }
+        DispatchQueue.main.async {
+            guard generation == self.generation else {
+                // Stop o riavvio arrivati mentre il motore partiva: questo non serve più.
+                output.fileHandleForReading.readabilityHandler = nil
+                stdin.close()
+                p.terminate()
+                try? log?.close()
+                return
+            }
+            self.process = p
+            self.stdin = stdin
+            self.output = output
+            self.log = log
+        }
+        // Prima riga dello stdin: il token dell'API e le chiavi dei provider dal Portachiavi
+        // (vedi src/bootstrap.ts), mai nell'ambiente: altri processi lo leggerebbero. Poi lo
+        // stdin resta aperto: quando l'app si chiude, il motore lo vede chiudersi e termina.
+        // Le chiavi si leggono dopo l'avvio del processo: Node intanto si carica (la lettura
+        // del Portachiavi costa 0,2–1 s) e la cache è già pronta quando servono alle Impostazioni.
+        let keys = KeyStore.engineKeys()
+        guard let hello = try? JSONSerialization.data(withJSONObject: ["token": Engine.token, "keys": keys]) else { return }
+        stdin.write(hello + Data("\n".utf8))
     }
 
     private func consume(_ text: String) {
@@ -293,7 +341,8 @@ final class ServerController {
         // Niente più scritture nel registro dopo la sua chiusura.
         output?.fileHandleForReading.readabilityHandler = nil
         output = nil
-        try? stdinPipe?.fileHandleForWriting.close()
+        stdin?.close()
+        stdin = nil
         process?.terminate()
         process?.waitUntilExit()
         process = nil
@@ -317,7 +366,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
     private var loading: NSView!
     private let engineStatus = EngineStatusModel()
     private let server = ServerController()
-    private lazy var settings = SettingsWindowController(port: { [weak self] in self?.port ?? 0 })
+    /// Creata alla prima richiesta, non durante l'avvio: legge le chiavi (Portachiavi) e i modelli.
+    private lazy var settings: SettingsWindowController = {
+        let s = SettingsWindowController(port: { [weak self] in self?.port ?? 0 })
+        s.model.onSaved = { [weak self] in self?.settingsSaved() }
+        s.models.onSaved = { [weak self] in self?.settingsSaved() }
+        return s
+    }()
     private lazy var sidebar = SidebarModel(port: { [weak self] in self?.port ?? 0 })
     private lazy var store = CouncilStore(port: { [weak self] in self?.port ?? 0 })
     private var port = 0
@@ -351,10 +406,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         AppAppearance.apply()
         buildMenu()
         buildWindow()
-        settings.model.onSaved = { [weak self] in self?.settingsSaved() }
-        settings.models.onSaved = { [weak self] in self?.settingsSaved() }
-        // Primo avvio senza chiavi: apre subito le impostazioni con la guida.
-        if !settings.hasAnyKey { settings.show() }
+        // Primo avvio senza chiavi: apre le impostazioni con la guida. Dopo il primo disegno della
+        // finestra: creare le Impostazioni e leggere le chiavi costa fino a 1–2 s su un Mac lento
+        // (il motore intanto le legge in background, quindi qui di solito arrivano dalla cache).
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if !self.settings.hasAnyKey { self.settings.show() }
+        }
 
         UpdateCheck.isBusy = { [weak self] in self?.store.hasRunning ?? false }
         UpdateCheck.reportFailedInstall(over: window)
@@ -483,23 +541,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         // Sfondo coerente con il marchio (si vede durante l'avvio e dietro la toolbar);
         // la barra laterale resta il vetro di sistema.
         window.backgroundColor = NSColor(Brand.canvas)
-        // Sfondo di marchio sotto tutta la finestra: si vede anche dietro e intorno alla barra
-        // laterale (vetro di sistema), senza stacchi tra barra e contenuto.
-        let windowRoot = NSViewController()
-        windowRoot.view = NSView()
-        let backdrop = NSHostingView(rootView: BrandBackground())
-        windowRoot.addChild(split)
-        for v in [backdrop, split.view] as [NSView] {
-            v.translatesAutoresizingMaskIntoConstraints = false
-            windowRoot.view.addSubview(v)
-            NSLayoutConstraint.activate([
-                v.leadingAnchor.constraint(equalTo: windowRoot.view.leadingAnchor),
-                v.trailingAnchor.constraint(equalTo: windowRoot.view.trailingAnchor),
-                v.topAnchor.constraint(equalTo: windowRoot.view.topAnchor),
-                v.bottomAnchor.constraint(equalTo: windowRoot.view.bottomAnchor),
-            ])
-        }
-        window.contentViewController = windowRoot
+        // Toolbar, dimensioni e posizione salvata prima del contenuto: ogni cambio successivo (safe area
+        // della toolbar, nuova dimensione) rifarebbe il layout delle viste SwiftUI già montate.
         // Toolbar unificata: i pulsanti fluttuano su Liquid Glass sopra il contenuto.
         // Identificatore nuovo quando cambia la disposizione predefinita: quella salvata non vale più.
         let toolbar = NSToolbar(identifier: "MainToolbar3")
@@ -513,6 +556,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         window.setContentSize(NSSize(width: 1200, height: 800))
         window.center()
         window.setFrameAutosaveName("MainWindow")
+        // Sfondo di marchio sotto tutta la finestra: si vede anche dietro e intorno alla barra
+        // laterale (vetro di sistema), senza stacchi tra barra e contenuto.
+        let windowRoot = NSViewController()
+        // Già della misura della finestra: assegnato come contentViewController non la ridimensiona.
+        windowRoot.view = NSView(frame: window.contentRect(forFrameRect: window.frame))
+        let backdrop = NSHostingView(rootView: BrandBackground())
+        windowRoot.addChild(split)
+        for v in [backdrop, split.view] as [NSView] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            windowRoot.view.addSubview(v)
+            NSLayoutConstraint.activate([
+                v.leadingAnchor.constraint(equalTo: windowRoot.view.leadingAnchor),
+                v.trailingAnchor.constraint(equalTo: windowRoot.view.trailingAnchor),
+                v.topAnchor.constraint(equalTo: windowRoot.view.topAnchor),
+                v.bottomAnchor.constraint(equalTo: windowRoot.view.bottomAnchor),
+            ])
+        }
+        window.contentViewController = windowRoot
         window.makeKeyAndOrderFront(nil)
 
         // Titolo = domanda, sottotitolo = meta; si aggiornano con la discussione mostrata.
