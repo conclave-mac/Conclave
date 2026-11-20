@@ -386,7 +386,7 @@ enum UpdateCheck {
             if inside; then clean; exit 0; fi
             if [ "$signed" = 0 ]; then clean; reopen; exit 0; fi
             if mv "$APP" "$DIR/old.app"; then
-              if inside; then mv "$DIR/old.app" "$APP"; clean; exit 0; fi
+              if inside; then mv "$DIR/old.app" "$APP" && clean; exit 0; fi
               mv "$NEW" "$APP" || mv "$DIR/old.app" "$APP"
             fi
             [ -e "$APP" ] && clean
