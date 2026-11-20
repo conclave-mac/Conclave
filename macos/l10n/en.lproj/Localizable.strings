@@ -581,7 +581,7 @@
 "Servizio occupato o limite di richieste raggiunto." = "Service busy or request limit reached.";
 "Riprova tra qualche minuto." = "Try again in a few minutes.";
 "Quota del piano esaurita." = "The plan's quota is used up.";
-"Riprova domani o togli questa voce dal consiglio." = "Try again tomorrow or remove this voice from the council.";
+"Riprova più tardi (le quote giornaliere tornano il giorno dopo) o togli questa voce dal consiglio." = "Try again later (daily quotas reset the next day) or remove this voice from the council.";
 "Chiave API rifiutata dal provider." = "The provider rejected the API key.";
 "Controllala in Impostazioni ▸ Chiavi API." = "Check it in Settings ▸ API Keys.";
 "Chiave API mancante." = "API key missing.";
