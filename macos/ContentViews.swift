@@ -784,7 +784,10 @@ struct DebateView: View {
                               distance: max(0, g.contentSize.height - g.visibleRect.maxY),
                               height: g.contentSize.height,
                               overshoot: g.visibleRect.maxY - g.contentSize.height > 2,
-                              viewport: g.visibleRect.height,
+                              // Altezza in cui `scrollTo(id, anchor:)` allinea le righe: la vista meno gli
+                              // inset (la toolbar sopra). Con `visibleRect.height` intero il ripristino della
+                              // posizione di lettura finiva più in alto di y × inset (17 pt misurati).
+                              viewport: g.visibleRect.height - g.contentInsets.top - g.contentInsets.bottom,
                               atTop: g.contentOffset.y + g.contentInsets.top <= 1)
             } action: { old, new in
                 reading.atBottom = new.distance <= 2
@@ -2240,6 +2243,7 @@ final class ReadingTracker {
     var rows: [String: (minY: CGFloat, height: CGFloat)] = [:]
     var atBottom = false
     var atTop = true
+    /// Altezza utile della vista (senza gli inset della toolbar): quella usata da `scrollTo(anchor:)`.
     var viewport: CGFloat = 0
     /// L'utente ha scorso: un ripristino ancora in corso si annulla (come `reader_scrolled` di Claude).
     var userMoved = false
