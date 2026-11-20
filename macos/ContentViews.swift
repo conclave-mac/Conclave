@@ -736,7 +736,7 @@ struct DebateView: View {
                     // pila pigra aveva due righe con lo stesso id nello stesso aggiornamento e restava
                     // bloccata sul segnaposto (e con lei la vista).
                     if debate.verdict != nil || (debate.isRunning && debate.judging) {
-                        DebateResult(store: store, debate: debate, text: debate.verdict, verdictBy: debate.verdictBy,
+                        DebateResult(store: store, debate: debate, text: debate.verdict, draft: debate.verdictDraft, verdictBy: debate.verdictBy,
                                      confidence: debate.confidence, key: "verdict", copiedKey: $copiedKey, saveFile: saveFile)
                             .accessibilityRotorEntry(id: "phase-verdict", in: rotorNS)
                             .readingRow("phase-verdict", reading)
@@ -1347,7 +1347,7 @@ extension DebateView {
             }
             // Segnaposto e verdetto in una sola riga con un solo id (vedi il verdetto del dibattito).
             if t.verdict != nil || (t.isRunning && t.judging) {
-                DebateResult(store: store, debate: debate, text: t.verdict, verdictBy: t.verdictBy,
+                DebateResult(store: store, debate: debate, text: t.verdict, draft: t.verdictDraft, verdictBy: t.verdictBy,
                              confidence: t.confidence, key: "turn-\(n)", copiedKey: $copiedKey, saveFile: saveFile)
                     .accessibilityElement(children: .contain)
                     .accessibilityLabel(String(format: L("Verdetto della domanda di seguito %d"), n))
@@ -2126,9 +2126,11 @@ private struct CardView: View {
             if let text = card.text {
                 MarkdownView(text)
             } else if let err = card.error {
+                // Testo tradotto per codice (ErrorText); quello del motore resta nel tooltip.
+                let info = ErrorText.info(card.errorCode)
                 if card.skipped {
                     Label {
-                        Text(String(format: L("Ha saltato questo round e rientra nel prossimo: %@"), Self.reason(err)))
+                        Text(String(format: L("Ha saltato questo round e rientra nel prossimo: %@"), info?.message ?? Self.reason(err)))
                             .fixedSize(horizontal: false, vertical: true)
                     } icon: {
                         Image(systemName: "forward")
@@ -2153,7 +2155,8 @@ private struct CardView: View {
                     Label {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Non ha risposto")
-                            Text(err).foregroundStyle(Brand.secondaryText)
+                            Text(info?.message ?? err).foregroundStyle(Brand.secondaryText)
+                            if let action = info?.action { Text(action).foregroundStyle(Brand.secondaryText) }
                             Text("Il dibattito continua senza questo modello.").foregroundStyle(Brand.secondaryText)
                         }
                         .fixedSize(horizontal: false, vertical: true)
@@ -2162,6 +2165,20 @@ private struct CardView: View {
                     }
                     .font(Brand.Fonts.body)
                     .textSelection(.enabled)
+                    .help(info == nil ? "" : err)
+                }
+            } else if let partial = card.partial, !partial.isEmpty {
+                // Risposta in arrivo (streaming): il testo cresce; la card conta come "risposta" solo con `text`.
+                VStack(alignment: .leading, spacing: 8) {
+                    MarkdownView(partial)
+                    if running {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text(L("Sta scrivendo…")).foregroundStyle(Brand.secondaryText)
+                        }
+                        .font(Brand.Fonts.small)
+                        .accessibilityHidden(true)
+                    }
                 }
             } else if running {
                 TimelineView(.periodic(from: .now, by: 1)) { ctx in
@@ -2192,7 +2209,7 @@ private struct CardView: View {
         // sostituisce quelle dei figli: senza il valore il testo della risposta sparirebbe.
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityStatus)
-        .accessibilityValue(card.text.map(Self.spokenText) ?? card.error.map(Self.reason) ?? "")
+        .accessibilityValue(card.text.map(Self.spokenText) ?? card.errorText ?? card.partial.map(Self.spokenText) ?? "")
         .contextMenu {
             if let text = card.text {
                 Button("Copia risposta") {
@@ -2214,6 +2231,8 @@ private struct CardView: View {
         } else if card.error != nil {
             parts.append(card.skipped ? L("ha saltato questo round")
                          : card.id.hasPrefix("research") ? L("Ricerca sul web non riuscita") : L("Non ha risposto"))
+        } else if card.partial?.isEmpty == false, running {
+            parts.append(L("sta scrivendo"))
         } else {
             parts.append(running ? L("In attesa") : L("Nessuna risposta"))
         }
