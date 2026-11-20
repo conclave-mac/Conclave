@@ -416,6 +416,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
 
         UpdateCheck.isBusy = { [weak self] in self?.store.hasRunning ?? false }
         UpdateCheck.reportFailedInstall(over: window)
+        UpdateCheck.Installer.removeLeftovers()
         Task { await UpdateCheck.run(manual: false, over: window) }
         updateStatusItem()
         NotificationCenter.default.addObserver(forName: MenuBarPreference.changed, object: nil, queue: .main) { [weak self] _ in

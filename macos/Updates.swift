@@ -364,6 +364,10 @@ enum UpdateCheck {
             // chiudendo (fino a 10 s) o una seconda istanza aperta nel frattempo. A questa si
             // toglierebbe l'app da sotto (e `open` riattiverebbe lei, non la versione nuova): niente
             // scambio né riapertura, il marker resta e l'istanza aperta dice che non è stato installato.
+            // La firma (lenta: tutto il pacchetto, Node compreso) si controlla prima di quell'attesa,
+            // così tra l'ultimo controllo dei processi e lo spostamento non passa quasi nulla; e se
+            // un'istanza parte proprio in quell'attimo (il suo percorso resta quello dell'app anche
+            // dopo lo spostamento) si rimette subito tutto com'era.
             // Con `COUNCIL_DATA` (prove) l'app si riapre con le stesse variabili, mai sui dati reali.
             let script = """
             PID="$1" APP="$2" DIR="$3" NEW="$4" REOPEN="$5" REQ="$6"
@@ -375,13 +379,14 @@ enum UpdateCheck {
               for v in COUNCIL_DATA COUNCIL_MODELS COUNCIL_UPDATE_API; do [ -n "${!v}" ] && env+=(--env "$v=${!v}"); done
               /usr/bin/open "${env[@]}" "$APP"
             }
+            signed=1
+            /usr/bin/codesign --verify --deep --strict --test-requirement="=$REQ" "$NEW" 2>/dev/null || signed=0
             for _ in $(seq 300); do kill -0 "$PID" 2>/dev/null || break; sleep 0.2; done
             for _ in $(seq 50); do inside || break; sleep 0.2; done
             if inside; then clean; exit 0; fi
-            if ! /usr/bin/codesign --verify --deep --strict --test-requirement="=$REQ" "$NEW" 2>/dev/null; then
-              clean; reopen; exit 0
-            fi
+            if [ "$signed" = 0 ]; then clean; reopen; exit 0; fi
             if mv "$APP" "$DIR/old.app"; then
+              if inside; then mv "$DIR/old.app" "$APP"; clean; exit 0; fi
               mv "$NEW" "$APP" || mv "$DIR/old.app" "$APP"
             fi
             [ -e "$APP" ] && clean
@@ -518,6 +523,40 @@ enum UpdateCheck {
             progressWindow = nil
             if let parent = sheet.sheetParent { parent.endSheet(sheet) } else { sheet.orderOut(nil) }
         }
+
+        /// Poco dopo l'avvio: cartelle di aggiornamenti rimaste nei temporanei (app finita in crash
+        /// con un aggiornamento pronto, rimandato o a metà). Mai con un'altra istanza aperta, che
+        /// potrebbe averne uno in corso, né per cartelle cambiate negli ultimi 10 minuti (lo script
+        /// di scambio di un'istanza appena chiusa, o un aggiornamento appena avviato da questa).
+        @MainActor
+        static func removeLeftovers() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+                let me = getpid()
+                let others = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
+                    .contains { $0.processIdentifier != me }
+                guard !others, !MainActor.assumeIsolated({ busy }) else { return }
+                DispatchQueue.global(qos: .utility).async {
+                    let fm = FileManager.default
+                    // Stessa cartella che userebbe un aggiornamento: se ne crea una e si guardano le sorelle
+                    // con lo stesso prefisso ("NSIRD_Conclave_…").
+                    guard let probe = try? fm.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                                  appropriateFor: Bundle.main.bundleURL, create: true) else { return }
+                    try? fm.removeItem(at: probe)
+                    let name = probe.lastPathComponent
+                    guard let cut = name.lastIndex(of: "_"), name.contains(ProcessInfo.processInfo.processName) else { return }
+                    let prefix = String(name[...cut])
+                    let items = (try? fm.contentsOfDirectory(at: probe.deletingLastPathComponent(),
+                                                             includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+                    for item in items where item.lastPathComponent.hasPrefix(prefix) {
+                        let changed = (try? item.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantFuture
+                        guard Date().timeIntervalSince(changed) > 600 else { continue }
+                        // Volume rimasto montato: si smonta prima; se non si riesce, la cartella resta.
+                        guard UpdateWork.unmount(item.appendingPathComponent("mnt")) else { continue }
+                        try? fm.removeItem(at: item)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -566,21 +605,51 @@ final class UpdateWork: @unchecked Sendable {
         }
     }
 
-    /// Annulla, aspetta il processo in corso (al massimo 10 s), smonta e cancella. Sincrono:
-    /// va bene anche in `applicationWillTerminate`, dove poi il processo esce.
+    /// Annulla, smonta e cancella. Sincrono ma breve: va bene anche in `applicationWillTerminate`,
+    /// dove poi il processo esce. `hdiutil attach` non si interrompe: se dopo 1 s è ancora in corso,
+    /// la pulizia passa a uno script staccato che ne aspetta la fine, anche ad app chiusa.
     func discard() {
         cancel()
-        let deadline = Date().addingTimeInterval(10)
+        let deadline = Date().addingTimeInterval(1)
         while lock.withLock({ process?.isRunning == true }), Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+        if let pid = lock.withLock({ process?.isRunning == true ? process?.processIdentifier : nil }), let dir {
+            self.dir = nil
+            Self.cleanLater(dir, after: pid)
+            return
+        }
         cleanUp()
     }
 
-    /// Smonta il volume del DMG se è ancora montato e cancella la cartella.
+    /// Smonta il volume del DMG se è ancora montato e cancella la cartella. Se il volume resta
+    /// montato, ci riprova uno script staccato.
     func cleanUp() {
         guard let dir else { return }
-        Self.unmount(dir.appendingPathComponent("mnt"))
-        try? FileManager.default.removeItem(at: dir)
+        if Self.unmount(dir.appendingPathComponent("mnt")) {
+            try? FileManager.default.removeItem(at: dir)
+        } else {
+            Self.cleanLater(dir, after: 0)
+        }
         self.dir = nil
+    }
+
+    /// Script staccato (sopravvive alla chiusura dell'app): aspetta la fine del processo `pid`
+    /// (0 = nessuno; al massimo 2 minuti), smonta il volume con fino a tre tentativi forzati e
+    /// cancella la cartella, mai con il volume ancora montato.
+    static func cleanLater(_ dir: URL, after pid: Int32) {
+        let script = """
+        PID="$1" DIR="$2"
+        if [ "$PID" -gt 0 ]; then for _ in $(seq 600); do kill -0 "$PID" 2>/dev/null || break; sleep 0.2; done; fi
+        mounted() { [ -d "$DIR/mnt" ] && [ "$(/usr/bin/stat -f %d "$DIR/mnt")" != "$(/usr/bin/stat -f %d "$DIR")" ]; }
+        for _ in 1 2 3; do mounted || break; /usr/bin/hdiutil detach -force "$DIR/mnt" >/dev/null 2>&1 || sleep 1; done
+        mounted || rm -rf "$DIR"
+        """
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["-c", script, "conclave-cleanup", String(pid), dir.path]
+        p.standardInput = FileHandle.nullDevice
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        try? p.run()
     }
 
     /// `detach` può fallire per un attimo (volume ancora in uso, Spotlight): fino a tre tentativi,
