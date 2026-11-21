@@ -50,7 +50,7 @@ for (const [lang, list] of Object.entries(CASES)) {
 }
 
 test("detectLanguage: domande ambigue → null, mai una lingua sbagliata", () => {
-  for (const q of ["iPhone 17 vs Pixel 10", "Patagonia o Northface?", "Tesla Model 3 o Model Y", "BMW X1 vs Audi Q3", "Python e Rust", "PS5 Pro"]) {
+  for (const q of ["¿Cómo invertir en bolsa de valores?", "Cuánto cuesta vivir en Madrid de estudiante", "Comment investir en bourse en 2026 ?", "Prix de l'immobilier en France", "iPhone 17 vs Pixel 10", "Patagonia o Northface?", "Tesla Model 3 o Model Y", "BMW X1 vs Audi Q3", "Python e Rust", "PS5 Pro"]) {
     assert.equal(detectLanguage(q), null, q);
   }
 });

@@ -83,13 +83,16 @@ const STOPWORDS: Record<string, { strong: string[]; weak: string[] }> = {
 export function detectLanguage(...texts: string[]): string | null {
   for (const text of texts) {
     const words = text.toLowerCase().normalize("NFC").match(/\p{L}+/gu) ?? [];
-    const score = Object.entries(STOPWORDS).map(([lang, { strong, weak }]) =>
-      [lang, words.reduce((n, w) => n + (strong.includes(w) ? 2 : weak.includes(w) ? 1 : 0), 0)] as const)
-      .sort((a, b) => b[1] - a[1]);
-    const [top, second] = [score[0][1], score[1][1]];
-    // Esito netto: almeno una parola tipica (o due comuni) e nessun'altra lingua, oppure almeno il triplo
-    // della seconda lingua con un punteggio di almeno 4. Nel dubbio null: vale la regola generale (LANG).
-    if ((top >= 2 && second === 0) || (top >= 4 && top >= 3 * second)) return score[0][0];
+    const score = Object.entries(STOPWORDS).map(([lang, { strong, weak }]) => [
+      lang,
+      words.reduce((n, w) => n + (strong.includes(w) ? 2 : weak.includes(w) ? 1 : 0), 0),
+      words.some((w) => strong.includes(w)),
+    ] as const).sort((a, b) => b[1] - a[1]);
+    const [top, second, typical] = [score[0][1], score[1][1], score[0][2]];
+    // Esito netto: almeno una parola tipica della lingua (le sole parole comuni non bastano: "de", "en" sono
+    // olandesi ma anche spagnole e francesi), e nessun'altra lingua oppure almeno il triplo della seconda con
+    // un punteggio di almeno 4. Nel dubbio null: vale la regola generale (LANG).
+    if (typical && ((top >= 2 && second === 0) || (top >= 4 && top >= 3 * second))) return score[0][0];
   }
   return null;
 }
