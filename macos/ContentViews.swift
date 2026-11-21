@@ -362,14 +362,17 @@ struct ComposerView: View {
                             .toggleStyle(VoiceChipStyle(problem: v.problem, provider: v.provider,
                                                         role: store.selected.contains(v.id) && store.rounds >= 1 ? store.roles[v.id] : nil))
                             .contextMenu {
-                                Picker(L("Ruolo nel round di critica"), selection: Binding(
-                                    get: { store.roles[v.id] ?? "" }, set: { store.setRole($0.isEmpty ? nil : $0, for: v.id) })) {
+                                Picker(L("Ruolo nel round di critica"), selection: roleBinding(v.id)) {
                                     Text(L("Nessun ruolo")).tag("")
                                     Text(L("Avvocato del diavolo")).tag("devil")
                                     Text(L("Verificatore di fatti")).tag("checker")
                                 }
                                 .pickerStyle(.inline)
                             }
+                            // Stesse azioni del clic destro, raggiungibili con VoiceOver e Accesso completo da tastiera.
+                            .accessibilityAction(named: L("Assegna il ruolo: avvocato del diavolo")) { store.setRole("devil", for: v.id) }
+                            .accessibilityAction(named: L("Assegna il ruolo: verificatore di fatti")) { store.setRole("checker", for: v.id) }
+                            .accessibilityAction(named: L("Togli il ruolo")) { store.setRole(nil, for: v.id) }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -399,17 +402,22 @@ struct ComposerView: View {
     private var optionsRow: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 14) {
-                roundsMenu; judgeMenu; webToggle
+                roundsMenu; judgeMenu; rolesMenu; webToggle
                 Spacer(minLength: 8)
                 estimate
             }
             VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 14) { roundsMenu; judgeMenu; webToggle }
+                HStack(spacing: 14) { roundsMenu; judgeMenu; rolesMenu; webToggle }
+                estimate
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 14) { roundsMenu; judgeMenu; rolesMenu }
+                webToggle
                 estimate
             }
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 14) { roundsMenu; judgeMenu }
-                webToggle
+                HStack(spacing: 14) { rolesMenu; webToggle }
                 estimate
             }
         }
@@ -464,6 +472,36 @@ struct ComposerView: View {
         .fixedSize()
         .help(L("Chi emette il verdetto"))
         .accessibilityLabel(L("Giudice"))
+    }
+
+    /// Ruoli del round di critica (gli stessi del clic destro sulle chip): un sottomenu per ogni
+    /// partecipante, con la spunta sul ruolo attuale. Solo con almeno un round e un partecipante.
+    @ViewBuilder private var rolesMenu: some View {
+        let ids = store.orderedSelection
+        if store.rounds >= 1, !ids.isEmpty {
+            let n = store.activeRoles.count
+            Menu {
+                ForEach(store.voices.filter { ids.contains($0.id) }) { v in
+                    Picker(store.displayName(v), selection: roleBinding(v.id)) {
+                        Text(L("Nessun ruolo")).tag("")
+                        Text(L("Avvocato del diavolo")).tag("devil")
+                        Text(L("Verificatore di fatti")).tag("checker")
+                    }
+                    .pickerStyle(.menu)
+                }
+            } label: {
+                Label(n == 0 ? L("Ruoli") : String(format: L("Ruoli: %d"), n), systemImage: "theatermasks")
+            }
+            .tint(Brand.text)  // menu neutri come in Claude, non nell'accento
+            .fixedSize()
+            .help(L("Ruoli nel round di critica: avvocato del diavolo o verificatore di fatti"))
+            .accessibilityLabel(L("Ruoli"))
+            .accessibilityValue(n == 0 ? L("nessun ruolo assegnato") : String(format: L("%d ruoli assegnati"), n))
+        }
+    }
+
+    private func roleBinding(_ id: String) -> Binding<String> {
+        Binding(get: { store.roles[id] ?? "" }, set: { store.setRole($0.isEmpty ? nil : $0, for: id) })
     }
 
     private var webToggle: some View {
