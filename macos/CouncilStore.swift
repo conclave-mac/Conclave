@@ -923,7 +923,7 @@ final class CouncilStore: ObservableObject {
         var d = DebateState(id: id, question: j["question"] as? String ?? "", rounds: opts?["rounds"] as? Int,
                             judgeLabel: nil, status: status,
                             statusText: Self.statusText(status), startedAt: Self.date(j["created_at"]),
-                            finishedAt: Self.date(j["finished_at"]))
+                            finishedAt: Self.date((j["debate_finished_at"] as? String) ?? (j["finished_at"] as? String)))
         d.title = j["title"] as? String
         d.confidence = j["confidence"] as? String
         d.webSearch = opts?["webSearch"] as? Bool ?? false

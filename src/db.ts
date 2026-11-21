@@ -46,7 +46,7 @@ db.exec(`
 // Migrazione per DB esistenti: aggiunge le colonne mancanti.
 {
   const cols = new Set((db.prepare(`PRAGMA table_info(debates)`).all() as { name: string }[]).map((c) => c.name));
-  const add: [string, string][] = [["options", "TEXT"], ["parent_id", "INTEGER"], ["finished_at", "TEXT"], ["title", "TEXT"], ["updated_at", "TEXT"], ["confidence", "TEXT"]];
+  const add: [string, string][] = [["options", "TEXT"], ["parent_id", "INTEGER"], ["finished_at", "TEXT"], ["title", "TEXT"], ["updated_at", "TEXT"], ["confidence", "TEXT"], ["debate_finished_at", "TEXT"]];
   for (const [name, type] of add) if (!cols.has(name)) db.exec(`ALTER TABLE debates ADD COLUMN ${name} ${type}`);
   // Ultima attività (turno nuovo): ordina la cronologia. Le discussioni vecchie partono dalla creazione.
   db.exec(`UPDATE debates SET updated_at = created_at WHERE updated_at IS NULL`);
@@ -143,7 +143,9 @@ export function finishTurn(id: number, status: string): void {
 }
 
 export function finishDebate(id: number, status: string, verdict: string | null, title: string | null = null, confidence: string | null = null): void {
-  db.prepare(`UPDATE debates SET status = ?, verdict = ?, title = ?, confidence = ?, finished_at = datetime('now') WHERE id = ?`).run(status, verdict, title, confidence, id);
+  // `finished_at` è la fine dell'ultimo turno (la sposta anche `finishTurn`); `debate_finished_at` resta
+  // la fine del dibattito originale (turno 0), per la sua durata nell'intestazione.
+  db.prepare(`UPDATE debates SET status = ?, verdict = ?, title = ?, confidence = ?, finished_at = datetime('now'), debate_finished_at = datetime('now') WHERE id = ?`).run(status, verdict, title, confidence, id);
 }
 
 export function listDebates(limit = 50, q?: string) {
@@ -165,6 +167,7 @@ export function getDebate(id: number) {
     | {
         id: number; question: string; title: string | null; models: string; status: string; verdict: string | null; created_at: string;
         options: string | null; parent_id: number | null; finished_at: string | null; updated_at: string | null; confidence: string | null;
+        debate_finished_at: string | null;
       }
     | undefined;
   if (!d) return undefined;
