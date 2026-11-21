@@ -198,16 +198,17 @@ struct CouncilLogo: View {
 
     var body: some View {
         // Stesse coordinate dei livelli di AppIcon.icon (griglia 1024): c esterna inchiostro,
-        // c interna argilla, punto oro; aperture a destra tra 40° e 320°.
+        // c interna argilla, punto oro; aperture a destra tra 40° e 320°. Centro spostato a destra
+        // (540) per compensare otticamente l'apertura della c.
         Canvas { ctx, s in
             let u = s.width / 1024
-            let center = CGPoint(x: 512 * u, y: 512 * u)
-            for (r, color) in [(262.0, Brand.logoInk), (156.0, Brand.logoClay)] {
+            let center = CGPoint(x: 540 * u, y: 512 * u)
+            for (r, color) in [(328.0, Brand.logoInk), (195.0, Brand.logoClay)] {
                 var c = Path()
                 c.addArc(center: center, radius: r * u, startAngle: .degrees(40), endAngle: .degrees(320), clockwise: false)
-                ctx.stroke(c, with: .color(color), style: StrokeStyle(lineWidth: 78 * u, lineCap: .butt))
+                ctx.stroke(c, with: .color(color), style: StrokeStyle(lineWidth: 98 * u, lineCap: .butt))
             }
-            let d = 58 * u
+            let d = 72 * u
             ctx.fill(Path(ellipseIn: CGRect(x: center.x - d, y: center.y - d, width: d * 2, height: d * 2)), with: .color(Brand.logoGold))
         }
         .frame(width: size, height: size)
