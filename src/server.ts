@@ -45,7 +45,7 @@ const DEFAULT_ROUNDS: Rounds = 3;
 const DEFAULT_JUDGE = "claude";
 
 function json(res: ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
+  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
   res.end(JSON.stringify(body));
 }
 
@@ -396,7 +396,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     if (req.method === "GET" && sub === "/events") {
       const r = running.get(id);
       if (!r) return json(res, 404, { error: "dibattito non in corso" });
-      res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+      res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive" });
       for (const e of r.events) res.write(`data: ${JSON.stringify(e)}\n\n`);
       // Messaggi a metà: tutto il testo arrivato finora in un solo pezzo (`reset`), poi i pezzi nuovi.
       for (const e of r.partials.values()) res.write(`data: ${JSON.stringify(e)}\n\n`);
