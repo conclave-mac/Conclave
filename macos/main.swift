@@ -146,15 +146,15 @@ struct SSEEvent: @unchecked Sendable {
 
     /// Legge il flusso fuori dal main actor e consegna ogni evento a `deliver` (sul main actor, in ordine;
     /// `false` = basta così). Ritorna quando il flusso finisce; lancia su annullamento o errore di rete.
-    nonisolated static func read(_ req: URLRequest, id: Int, only: Set<String>? = nil,
+    nonisolated static func read(_ req: URLRequest, id: Int, label: String, only: Set<String>? = nil,
                                  deliver: @escaping @MainActor (SSEEvent) -> Bool) async throws {
         let (bytes, resp) = try await Engine.streamSession.bytes(for: req)
-        Engine.logSSE("\(id) aperto (\((resp as? HTTPURLResponse)?.statusCode ?? 0))")
-        defer { Engine.logSSE("\(id) chiuso") }
+        Engine.logSSE("\(label) \(id) aperto (\((resp as? HTTPURLResponse)?.statusCode ?? 0))")
+        defer { Engine.logSSE("\(label) \(id) chiuso") }
         for try await line in bytes.lines {
             try Task.checkCancellation()
             guard let e = parse(line, only: only) else { continue }
-            Engine.logSSE("\(id) \(e.fields["type"] as? String ?? "?") turno \(e.fields["turn"] as? Int ?? 0)")
+            Engine.logSSE("\(label) \(id) \(e.fields["type"] as? String ?? "?") turno \(e.fields["turn"] as? Int ?? 0)")
             guard await deliver(e) else { return }
         }
     }

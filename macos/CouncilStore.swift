@@ -531,7 +531,7 @@ final class CouncilStore: ObservableObject {
             guard let self, let u = Engine.url(self.port(), "/api/debates/\(id)/events") else { return }
             let req = Engine.request(u, timeout: 3600)
             // Lettura e decodifica fuori dal main actor; gli eventi si applicano sul main, in ordine.
-            try? await SSEEvent.read(req, id: id) { [weak self] e in
+            try? await SSEEvent.read(req, id: id, label: "listen") { [weak self] e in
                 guard let self, !Task.isCancelled else { return false }
                 self.lastEventAt = .now
                 self.apply(e.fields, debateId: id)
@@ -599,7 +599,7 @@ final class CouncilStore: ObservableObject {
             // Il flusso può ripetere gli eventi dei turni già conclusi: conta solo la fine dell'ultimo.
             var lastTurn = turn
             // Si decodificano solo le righe che servono (`turn` e `done`): i pezzi di testo si scartano prima.
-            try? await SSEEvent.read(Engine.request(u, timeout: 3600), id: id, only: ["turn", "done"]) { s in
+            try? await SSEEvent.read(Engine.request(u, timeout: 3600), id: id, label: "watch", only: ["turn", "done"]) { s in
                 let e = s.fields
                 let n = e["turn"] as? Int ?? 0
                 if e["type"] as? String == "turn" { lastTurn = max(lastTurn, n) }
