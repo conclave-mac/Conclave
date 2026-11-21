@@ -36,9 +36,12 @@ export type DebateEvent = (
   | {
       type: "start";
       debateId: number;
-      participants: { id: string; label: string; letter: string; role?: P.Role }[];
+      /** `judge: true` sul partecipante che è anche il giudice scelto (additivo, come in `_meta`). */
+      participants: { id: string; label: string; letter: string; role?: P.Role; judge?: true }[];
       rounds: Rounds;
       judge: string;
+      /** Il giudice scelto (primo della catena) è anche un partecipante (additivo). */
+      judgeParticipated: boolean;
       parentId: number | null;
     }
   | { type: "phase"; phase: Phase; note?: string }
@@ -161,13 +164,24 @@ function failure(ctx: TurnCtx, phase: Phase, modelId: string, error: string, cod
   ctx.emit({ type: "error", phase, modelId, error, error_code: code });
 }
 
-/** Catena di riserve del giudice: prima la scelta, poi Claude, poi gli altri (senza doppioni). */
-export function chainOf(chosen: ModelDef, others: ModelDef[], claudeModel: string): ModelDef[] {
+/** Lo stesso modello è una voce del consiglio: stesso id, o la Claude CLI da entrambe le parti. */
+export function isParticipant(m: ModelDef, participants: ModelDef[]): boolean {
+  return participants.some((p) => p.id === m.id || (p.kind === "claude-cli" && m.kind === "claude-cli"));
+}
+
+/**
+ * Catena di riserve del giudice: prima la scelta, poi Claude, poi gli altri (senza doppioni). Con
+ * `participants` le riserve che non hanno partecipato al dibattito passano davanti (la scelta dell'utente
+ * resta prima): un giudice esterno è preferibile a uno che giudica anche la propria posizione.
+ */
+export function chainOf(chosen: ModelDef, others: ModelDef[], claudeModel: string, participants: ModelDef[] = []): ModelDef[] {
   const chain: ModelDef[] = [];
   for (const m of [chosen, withClaudeModel(config.judge, claudeModel), ...others]) {
     if (!chain.some((j) => j.id === m.id)) chain.push(m);
   }
-  return chain;
+  const [first, ...rest] = chain;
+  const outside = rest.filter((m) => !isParticipant(m, participants));
+  return [first, ...outside, ...rest.filter((m) => !outside.includes(m))];
 }
 
 /**
@@ -253,9 +267,11 @@ export async function runDebate(
   const ds: Debater[] = models.map((def, i) => ({ def, letter: letters[i], alive: true }));
   // Ruolo scelto dall'utente (campo additivo): solo se c'è il round di critica, dove agisce.
   const roleOf = (id: string) => (opts.rounds >= 1 ? opts.roles?.[id] : undefined);
+  const judgeParticipated = isParticipant(chosenJudge, models);
   const participants = ds.map((d) => {
     const role = roleOf(d.def.id);
-    return { id: d.def.id, label: d.def.label, letter: d.letter, ...(role ? { role } : {}) };
+    const judge = judgeParticipated && isParticipant(chosenJudge, [d.def]);
+    return { id: d.def.id, label: d.def.label, letter: d.letter, ...(role ? { role } : {}), ...(judge ? { judge: true as const } : {}) };
   });
   // Salvate per poter rileggere a chi corrisponde ogni lettera nella cronologia.
   save(ctx, { model_id: "_meta", phase: "start", content: JSON.stringify(participants), error: null, ms: null });
@@ -274,7 +290,7 @@ export async function runDebate(
   };
   emit({
     type: "start", debateId, participants,
-    rounds: opts.rounds, judge: chosenJudge.label, parentId: opts.parentContext?.id ?? null,
+    rounds: opts.rounds, judge: chosenJudge.label, judgeParticipated, parentId: opts.parentContext?.id ?? null,
   });
 
   const alive = () => ds.filter((d) => d.alive);
@@ -327,8 +343,10 @@ export async function runDebate(
     if (signal.aborted) throw new Error("cancelled");
   }
 
+  // Sempre in ordine di lettera: nell'ordine dei modelli lo stesso modello sarebbe sempre il primo.
+  const byLetter = (a: P.Labeled, b: P.Labeled) => a.label.localeCompare(b.label);
   const others = (d: Debater, pick: (x: Debater) => string | undefined): P.Labeled[] =>
-    alive().filter((x) => x !== d && pick(x)).map((x) => ({ label: x.letter, text: pick(x)! }));
+    alive().filter((x) => x !== d && pick(x)).map((x) => ({ label: x.letter, text: pick(x)! })).sort(byLetter);
 
   try {
     if (opts.webSearch) {
@@ -361,7 +379,7 @@ export async function runDebate(
 
       if (opts.rounds >= 2) {
         // Round 2: ognuno risponde alle critiche e rivede la propria risposta.
-        const allCritiques = () => alive().filter((x) => x.critique).map((x) => ({ label: x.letter, text: x.critique! }));
+        const allCritiques = () => alive().filter((x) => x.critique).map((x) => ({ label: x.letter, text: x.critique! })).sort(byLetter);
         await phase("revise", (d) => P.revisePrompt(question, d.initial!, allCritiques(), material, d.letter), (d, t) => (d.revised = t),
           (d) => { d.revised = d.initial; });
 
@@ -384,22 +402,23 @@ export async function runDebate(
 
     const finals = alive()
       .map((d) => ({ label: d.letter, text: d.final ?? d.revised ?? d.initial ?? "" }))
-      .filter((f) => f.text);
+      .filter((f) => f.text)
+      .sort(byLetter);
     if (finals.length === 0) throw new CodedError("no_answer", "Nessun modello ha risposto. Controlla le chiavi con: npm run check");
-    const critiques = ds.filter((d) => d.critique).map((d) => ({ label: d.letter, text: d.critique! }));
+    const critiques = ds.filter((d) => d.critique).map((d) => ({ label: d.letter, text: d.critique! })).sort(byLetter);
 
-    // Verdetto: prima il giudice scelto, poi Claude, poi gli altri partecipanti attivi
+    // Verdetto: prima il giudice scelto, poi Claude se non ha partecipato, poi gli altri partecipanti attivi
     // (es. se Claude ha raggiunto il limite Pro).
     emit({ type: "phase", phase: "verdict" });
-    const judges = chainOf(chosenJudge, alive().map((d) => d.def), opts.claudeModel);
-    const initials = ds.filter((d) => d.initial).map((d) => ({ label: d.letter, text: d.initial! }));
+    const judges = chainOf(chosenJudge, alive().map((d) => d.def), opts.claudeModel, models);
+    const initials = ds.filter((d) => d.initial).map((d) => ({ label: d.letter, text: d.initial! })).sort(byLetter);
     const judgeUser = P.judgePrompt(question, finals, critiques, parent, material, initials);
     let verdict: string | undefined;
     let title: string | null = null;
     let confidence: P.Confidence = null;
     await firstInChain(judges, ctx, async (j, budget) => {
       const live = streamer(ctx, "verdict", `judge:${j.id}`, P.draftVerdict);
-      const r = await chat(j, { system: P.SYSTEM_JUDGE, user: judgeUser, images, maxTokens: 8192, signal: budget, onText: live.onText, idleMs: JUDGE_IDLE_MS })
+      const r = await chat(j, { system: P.judgeSystem(isParticipant(j, models)), user: judgeUser, images, maxTokens: 8192, signal: budget, onText: live.onText, idleMs: JUDGE_IDLE_MS })
         .finally(live.close);
       // Riga TITOLO e riga AFFIDABILITÀ in qualunque ordine: si tolgono entrambe dal verdetto.
       const split = P.splitTitle(r.text);
