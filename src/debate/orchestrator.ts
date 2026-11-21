@@ -86,6 +86,13 @@ const DELTA_EVERY_MS = 50;
 const STRAGGLER_GRACE_MS = 15_000;
 const STRAGGLER_FLOOR_MS = 30_000;
 const JUDGE_BUDGET_MS = 150_000;
+/** Tetto della fase del verdetto (tutta la catena) e numero massimo di giudici provati: verdetto entro 4 min
+ *  al peggio, invece di 150 s × (partecipanti + 2). Abbreviabile solo per le prove. */
+const VERDICT_BUDGET_MS = (() => {
+  const t = Number(process.env.COUNCIL_VERDICT_BUDGET_MS);
+  return Number.isInteger(t) && t >= 1000 && t < 240_000 ? t : 240_000;
+})();
+export const JUDGE_CHAIN_MAX = 4;
 /** Tempo massimo della ricerca sul web (oltre: errore non fatale). Abbreviabile solo per le prove. */
 const RESEARCH_BUDGET_MS = (() => {
   const t = Number(process.env.COUNCIL_RESEARCH_TIMEOUT_MS);
@@ -192,10 +199,15 @@ export async function firstInChain(
   chain: ModelDef[], ctx: TurnCtx,
   attempt: (m: ModelDef, budget: AbortSignal) => Promise<void>,
   fail: (m: ModelDef, error: string, code: ErrorCode) => void,
+  totalMs = Infinity,
 ): Promise<boolean> {
+  const until = Date.now() + totalMs;
   for (const m of chain) {
+    // Tempo totale finito: i giudici restanti non si provano (sotto 1 s non c'è spazio per una risposta).
+    const left = until - Date.now();
+    if (left < 1000) break;
     try {
-      await withBudget(JUDGE_BUDGET_MS, ctx.signal, (budget) => attempt(m, budget));
+      await withBudget(Math.min(JUDGE_BUDGET_MS, left), ctx.signal, (budget) => attempt(m, budget));
       return true;
     } catch (e) {
       if (ctx.signal.aborted) throw new Error("cancelled");
@@ -302,26 +314,34 @@ export async function runDebate(
     const started = Date.now();
     const running = alive().map((d) => ({ d, late: new AbortController() }));
     let pending = running.length;
+    let answered = 0;
     let lateTimer: ReturnType<typeof setTimeout> | undefined;
-    const finished = () => {
+    const finished = (ok: boolean) => {
       pending--;
+      if (ok) answered++;
       // Solo nei round (`keep`): chi resta indietro salta il round e rientra nel successivo. Nella risposta
-      // iniziale chi fallisce esce dal dibattito, quindi lì vale solo il tempo massimo.
-      if (!keep || pending !== 1 || running.length < 2) return;
+      // iniziale chi fallisce esce dal dibattito, quindi lì vale solo il tempo massimo. Il timer parte solo se
+      // qualcuno ha davvero risposto: se gli altri sono falliti subito (quota, 429) il lento non ha nessuno
+      // da far aspettare e tagliarlo lascerebbe il round vuoto.
+      if (!keep || pending !== 1 || running.length < 2 || answered === 0) return;
       const wait = Math.max(STRAGGLER_GRACE_MS, STRAGGLER_FLOOR_MS - (Date.now() - started));
-      lateTimer = setTimeout(() => running.forEach((x) => x.late.abort()), wait);
+      lateTimer ??= setTimeout(() => running.forEach((x) => x.late.abort()), wait);
     };
     await Promise.all(
       running.map(async ({ d, late }) => {
         const live = streamer(ctx, name, d.def.id);
+        let ok = false;
         try {
           // Ogni intervento ha un tempo massimo: un modello bloccato non ferma il dibattito.
           const r = await withBudget(PARTICIPANT_BUDGET_MS, AbortSignal.any([signal, late.signal]),
-            (budget) => chat(d.def, { system: P.SYSTEM_DEBATER, user: build(d), images, signal: budget, onText: live.onText, idleMs: STREAM_IDLE_MS }));
+            // Immagini solo nella risposta iniziale (poi i membri ne discutono a parole) e al giudice: per Qwen
+            // costano 2.048 token l'una a ogni chiamata.
+            (budget) => chat(d.def, { system: P.SYSTEM_DEBATER, user: build(d), images: name === "initial" ? images : undefined, signal: budget, onText: live.onText, idleMs: STREAM_IDLE_MS }));
           live.close();
           store(d, r.text);
           save(ctx, { model_id: d.def.id, phase: name, content: r.text, error: null, ms: r.ms, model_used: r.model, replaced: r.replaced });
           emit({ type: "message", phase: name, modelId: d.def.id, text: r.text, ms: r.ms, model: r.model, replaced: r.replaced });
+          ok = true;
         } catch (e) {
           live.close();
           if (signal.aborted) return;
@@ -335,7 +355,7 @@ export async function runDebate(
           if (keep) { keep(d); error = `ha saltato questo round (${raw})`; } else d.alive = false;
           failure(ctx, name, d.def.id, error, code);
         } finally {
-          finished();
+          finished(ok);
         }
       }),
     );
@@ -410,7 +430,7 @@ export async function runDebate(
     // Verdetto: prima il giudice scelto, poi Claude se non ha partecipato, poi gli altri partecipanti attivi
     // (es. se Claude ha raggiunto il limite Pro).
     emit({ type: "phase", phase: "verdict" });
-    const judges = chainOf(chosenJudge, alive().map((d) => d.def), opts.claudeModel, models);
+    const judges = chainOf(chosenJudge, alive().map((d) => d.def), opts.claudeModel, models).slice(0, JUDGE_CHAIN_MAX);
     const initials = ds.filter((d) => d.initial).map((d) => ({ label: d.letter, text: d.initial! })).sort(byLetter);
     const judgeUser = P.judgePrompt(question, finals, critiques, parent, material, initials);
     let verdict: string | undefined;
@@ -433,7 +453,7 @@ export async function runDebate(
       verdict = j.id === chosenJudge.id ? split.verdict : `> Giudice di riserva: ${j.label} (${chosenJudge.label} non disponibile)\n\n${split.verdict}`;
       save(ctx, { model_id: `judge:${j.id}`, phase: "verdict", content: verdict, error: null, ms: r.ms, confidence });
       emit({ type: "message", phase: "verdict", modelId: `judge:${j.id}`, text: verdict, ms: r.ms, confidence });
-    }, (j, error, code) => failure(ctx, "verdict", `judge:${j.id}`, error, code));
+    }, (j, error, code) => failure(ctx, "verdict", `judge:${j.id}`, error, code), VERDICT_BUDGET_MS);
     if (!verdict) throw new CodedError("no_verdict", "Nessun giudice ha prodotto il verdetto.");
 
     finish(ctx, "done", verdict, title, confidence);
