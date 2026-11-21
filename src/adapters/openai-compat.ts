@@ -93,7 +93,7 @@ export function providerSlots(p: Provider): number {
 }
 
 /** Prende un posto per il provider (passato di mano in mano quando si libera); restituisce la funzione che lo rilascia. */
-export async function acquireSlot(p: Provider, signal?: AbortSignal): Promise<() => void> {
+export async function acquireSlot(p: Provider, signal?: AbortSignal, onQueued?: (queued: boolean) => void): Promise<() => void> {
   const limit = providerSlots(p);
   if (limit === Infinity) return () => {};
   const key = `${p.baseUrl}|${p.keyEnv}`;
@@ -102,6 +102,7 @@ export async function acquireSlot(p: Provider, signal?: AbortSignal): Promise<()
   const st = s;
   if (st.busy < limit) st.busy++;
   else {
+    onQueued?.(true);
     await new Promise<void>((resolve, reject) => {
       if (signal?.aborted) return reject(signal.reason ?? new Error("annullato"));
       const go = () => { signal?.removeEventListener("abort", onAbort); resolve(); };
@@ -113,6 +114,7 @@ export async function acquireSlot(p: Provider, signal?: AbortSignal): Promise<()
       st.queue.push(go);
       signal?.addEventListener("abort", onAbort, { once: true });
     });
+    onQueued?.(false);
   }
   let released = false;
   return () => {
@@ -332,7 +334,7 @@ export async function once(p: Provider, model: string, req: ChatRequest, timeout
   const key = process.env[p.keyEnv]?.trim();
   if (!key) throw new CodedError("missing_key", `chiave ${p.keyEnv} mancante: aggiungila in Impostazioni ▸ Chiavi API`);
   // Il turno si aspetta prima di far partire i tempi del tentativo; l'attesa la ferma il segnale del round.
-  const release = await acquireSlot(p, req.signal);
+  const release = await acquireSlot(p, req.signal, req.onQueued);
   try {
     return await attempt(p, model, key, req, timeoutMs);
   } finally {

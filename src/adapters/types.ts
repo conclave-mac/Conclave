@@ -24,6 +24,11 @@ export interface ChatRequest {
    * catena quando c'è una riserva: OpenRouter manda commenti anche mentre il modello è in coda.
    */
   firstTextMs?: number;
+  /**
+   * Coda del provider (troppe richieste in volo sulla stessa chiave): `true` quando il tentativo si mette in
+   * attesa del posto, `false` quando lo ottiene. Chi misura i tempi dell'intervento non conta l'attesa.
+   */
+  onQueued?: (queued: boolean) => void;
 }
 
 export interface ChatResult {

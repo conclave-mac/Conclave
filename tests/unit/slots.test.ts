@@ -42,3 +42,29 @@ test("acquireSlot: l'attesa si interrompe col segnale", async () => {
   // Chi ha rinunciato non resta in coda: il posto è subito libero.
   (await acquireSlot(p))();
 });
+
+test("withBudget: il tempo si ferma mentre l'intervento è in coda", async () => {
+  const { withBudget } = await import("../../src/debate/orchestrator.ts");
+  const wait = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
+  const ok = await withBudget(100, new AbortController().signal, async (budget, hold) => {
+    hold(true); await wait(150); hold(false); // 150 ms in coda: non contano
+    await wait(60);
+    return budget.aborted ? "scaduto" : "in tempo";
+  });
+  assert.equal(ok, "in tempo");
+  await assert.rejects(
+    withBudget(80, new AbortController().signal, (budget) => new Promise((_, ko) => budget.addEventListener("abort", () => ko(budget.reason)))),
+    (e: Error) => /entro 0 s|entro \d+ s/.test(e.message) && (e as { code?: string }).code === "timeout",
+  );
+});
+
+test("acquireSlot: avvisa quando si mette in coda e quando ha il posto", async () => {
+  const p = { name: "x", baseUrl: "https://coda.example/v1", keyEnv: "CODA_KEY", maxConcurrent: 1 } as never;
+  const seen: boolean[] = [];
+  const r1 = await acquireSlot(p, undefined, (q) => seen.push(q));
+  const t = acquireSlot(p, undefined, (q) => seen.push(q));
+  await new Promise((ok) => setTimeout(ok, 10));
+  r1();
+  (await t)();
+  assert.deepEqual(seen, [true, false]);
+});

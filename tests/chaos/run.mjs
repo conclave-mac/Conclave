@@ -2595,6 +2595,49 @@ SCENARIOS.mo5 = async function mo5() {
 };
 DESCR.mo5 = "semaforo per provider con due dibattiti insieme";
 
+// Revisione dell'integrazione: con il provider limitato a 1, la seconda voce aspetta in coda tutta la critica
+// della prima (18 s). L'attesa non conta né per il ritardatario né per il tetto: completa anche lei il round.
+SCENARIOS.mo7 = async function mo7() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const { createServer } = await import("node:http");
+  const srv = createServer(async (req, res) => {
+    let s = "";
+    for await (const c of req) s += c;
+    const reply = (body) => { if (!res.destroyed) { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(body)); } };
+    if (req.method === "GET" && req.url.endsWith("/models")) return reply({ data: ["m1", "m2"].map((id) => ({ id })) });
+    let body = {};
+    try { body = JSON.parse(s || "{}"); } catch { /* corpo non JSON */ }
+    const system = String(body.messages?.find((m) => m.role === "system")?.content ?? "");
+    const user = String(body.messages?.find((m) => m.role === "user")?.content ?? "");
+    const text = user.trim() === "Scrivi solo: OK" ? "OK" : /giudice/i.test(system) ? "TITOLO: Prova\nAFFIDABILITÀ: alta\n\nVerdetto di prova." : "Risposta di prova.";
+    setTimeout(() => reply({ choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: text } }] }),
+      user.includes("Round 1 — Critica") ? 18_000 : 300);
+  });
+  await new Promise((ok) => srv.listen(0, "127.0.0.1", ok));
+  const url = `http://127.0.0.1:${srv.address().port}/v1`;
+  const voice = (id, model) => ({ id, label: id, kind: "openai", provider: "uno", family: id, model, default: true });
+  try {
+    const { call, waitDone } = await moEngine({
+      providers: { uno: { name: "Uno alla volta", baseUrl: url, keyEnv: "CHAOS_KEY", maxConcurrent: 1 } },
+      judge: voice("g", "m1"),
+      models: [voice("v1", "m1"), voice("v2", "m2")],
+    });
+    const r = await call("POST", "/api/debates", { question: QUESTION("mo7"), models: ["v1", "v2"], rounds: 1, judge: "v1", claudeModel: "sonnet" });
+    if (r.status !== 201) return [false, `POST → ${r.status}`, secs()];
+    const st = await waitDone(r.body.id, 120);
+    if (st?.status !== "done") return [false, `stato ${st?.status}`, secs()];
+    const crit = (st.messages ?? []).filter((m) => m.phase === "critique");
+    const bad = crit.filter((m) => m.error || !m.content);
+    if (crit.length !== 2 || bad.length) return [false, `critica: ${crit.length} messaggi, falliti ${bad.map((m) => `${m.model_id} (${m.error})`).join(", ")}`, secs()];
+    return [true, "la voce in coda completa la critica (attesa del posto esclusa dai tempi)", secs()];
+  } finally {
+    srv.closeAllConnections?.();
+    srv.close();
+  }
+};
+DESCR.mo7 = "voce in coda sul provider non tagliata dal ritardatario";
+
 // P2.1b: catena del giudice al massimo di 4 e tetto totale della fase (qui abbreviato a 8 s).
 SCENARIOS.mo6 = async function mo6() {
   const started = Date.now();

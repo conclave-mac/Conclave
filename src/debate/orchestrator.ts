@@ -120,16 +120,28 @@ export const withClaudeModel = (m: ModelDef, claudeModel: string): ModelDef => (
  * tempo scaduto riconosciuto dal segnale (non dal testo: "504 Gateway Timeout" è un errore
  * del provider, non un nostro tempo scaduto) e chiavi mascherate.
  */
-export async function withBudget<T>(ms: number, signal: AbortSignal, run: (budget: AbortSignal) => Promise<T>): Promise<T> {
-  const timeout = AbortSignal.timeout(ms);
+export async function withBudget<T>(ms: number, signal: AbortSignal,
+                                    run: (budget: AbortSignal, hold: (paused: boolean) => void) => Promise<T>): Promise<T> {
+  // Il tempo si ferma mentre l'intervento aspetta il posto nella coda del provider (`hold(true)`): l'attesa
+  // dipende dagli altri, non dal modello.
+  const timeout = new AbortController();
+  let left = ms, since = Date.now(), timer: ReturnType<typeof setTimeout> | undefined;
+  const arm = () => { since = Date.now(); timer = setTimeout(() => timeout.abort(new DOMException("tempo scaduto", "TimeoutError")), left); };
+  const hold = (paused: boolean) => {
+    if (paused && timer) { clearTimeout(timer); timer = undefined; left = Math.max(0, left - (Date.now() - since)); }
+    else if (!paused && !timer && !timeout.signal.aborted) arm();
+  };
+  arm();
   try {
-    return await run(AbortSignal.any([signal, timeout]));
+    return await run(AbortSignal.any([signal, timeout.signal]), hold);
   } catch (e) {
-    const timedOut = timeout.aborted || (e as Error).name === "TimeoutError";
+    const timedOut = timeout.signal.aborted || (e as Error).name === "TimeoutError";
     // Il codice si decide qui, sull'errore originale: il messaggio riscritto non basta sempre a ritrovarlo.
     throw timedOut
-      ? new CodedError("timeout", `nessuna risposta entro ${ms / 1000} s`)
+      ? new CodedError("timeout", `nessuna risposta entro ${Math.round(ms / 1000)} s`)
       : new CodedError(errorCode(e), redact((e as Error).message));
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -312,31 +324,46 @@ export async function runDebate(
                        keep?: (d: Debater) => void) {
     emit({ type: "phase", phase: name });
     const started = Date.now();
-    const running = alive().map((d) => ({ d, late: new AbortController() }));
+    const running = alive().map((d) => ({ d, late: new AbortController(), queued: false, done: false, since: started }));
     let pending = running.length;
     let answered = 0;
     let lateTimer: ReturnType<typeof setTimeout> | undefined;
-    const finished = (ok: boolean) => {
+    // Il timer parte (o riparte dopo la coda) solo per chi sta davvero lavorando: una voce ancora in coda sul
+    // provider non è in ritardo, aspetta gli altri; il suo tempo si conta da quando ha il posto.
+    const armLate = () => {
+      if (!keep || pending !== 1 || running.length < 2 || answered === 0 || lateTimer) return;
+      const last = running.find((x) => !x.done);
+      if (!last || last.queued) return;
+      const wait = Math.max(STRAGGLER_GRACE_MS, STRAGGLER_FLOOR_MS - (Date.now() - last.since));
+      lateTimer = setTimeout(() => running.forEach((x) => x.late.abort()), wait);
+    };
+    const finished = (r: (typeof running)[number], ok: boolean) => {
+      r.done = true;
       pending--;
       if (ok) answered++;
       // Solo nei round (`keep`): chi resta indietro salta il round e rientra nel successivo. Nella risposta
       // iniziale chi fallisce esce dal dibattito, quindi lì vale solo il tempo massimo. Il timer parte solo se
       // qualcuno ha davvero risposto: se gli altri sono falliti subito (quota, 429) il lento non ha nessuno
       // da far aspettare e tagliarlo lascerebbe il round vuoto.
-      if (!keep || pending !== 1 || running.length < 2 || answered === 0) return;
-      const wait = Math.max(STRAGGLER_GRACE_MS, STRAGGLER_FLOOR_MS - (Date.now() - started));
-      lateTimer ??= setTimeout(() => running.forEach((x) => x.late.abort()), wait);
+      armLate();
     };
     await Promise.all(
-      running.map(async ({ d, late }) => {
+      running.map(async (run) => {
+        const { d, late } = run;
         const live = streamer(ctx, name, d.def.id);
         let ok = false;
         try {
           // Ogni intervento ha un tempo massimo: un modello bloccato non ferma il dibattito.
+          // In coda: niente tempo dell'intervento né del ritardatario; con il posto si riparte a contare.
+          const onQueue = (hold: (p: boolean) => void) => (queued: boolean) => {
+            hold(queued);
+            run.queued = queued;
+            if (!queued) { run.since = Date.now(); armLate(); }
+          };
           const r = await withBudget(PARTICIPANT_BUDGET_MS, AbortSignal.any([signal, late.signal]),
             // Immagini solo nella risposta iniziale (poi i membri ne discutono a parole) e al giudice: per Qwen
             // costano 2.048 token l'una a ogni chiamata.
-            (budget) => chat(d.def, { system: P.SYSTEM_DEBATER, user: build(d), images: name === "initial" ? images : undefined, signal: budget, onText: live.onText, idleMs: STREAM_IDLE_MS }));
+            (budget, hold) => chat(d.def, { system: P.SYSTEM_DEBATER, user: build(d), images: name === "initial" ? images : undefined, signal: budget, onText: live.onText, idleMs: STREAM_IDLE_MS, onQueued: onQueue(hold) }));
           live.close();
           store(d, r.text);
           save(ctx, { model_id: d.def.id, phase: name, content: r.text, error: null, ms: r.ms, model_used: r.model, replaced: r.replaced });
@@ -355,7 +382,7 @@ export async function runDebate(
           if (keep) { keep(d); error = `ha saltato questo round (${raw})`; } else d.alive = false;
           failure(ctx, name, d.def.id, error, code);
         } finally {
-          finished(ok);
+          finished(run, ok);
         }
       }),
     );
