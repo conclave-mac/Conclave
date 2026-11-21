@@ -232,6 +232,7 @@ final class CouncilStore: ObservableObject {
     func engineStopped() {
         engineReady = false
         stream?.cancel()
+        stream = nil
         // Il riavvio interrompe anche i dibattiti seguiti in background.
         for w in watchers.values { w.cancel() }
         watchers = [:]
@@ -566,8 +567,10 @@ final class CouncilStore: ObservableObject {
                 guard let self, !Task.isCancelled, let d = self.current, d.id == id, d.busy else { return }
                 guard Date.now.timeIntervalSince(self.lastEventAt) > Self.staleAfter else { continue }
                 self.lastEventAt = .now
+                // Un'apertura partita nel frattempo (clic su un'altra riga) vince: mai scavalcarla.
+                let seq = self.openSeq
                 guard let data = try? await self.request("GET", "/api/debates/\(id)") else { continue }
-                guard !Task.isCancelled, self.current?.id == id, self.current?.busy == true else { return }
+                guard !Task.isCancelled, self.openSeq == seq, self.current?.id == id, self.current?.busy == true else { continue }
                 let live = self.json(data)["live"] as? Bool == true
                 if !live {
                     Engine.logSSE("\(id) fermo da \(Int(Self.staleAfter)) s ma concluso nel motore: si rilegge")
@@ -587,6 +590,7 @@ final class CouncilStore: ObservableObject {
     /// così cronologia, notifica e badge arrivano anche guardando altro.
     private func leaveCurrent() {
         stream?.cancel()
+        stream = nil
         resetStreams()
         if let d = current, d.busy { watch(d.id, title: d.displayTitle, turn: d.turns.last(where: \.isRunning)?.turn ?? 0) }
     }
@@ -1103,6 +1107,7 @@ final class CouncilStore: ObservableObject {
         guard current?.id == id else { return }
         // Niente da seguire in background: la discussione non esiste più.
         stream?.cancel()
+        stream = nil
         current = nil
         newDiscussion()
     }
