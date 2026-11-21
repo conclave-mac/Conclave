@@ -1,16 +1,12 @@
 // Identità visiva di Conclave: colori del marchio, logo nativo e sfondo dell'app.
-// Il logo riprende l'icona (AppIcon.icon): tre membri del consiglio uniti da linee.
+// Il logo riprende l'icona (AppIcon.icon): una c dentro una c, con il verdetto al centro
+// (metodo di Paula Scher: la lettera come immagine).
 // Tutte le viste usano questi token, mai colori scritti a mano.
 
 import AppKit
 import SwiftUI
 
 enum Brand {
-    // Colori dei tre membri del logo.
-    static let blue = Color(red: 0x6b / 255, green: 0x8c / 255, blue: 0xff / 255)
-    static let green = Color(red: 0x47 / 255, green: 0xcd / 255, blue: 0x89 / 255)
-    static let amber = Color(red: 0xf5 / 255, green: 0xb5 / 255, blue: 0x44 / 255)
-
     /// Colore d'accento dell'app (pulsanti principali, selezioni del marchio): azzurro
     /// polvere, tenue ma leggibile su chiaro e su scuro.
     static let accent = Color(nsColor: NSColor(name: "BrandAccent") { a in
@@ -121,6 +117,10 @@ enum Brand {
         return Color(nsColor: NSColor(name: name) { a in a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? c(dark) : c(light) })
     }
     static let clay = warm("BrandClay", 0xC96442, 0xE08A6A)
+    /// Colori del logo, uguali all'icona: inchiostro (chiaro sullo scuro), argilla e oro fissi.
+    static let logoInk = warm("BrandLogoInk", 0x1F1E1C, 0xEDE8DF)
+    static let logoClay = warm("BrandLogoClay", 0xC96442, 0xC96442)
+    static let logoGold = warm("BrandLogoGold", 0xE3B062, 0xE3B062)
     static let amberWarm = warm("BrandAmberWarm", 0xB97A1E, 0xE3B062)
     static let olive = warm("BrandOlive", 0x6B7F3A, 0xA9BA70)
     static let rose = warm("BrandRose", 0xB5524A, 0xDB8A82)
@@ -197,18 +197,18 @@ struct CouncilLogo: View {
     var size: CGFloat = 40
 
     var body: some View {
+        // Stesse coordinate dei livelli di AppIcon.icon (griglia 1024): c esterna inchiostro,
+        // c interna argilla, punto oro; aperture a destra tra 40° e 320°.
         Canvas { ctx, s in
             let u = s.width / 1024
-            func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x * u, y: y * u) }
-            var lines = Path()
-            lines.move(to: p(512, 390)); lines.addLine(to: p(350, 610))
-            lines.move(to: p(512, 390)); lines.addLine(to: p(674, 610))
-            lines.move(to: p(380, 660)); lines.addLine(to: p(644, 660))
-            ctx.stroke(lines, with: .color(.secondary.opacity(0.7)), style: StrokeStyle(lineWidth: 26 * u, lineCap: .round))
-            for (x, y, c) in [(512.0, 340.0, Brand.blue), (330, 660, Brand.green), (694, 660, Brand.amber)] {
-                let r = 104 * u
-                ctx.fill(Path(ellipseIn: CGRect(x: x * u - r, y: y * u - r, width: r * 2, height: r * 2)), with: .color(c))
+            let center = CGPoint(x: 512 * u, y: 512 * u)
+            for (r, color) in [(262.0, Brand.logoInk), (156.0, Brand.logoClay)] {
+                var c = Path()
+                c.addArc(center: center, radius: r * u, startAngle: .degrees(40), endAngle: .degrees(320), clockwise: false)
+                ctx.stroke(c, with: .color(color), style: StrokeStyle(lineWidth: 78 * u, lineCap: .butt))
             }
+            let d = 58 * u
+            ctx.fill(Path(ellipseIn: CGRect(x: center.x - d, y: center.y - d, width: d * 2, height: d * 2)), with: .color(Brand.logoGold))
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
