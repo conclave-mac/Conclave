@@ -1,11 +1,15 @@
-# Conclave
+<p align="center">
+  <img src="docs/screenshots/icon.png" alt="Conclave app icon" width="128" height="128">
+</p>
+
+<h1 align="center">Conclave</h1>
 
 **An LLM council for your Mac.** Claude, Gemini, GPT-OSS, Qwen and other models debate your
 question in rounds — independent answers, anonymous cross-critique, revision, final position —
 and a judge writes the verdict. A native SwiftUI app, **free with free API keys** (Gemini, Groq,
 OpenRouter) or with your Claude subscription.
 
-**[⬇ Download the latest DMG](https://github.com/peppolone/Conclave/releases/latest)** · macOS 26+ · Apple Silicon and Intel
+**[⬇ Download the latest DMG](https://github.com/conclave-mac/Conclave/releases/latest)** · macOS 26+ · Apple Silicon and Intel
 
 Everything runs on your Mac: the app bundles a small local engine and talks only to the model
 providers you configure. No account, no server, no telemetry.
@@ -14,14 +18,14 @@ providers you configure. No account, no server, no telemetry.
 ![macOS 26+](https://img.shields.io/badge/macOS-26%2B-black)
 ![Apple Silicon and Intel](https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-native-black)
 ![Status: beta](https://img.shields.io/badge/status-beta%202-orange)
-[![Release](https://github.com/peppolone/Conclave/actions/workflows/release.yml/badge.svg)](https://github.com/peppolone/Conclave/actions/workflows/release.yml)
+[![Release](https://github.com/conclave-mac/Conclave/actions/workflows/release.yml/badge.svg)](https://github.com/conclave-mac/Conclave/actions/workflows/release.yml)
 
 ![Composer](docs/screenshots/composer.png)
 ![A finished debate with the verdict](docs/screenshots/debate.png)
 
 > [!NOTE]
 > **Beta — work in progress.** Expect rough edges; feedback is welcome in
-> [Issues](https://github.com/peppolone/Conclave/issues).
+> [Issues](https://github.com/conclave-mac/Conclave/issues).
 
 ## Why a council?
 
@@ -65,7 +69,7 @@ Node.js is bundled with the app; you do not need to install it.
 ## Installation
 
 1. Download the DMG for your Mac and `SHA256SUMS.txt` from
-   [Releases](https://github.com/peppolone/Conclave/releases):
+   [Releases](https://github.com/conclave-mac/Conclave/releases):
    - `Conclave-<version>-apple-silicon.dmg` for M1 and later;
    - `Conclave-<version>-intel.dmg` for Intel Macs.
 
@@ -165,7 +169,7 @@ Requirements: macOS 26, Xcode (the build uses `swiftc` and `actool` to compile t
 catalog), Node.js 24.
 
 ```bash
-git clone https://github.com/peppolone/Conclave.git
+git clone https://github.com/conclave-mac/Conclave.git
 cd conclave
 npm ci
 npm run typecheck     # TypeScript type check, must report 0 errors
