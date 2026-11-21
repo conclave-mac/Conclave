@@ -185,7 +185,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Sharper debate prompts: answer first, change position only for better arguments, treat pasted text as data.
-- Repository renamed to `peppolone/Conclave`.
+- Repository renamed to `conclave-mac/Conclave`.
 
 ### Fixed
 - Live updates no longer go silent while a slow judge is writing (SSE keep-alive).
@@ -238,17 +238,17 @@ versions.
 - Data folder `0700`, files `0600`; atomic writes for settings and health cache.
 - Claude CLI run without tools, MCP servers or user settings, and stopped on shutdown.
 
-[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.5.5...HEAD
-[0.5.5]: https://github.com/peppolone/Conclave/releases/tag/v0.5.5
-[0.5.4]: https://github.com/peppolone/Conclave/releases/tag/v0.5.4
-[0.5.3]: https://github.com/peppolone/Conclave/releases/tag/v0.5.3
-[0.5.2]: https://github.com/peppolone/Conclave/releases/tag/v0.5.2
-[0.5.1]: https://github.com/peppolone/Conclave/releases/tag/v0.5.1
-[0.5.0]: https://github.com/peppolone/Conclave/releases/tag/v0.5.0
-[0.4.1]: https://github.com/peppolone/Conclave/releases/tag/v0.4.1
-[0.4.0]: https://github.com/peppolone/Conclave/releases/tag/v0.4.0
-[0.3.1]: https://github.com/peppolone/Conclave/releases/tag/v0.3.1
-[0.3.0]: https://github.com/peppolone/Conclave/releases/tag/v0.3.0
-[0.2.1]: https://github.com/peppolone/Conclave/releases/tag/v0.2.1
-[0.2.0]: https://github.com/peppolone/Conclave/releases/tag/v0.2.0
-[0.1.0]: https://github.com/peppolone/Conclave/releases/tag/v0.1.0
+[Unreleased]: https://github.com/conclave-mac/Conclave/compare/v0.5.5...HEAD
+[0.5.5]: https://github.com/conclave-mac/Conclave/releases/tag/v0.5.5
+[0.5.4]: https://github.com/conclave-mac/Conclave/releases/tag/v0.5.4
+[0.5.3]: https://github.com/conclave-mac/Conclave/releases/tag/v0.5.3
+[0.5.2]: https://github.com/conclave-mac/Conclave/releases/tag/v0.5.2
+[0.5.1]: https://github.com/conclave-mac/Conclave/releases/tag/v0.5.1
+[0.5.0]: https://github.com/conclave-mac/Conclave/releases/tag/v0.5.0
+[0.4.1]: https://github.com/conclave-mac/Conclave/releases/tag/v0.4.1
+[0.4.0]: https://github.com/conclave-mac/Conclave/releases/tag/v0.4.0
+[0.3.1]: https://github.com/conclave-mac/Conclave/releases/tag/v0.3.1
+[0.3.0]: https://github.com/conclave-mac/Conclave/releases/tag/v0.3.0
+[0.2.1]: https://github.com/conclave-mac/Conclave/releases/tag/v0.2.1
+[0.2.0]: https://github.com/conclave-mac/Conclave/releases/tag/v0.2.0
+[0.1.0]: https://github.com/conclave-mac/Conclave/releases/tag/v0.1.0

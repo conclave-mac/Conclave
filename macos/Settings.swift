@@ -956,7 +956,7 @@ struct SettingsView: View {
 
 // MARK: - Pagina Informazioni
 
-let projectURL = URL(string: "https://github.com/peppolone/Conclave")!
+let projectURL = URL(string: "https://github.com/conclave-mac/Conclave")!
 
 struct AboutPage: View {
     private var version: String {

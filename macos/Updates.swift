@@ -18,8 +18,8 @@ enum UpdateCheck {
     private static let skippedKey = "UpdateSkippedVersion"
     /// Versione per cui l'app si è chiusa per installare: al riavvio dice se la sostituzione non è riuscita.
     private static let installingKey = "UpdateInstalling"
-    private static let api = URL(string: "https://api.github.com/repos/peppolone/Conclave/releases/latest")!
-    static let releasesPage = URL(string: "https://github.com/peppolone/Conclave/releases")!
+    private static let api = URL(string: "https://api.github.com/repos/conclave-mac/Conclave/releases/latest")!
+    static let releasesPage = URL(string: "https://github.com/conclave-mac/Conclave/releases")!
 
     struct Release: Equatable {
         let version: String

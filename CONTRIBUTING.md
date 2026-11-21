@@ -8,7 +8,7 @@ changes, please open an issue first so we can agree on the approach.
 Requirements: macOS 26, Xcode (for `swiftc` and `actool`), Node.js 24.
 
 ```bash
-git clone https://github.com/peppolone/Conclave.git
+git clone https://github.com/conclave-mac/Conclave.git
 cd conclave
 npm ci
 ```
