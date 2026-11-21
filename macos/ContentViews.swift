@@ -490,13 +490,14 @@ struct ComposerView: View {
                     .pickerStyle(.menu)
                 }
             } label: {
-                Label(n == 0 ? L("Ruoli") : String(format: L("Ruoli: %d"), n), systemImage: "theatermasks")
+                // Etichetta fissa: un conteggio cambierebbe la larghezza e la disposizione di `ViewThatFits`.
+                Label(L("Ruoli"), systemImage: "theatermasks")
             }
             .tint(Brand.text)  // menu neutri come in Claude, non nell'accento
             .fixedSize()
             .help(L("Ruoli nel round di critica: avvocato del diavolo o verificatore di fatti"))
             .accessibilityLabel(L("Ruoli"))
-            .accessibilityValue(n == 0 ? L("nessun ruolo assegnato") : String(format: L("%d ruoli assegnati"), n))
+            .accessibilityValue(n == 0 ? L("nessun ruolo assegnato") : n == 1 ? L("1 ruolo assegnato") : String(format: L("%d ruoli assegnati"), n))
         }
     }
 
