@@ -2515,12 +2515,12 @@ DESCR.mo3 = "giudice anche partecipante, ordine per lettera";
 // P1.4: l'altro fallisce subito (quota) nel round: il lento non è un ritardatario e completa il round.
 SCENARIOS.mo4 = async function mo4() {
   const max = 150;
-  const r = await debate("mo4", ["lag", "quota-late"], 1, "ok-b", max * 1000);
+  const r = await debate("mo4", ["lag", "roundquota"], 1, "ok-b", max * 1000);
   const bad = expectDone(r, max);
   if (bad) return [false, `${bad} dopo ${r.secs.toFixed(0)} s`, r.secs];
   const crit = msgs(r.state, "lag", "critique")[0];
   if (!crit?.content || crit.error) return [false, `critica di lag: ${crit?.error ?? "assente"}`, r.secs];
-  if (!errMsgs(r.state, "quota-late").some((m) => m.phase === "critique")) return [false, "quota-late non è fallito nel round", r.secs];
+  if (!errMsgs(r.state, "roundquota").some((m) => m.phase === "critique")) return [false, "roundquota non è fallito nel round", r.secs];
   return [true, `done in ${r.secs.toFixed(0)} s, lag completa la critica dopo il fallimento immediato dell'altro`, r.secs];
 };
 DESCR.mo4 = "ritardatario: niente taglio se gli altri hanno fallito";

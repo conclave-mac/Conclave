@@ -13,7 +13,7 @@ export const MODELS = [
   "ok-a", "ok-b", "hang", "slow", "ratelimit", "quota", "crash500",
   "empty", "huge", "html", "flaky-critique", "length", "gone", "otpm", "leaky", "titleonly", "tpm", "lag",
   "stream-stall", "stream-cut", "stream-error", "drip",
-  "quota-late",
+  "roundquota",
 ];
 
 /** Finti modelli Gemini (non in MODELS: li usa solo lo scenario "bc"). "gemini-noimg" rifiuta con 400 le richieste con immagini. */
@@ -331,7 +331,7 @@ async function handle(req, res) {
       if (!res.streaming) return send(res, 200, completion(model, okText(model, user)));
       // Pezzi distanziati (~4 s in tutto): arrivano al motore e diventano `delta` prima della caduta anche sotto carico.
       return sendStream(res, completion(model, okText(model, user)), { overMs: 4000, stopAfter: 4, stop: model.slice(7) });
-    case "quota-late":
+    case "roundquota":
       // Risponde nella fase iniziale, poi quota esaurita subito (429 duro) nei round (scenario mo4).
       if (phaseOf(system, user) === "initial") return send(res, 200, completion(model, okText(model, user)));
       return send(res, 429, err("You exceeded your current quota, please check your plan and billing details.", "insufficient_quota"));
