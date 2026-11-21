@@ -22,18 +22,21 @@ enum Brand {
             ? NSColor(srgbRed: 0x8c / 255, green: 0xd4 / 255, blue: 0xae / 255, alpha: 1)
             : NSColor(srgbRed: 0x3f / 255, green: 0x9a / 255, blue: 0x70 / 255, alpha: 1)
     })
-    /// Avviso, attesa, a pagamento.
-    static let warning = Color(nsColor: NSColor(name: "BrandWarning") { a in
-        a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 0xf0 / 255, green: 0xc9 / 255, blue: 0x80 / 255, alpha: 1)
-            : NSColor(srgbRed: 0xc0 / 255, green: 0x86 / 255, blue: 0x2c / 255, alpha: 1)
-    })
-    /// Errore, non riuscito.
-    static let danger = Color(nsColor: NSColor(name: "BrandDanger") { a in
-        a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 0xf0 / 255, green: 0xa0 / 255, blue: 0x9c / 255, alpha: 1)
-            : NSColor(srgbRed: 0xc4 / 255, green: 0x5c / 255, blue: 0x58 / 255, alpha: 1)
-    })
+    /// Avviso, attesa, a pagamento. Usato anche come colore del testo (avvisi, contatore della
+    /// domanda): ≥ 4,5:1 su tutti i fondi, ≥ 7:1 con "Aumenta contrasto" (tests/unit/contrast.test.mjs).
+    static let warning = status("BrandWarning", light: 0x8A5A12, lightMore: 0x6B4508, dark: 0xF0C980, darkMore: 0xF7DCA8)
+    /// Errore, non riuscito. Stesse soglie di `warning`.
+    static let danger = status("BrandDanger", light: 0xA23F3B, lightMore: 0x802E2B, dark: 0xF0A09C, darkMore: 0xF7C2BF)
+
+    /// Colore di stato leggibile come testo: un tono per chiaro e scuro, più uno per "Aumenta contrasto".
+    /// Formato letto dal test del contrasto: non cambiarlo senza aggiornare il test.
+    private static func status(_ name: String, light: UInt32, lightMore: UInt32, dark: UInt32, darkMore: UInt32) -> Color {
+        Color(nsColor: NSColor(name: name) { a in
+            let more = DisplayOptions.increaseContrast
+            let v = a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? (more ? darkMore : dark) : (more ? lightMore : light)
+            return NSColor(srgbRed: CGFloat(v >> 16 & 0xff) / 255, green: CGFloat(v >> 8 & 0xff) / 255, blue: CGFloat(v & 0xff) / 255, alpha: 1)
+        })
+    }
 
     /// Fondo del contenuto: carta calda in chiaro, grafite calda in scuro.
     static let canvas = Color(nsColor: NSColor(name: "BrandCanvas") { a in

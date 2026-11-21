@@ -570,6 +570,7 @@ private struct VoiceChipStyle: ToggleStyle {
             HStack(spacing: 4) {
                 if on {
                     Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Brand.accent)
                 }
                 configuration.label
                     .lineLimit(1)
@@ -584,11 +585,13 @@ private struct VoiceChipStyle: ToggleStyle {
                 }
             }
             .font(Brand.Fonts.body)
-            .foregroundStyle(on ? AnyShapeStyle(Brand.accent) : AnyShapeStyle(Brand.secondaryText))
+            // Testo selezionato in `Brand.text` (l'accento come testo restava a 3,7:1): lo stato lo
+            // dicono spunta e bordo d'accento, non il solo colore.
+            .foregroundStyle(on ? AnyShapeStyle(Brand.text) : AnyShapeStyle(Brand.secondaryText))
             .padding(.horizontal, 10)
             .frame(height: 26)
-            .background(Capsule().fill(on ? Brand.accent.opacity(0.14) : Color.primary.opacity(0.04)))
-            .overlay(Capsule().strokeBorder(on ? Brand.accent.opacity(0.45) : Brand.hairline, lineWidth: 1))
+            .background(Capsule().fill(on ? Brand.accent.opacity(0.10) : Color.primary.opacity(0.04)))
+            .overlay(Capsule().strokeBorder(on ? Brand.accent : Brand.hairline, lineWidth: 1))
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
