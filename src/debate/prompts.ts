@@ -46,21 +46,50 @@ export const SYSTEM_JUDGE = judgeSystem(false);
 // Lingua dichiarata al giudice. "Traduci i titoli nella lingua della domanda" bastava a far scrivere a Gemini
 // l'intero verdetto in inglese (domanda e dibattito in italiano, 18 nov 2026): il motore riconosce la lingua
 // dalle parole comuni e la nomina. Senza un esito netto resta la regola generale (LANG).
-const STOPWORDS: Record<string, string[]> = {
-  italiano: ["il", "lo", "gli", "di", "che", "per", "non", "è", "del", "della", "dei", "sono", "come", "più", "anche", "mi", "quale", "quali", "meglio", "miglior", "migliore", "cosa", "perché", "tra", "fare", "tipo", "ho", "sul", "sui", "nel", "alla", "al", "da", "ma", "o", "e"],
-  inglese: ["the", "and", "is", "of", "to", "for", "what", "which", "best", "with", "should", "how", "are", "or", "my", "i", "it", "does", "can", "better", "than", "on", "this"],
-  spagnolo: ["el", "los", "las", "que", "para", "es", "cuál", "mejor", "por", "pero", "como", "qué", "más", "del", "y", "o"],
-  francese: ["le", "les", "des", "est", "pour", "une", "avec", "quel", "quelle", "meilleur", "du", "et", "ou", "pas", "je", "dans"],
-  tedesco: ["der", "die", "das", "und", "ist", "für", "mit", "welche", "beste", "nicht", "ein", "eine", "oder", "ich", "wie"],
+// Due elenchi per lingua: parole che esistono solo in quella lingua (valgono 2) e parole comuni ma condivise
+// con qualche altra lingua (valgono 1). Le parole ambigue tra più lingue vicine ("o", "e", "i", "del", "que",
+// "de", "en"…) non ci sono: facevano prendere il portoghese per italiano o spagnolo e l'olandese per inglese.
+const STOPWORDS: Record<string, { strong: string[]; weak: string[] }> = {
+  italiano: {
+    strong: ["meglio", "migliore", "miglior", "perché", "più", "è", "della", "delle", "degli", "sono", "anche", "quale", "quali", "conviene", "gli", "nel", "sul", "sui", "alla", "ho", "dove", "cosa", "fare"],
+    weak: ["di", "che", "per", "non", "tra", "come", "il", "lo", "al", "ma", "mi", "tipo"],
+  },
+  inglese: {
+    strong: ["the", "and", "what", "which", "should", "does", "than", "better", "best", "how", "with", "this", "are", "my"],
+    weak: ["is", "of", "to", "for", "it", "can", "on", "or", "i"],
+  },
+  spagnolo: {
+    strong: ["el", "los", "las", "cuál", "mejor", "qué", "más", "pero", "está", "puedo", "hay", "muy"],
+    weak: ["es", "para", "por", "como", "que", "del", "una", "con", "lo", "y"],
+  },
+  portoghese: {
+    strong: ["não", "é", "melhor", "você", "uma", "os", "dos", "das", "em", "com", "isso", "são", "também", "muito", "eu"],
+    weak: ["para", "por", "como", "que", "mais", "do", "da", "no", "na", "qual", "ou"],
+  },
+  francese: {
+    strong: ["les", "des", "est", "pour", "une", "avec", "quel", "quelle", "meilleur", "meilleure", "du", "et", "pas", "je", "dans", "sont", "vous"],
+    weak: ["le", "la", "ou", "mais", "il", "ce"],
+  },
+  tedesco: {
+    strong: ["der", "die", "das", "und", "ist", "für", "mit", "welche", "welcher", "nicht", "ein", "eine", "oder", "ich", "auf", "sich", "zu", "kann"],
+    weak: ["beste", "wie", "es", "im"],
+  },
+  olandese: {
+    strong: ["het", "een", "van", "niet", "wat", "welke", "voor", "met", "zijn", "ik", "dat", "hoe", "ook", "maar", "naar", "bij", "beter", "kan"],
+    weak: ["de", "en", "is", "beste", "wie", "te"],
+  },
 };
 
 export function detectLanguage(...texts: string[]): string | null {
   for (const text of texts) {
     const words = text.toLowerCase().normalize("NFC").match(/\p{L}+/gu) ?? [];
-    const score = Object.entries(STOPWORDS).map(([lang, list]) => [lang, words.filter((w) => list.includes(w)).length] as const)
+    const score = Object.entries(STOPWORDS).map(([lang, { strong, weak }]) =>
+      [lang, words.reduce((n, w) => n + (strong.includes(w) ? 2 : weak.includes(w) ? 1 : 0), 0)] as const)
       .sort((a, b) => b[1] - a[1]);
-    // Esito netto: almeno 2 parole comuni e il doppio della seconda lingua.
-    if (score[0][1] >= 2 && score[0][1] >= 2 * score[1][1]) return score[0][0];
+    const [top, second] = [score[0][1], score[1][1]];
+    // Esito netto: almeno una parola tipica (o due comuni) e nessun'altra lingua, oppure almeno il triplo
+    // della seconda lingua con un punteggio di almeno 4. Nel dubbio null: vale la regola generale (LANG).
+    if ((top >= 2 && second === 0) || (top >= 4 && top >= 3 * second)) return score[0][0];
   }
   return null;
 }
