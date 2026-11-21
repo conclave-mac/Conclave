@@ -610,10 +610,10 @@
 "Sta scrivendo…" = "Writing…";
 "sta scrivendo" = "writing";
 "Ruoli" = "Roles";
-"Ruoli: %d" = "Roles: %d";
 "Ruoli nel round di critica: avvocato del diavolo o verificatore di fatti" = "Roles in the critique round: devil's advocate or fact checker";
 "nessun ruolo assegnato" = "no roles assigned";
 "%d ruoli assegnati" = "%d roles assigned";
 "Assegna il ruolo: avvocato del diavolo" = "Assign role: devil's advocate";
 "Assegna il ruolo: verificatore di fatti" = "Assign role: fact checker";
 "Togli il ruolo" = "Remove role";
+"1 ruolo assegnato" = "1 role assigned";
