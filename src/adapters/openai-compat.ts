@@ -62,7 +62,8 @@ export function withSources(text: string, tools: unknown): string {
 
 /** "Please try again in 22.5s" / "1m2.5s" / "750ms" → secondi (0 se assente). */
 export function parseTryAgain(msg: string): number {
-  const m = msg.match(/try again in\s+((?:\d+h)?(?:\d+m(?!s))?(?:[\d.]+s)?|[\d.]+ms)/i);
+  // Prima i millisecondi: l'altra forma accetta anche la stringa vuota e "750ms" dava 0.
+  const m = msg.match(/try again in\s+([\d.]+ms|(?:\d+h)?(?:\d+m(?!s))?(?:[\d.]+s)?)/i);
   if (!m || !m[1]) return 0;
   const t = m[1];
   if (/^[\d.]+ms$/.test(t)) return Number(t.slice(0, -2)) / 1000;

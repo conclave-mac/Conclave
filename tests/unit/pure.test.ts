@@ -93,6 +93,7 @@ test("parseChanges: assente → ?", () => {
 test("parseTryAgain: secondi, minuti, millisecondi", () => {
   assert.equal(parseTryAgain("Please try again in 22.5s."), 22.5);
   assert.equal(parseTryAgain("try again in 1m2.5s"), 62.5);
+  assert.equal(parseTryAgain("try again in 750ms"), 0.75);
   assert.equal(parseTryAgain("try again in 1h2m3s"), 3723);
 });
 test("parseTryAgain: assente → 0", () => {
