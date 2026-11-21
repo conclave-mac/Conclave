@@ -441,7 +441,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         // intanto le legge in background, quindi qui di solito arrivano dalla cache).
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            if !self.settings.hasAnyKey { self.settings.show() }
+            if !self.settings.hasAnyKey { self.settings.show(tab: .keys) }
         }
 
         UpdateCheck.isBusy = { [weak self] in self?.store.hasRunning ?? false }
