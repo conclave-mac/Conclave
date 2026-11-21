@@ -13,6 +13,7 @@ export const MODELS = [
   "ok-a", "ok-b", "hang", "slow", "ratelimit", "quota", "crash500",
   "empty", "huge", "html", "flaky-critique", "length", "gone", "otpm", "leaky", "titleonly", "tpm", "lag",
   "stream-stall", "stream-cut", "stream-error", "drip",
+  "quota-late",
 ];
 
 /** Finti modelli Gemini (non in MODELS: li usa solo lo scenario "bc"). "gemini-noimg" rifiuta con 400 le richieste con immagini. */
@@ -35,7 +36,7 @@ const probes = Object.create(null);  // prove del controllo d'avvio per modello
 const auths = Object.create(null);   // intestazione Authorization ricevuta per modello ("whoami")
 const seenPhase = new Set();         // "ratelimit": prima chiamata per fase già vista
 let hanging = 0;                     // connessioni "hang" ancora aperte
-/** Prompt ricevuti per scenario (solo scenari "web…", "att…" e "conv…"): /prompts/<scenario>. */
+/** Prompt ricevuti per scenario (solo scenari "web…", "att…", "conv…" e "mo…" del gruppo motore): /prompts/<scenario>. */
 const prompts = Object.create(null);
 
 /** Fase del dibattito ricavata dal prompt. */
@@ -211,7 +212,7 @@ async function handle(req, res) {
   calls[model] = (calls[model] ?? 0) + 1;
   const searching = Array.isArray(body.tools) && body.tools.some((t) => t?.type === "browser_search");
   const scenario = scenarioOf(user);
-  if (/^(web|att|conv)/.test(scenario)) {
+  if (/^(web|att|conv|mo\d)/.test(scenario)) {
     (prompts[scenario] ??= []).push({
       model, phase: searching ? "research" : phaseOf(system, user), system, user,
       images: images.length, imageUrls: images.map((u) => u.slice(0, 30)), tools: body.tools ?? null, reasoning_effort: body.reasoning_effort ?? null, max_tokens: body.max_tokens ?? null,
@@ -330,6 +331,10 @@ async function handle(req, res) {
       if (!res.streaming) return send(res, 200, completion(model, okText(model, user)));
       // Pezzi distanziati (~4 s in tutto): arrivano al motore e diventano `delta` prima della caduta anche sotto carico.
       return sendStream(res, completion(model, okText(model, user)), { overMs: 4000, stopAfter: 4, stop: model.slice(7) });
+    case "quota-late":
+      // Risponde nella fase iniziale, poi quota esaurita subito (429 duro) nei round (scenario mo4).
+      if (phaseOf(system, user) === "initial") return send(res, 200, completion(model, okText(model, user)));
+      return send(res, 429, err("You exceeded your current quota, please check your plan and billing details.", "insufficient_quota"));
     default:
       return send(res, 404, err(`model not found: ${model}`, "invalid_request_error"));
   }

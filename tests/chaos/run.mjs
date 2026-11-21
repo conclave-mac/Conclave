@@ -2442,6 +2442,189 @@ SCENARIOS.bm = async function bm() {
   return [wrong.length === 0, wrong.slice(0, 4).join("; ") || `${table.length} testi classificati, codici su eventi e righe, 3 casi immagini`, secs()];
 };
 
+// ---------- gruppo motore: prompt, giudice, ritardatario, limiti di risorse ----------
+// (I nomi riservati be–bi erano già usati: prefisso "mo" del gruppo.)
+
+const startOf = (events) => events.find((e) => e.type === "start");
+const labelsIn = (text, from, to) => {
+  const i = text.indexOf(from);
+  if (i < 0) return "";
+  const j = to ? text.indexOf(to, i + from.length) : -1;
+  return [...text.slice(i, j < 0 ? undefined : j).matchAll(/^### (?:Risposta|Critica scritta da) ([A-L])/gm)].map((m) => m[1]).join("");
+};
+const sorted = (s) => [...s].sort().join("");
+
+// P0.2: nella revisione ognuno sa qual è la sua lettera e le critiche sono intestate con l'autore.
+SCENARIOS.mo2 = async function mo2() {
+  const r = await debate("mo2", ["ok-a", "ok-b", "length"], 2, "ok-b", 120_000);
+  const bad = expectDone(r, 120);
+  if (bad) return [false, bad, r.secs];
+  const letter = Object.fromEntries((startOf(r.events)?.participants ?? []).map((p) => [p.id, p.letter]));
+  const pr = await promptsOf("mo2");
+  const wrong = [];
+  for (const m of ["ok-a", "ok-b", "length"]) {
+    const rev = pr.find((p) => p.model === m && p.phase === "revise");
+    const crit = pr.find((p) => p.model === m && p.phase === "critique");
+    if (!rev?.user.includes(`sei la Risposta ${letter[m]}`)) wrong.push(`${m}: revisione senza la sua lettera`);
+    if (!crit?.user.includes(`sei la Risposta ${letter[m]}`)) wrong.push(`${m}: critica senza la sua lettera`);
+    if (!rev?.user.includes(`### Critica scritta da ${letter[m]} (la tua)`)) wrong.push(`${m}: propria critica non segnata`);
+    if (/^### Risposta /m.test(rev?.user.split("CRITICHE FORMULATE")[1] ?? "")) wrong.push(`${m}: critiche intestate come risposte`);
+  }
+  if (wrong.length) return [false, wrong.slice(0, 4).join("; "), r.secs];
+  return [true, "lettera propria in critica e revisione, critiche intestate con l'autore", r.secs];
+};
+DESCR.mo2 = "revisione: lettera propria e critiche per autore";
+
+// P0.3: giudice che è anche partecipante (prompt onesto, campo additivo) e materiale in ordine di lettera.
+SCENARIOS.mo3 = async function mo3() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const [r, r2] = await Promise.all([
+    debate("mo3", ["ok-a", "ok-b", "length", "html"], 1, "ok-a", 120_000),
+    debate("mo3b", ["ok-a", "length"], 0, "ok-b", 60_000),
+  ]);
+  const wrong = [];
+  for (const [x, n] of [[r, "mo3"], [r2, "mo3b"]]) { const bad = expectDone(x, 120); if (bad) wrong.push(`${n}: ${bad}`); }
+  if (wrong.length) return [false, wrong.join("; "), secs()];
+  const st = startOf(r.events);
+  if (st?.judgeParticipated !== true) wrong.push(`start.judgeParticipated = ${st?.judgeParticipated}`);
+  const marked = (list) => (list ?? []).filter((p) => p.judge === true).map((p) => p.id).join();
+  if (marked(st?.participants) !== "ok-a") wrong.push(`start: giudice segnato su "${marked(st?.participants)}"`);
+  const meta = JSON.parse(r.state.messages.find((m) => m.model_id === "_meta")?.content ?? "[]");
+  if (!Array.isArray(meta) || marked(meta) !== "ok-a") wrong.push("_meta: non è un elenco o giudice non segnato");
+  const j = (await promptsOf("mo3")).filter((p) => p.phase === "verdict").at(-1);
+  if (!j) wrong.push("prompt del giudice non ricevuto");
+  else {
+    if (j.system.includes("Non hai partecipato")) wrong.push("prompt: dice ancora che non ha partecipato");
+    if (!j.system.includes("Hai fatto parte anche tu")) wrong.push("prompt: manca la frase sul giudice partecipante");
+    const fin = labelsIn(j.user, "POSIZIONI FINALI DEI MEMBRI", "RISPOSTE INIZIALI");
+    const ini = labelsIn(j.user, "RISPOSTE INIZIALI", "CRITICHE EMERSE");
+    const cri = labelsIn(j.user, "CRITICHE EMERSE", "\n\nInizia");
+    for (const [n, v] of [["finali", fin], ["iniziali", ini], ["critiche", cri]]) {
+      if (v.length !== 4 || v !== sorted(v)) wrong.push(`${n} non in ordine di lettera: "${v}"`);
+    }
+  }
+  if (startOf(r2.events)?.judgeParticipated !== false) wrong.push("giudice esterno: judgeParticipated non false");
+  const j2 = (await promptsOf("mo3b")).filter((p) => p.phase === "verdict").at(-1);
+  if (!j2?.system.includes("Non hai partecipato")) wrong.push("giudice esterno: frase mancante");
+  if (wrong.length) return [false, wrong.slice(0, 4).join("; "), secs()];
+  return [true, "giudice partecipante dichiarato (start, _meta, prompt), finali/iniziali/critiche in ordine A–D", secs()];
+};
+DESCR.mo3 = "giudice anche partecipante, ordine per lettera";
+
+// P1.4: l'altro fallisce subito (quota) nel round: il lento non è un ritardatario e completa il round.
+SCENARIOS.mo4 = async function mo4() {
+  const max = 150;
+  const r = await debate("mo4", ["lag", "quota-late"], 1, "ok-b", max * 1000);
+  const bad = expectDone(r, max);
+  if (bad) return [false, `${bad} dopo ${r.secs.toFixed(0)} s`, r.secs];
+  const crit = msgs(r.state, "lag", "critique")[0];
+  if (!crit?.content || crit.error) return [false, `critica di lag: ${crit?.error ?? "assente"}`, r.secs];
+  if (!errMsgs(r.state, "quota-late").some((m) => m.phase === "critique")) return [false, "quota-late non è fallito nel round", r.secs];
+  return [true, `done in ${r.secs.toFixed(0)} s, lag completa la critica dopo il fallimento immediato dell'altro`, r.secs];
+};
+DESCR.mo4 = "ritardatario: niente taglio se gli altri hanno fallito";
+
+/** Motore separato per gli scenari mo5/mo6, con il suo token. */
+async function moEngine(cfg, env) {
+  const tok = randomBytes(32).toString("hex");
+  const e = await startExtraEngine(cfg, JSON.stringify({ token: tok, keys: { CHAOS_KEY } }), { env });
+  const call = (method, path, body) => api(method, path, { port: e.port, headers: authed(tok), body });
+  for (let i = 0; i < 60; i++) {
+    const r = await call("GET", "/api/models");
+    if (r.status === 200 && !r.body.checking) break;
+    await new Promise((ok) => setTimeout(ok, 300));
+  }
+  const waitDone = async (id, maxS) => {
+    for (let i = 0; i < maxS * 4; i++) {
+      const r = await call("GET", `/api/debates/${id}`);
+      if (r.body?.status && r.body.status !== "running") return r.body;
+      await new Promise((ok) => setTimeout(ok, 250));
+    }
+    return null;
+  };
+  return { e, call, waitDone };
+}
+
+// P2.1a: due dibattiti insieme su un provider limitato a 2 richieste in volo: mai più di 2, ed entrambi finiscono.
+SCENARIOS.mo5 = async function mo5() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const { createServer } = await import("node:http");
+  let inflight = 0, peak = 0, chats = 0;
+  const srv = createServer(async (req, res) => {
+    let s = "";
+    for await (const c of req) s += c;
+    const reply = (body) => { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(body)); };
+    if (req.method === "GET" && req.url.endsWith("/models")) return reply({ data: ["m1", "m2", "m3"].map((id) => ({ id })) });
+    let body = {};
+    try { body = JSON.parse(s || "{}"); } catch { /* corpo non JSON */ }
+    const system = String(body.messages?.find((m) => m.role === "system")?.content ?? "");
+    const user = String(body.messages?.find((m) => m.role === "user")?.content ?? "");
+    const probe = user.trim() === "Scrivi solo: OK";
+    if (!probe) chats++;
+    inflight++; peak = Math.max(peak, inflight);
+    setTimeout(() => {
+      inflight--;
+      const text = probe ? "OK" : /giudice/i.test(system) ? "TITOLO: Prova\nAFFIDABILITÀ: alta\n\nVerdetto di prova." : "Risposta di prova.";
+      if (!res.destroyed) reply({ choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: text } }] });
+    }, probe ? 50 : 500);
+  });
+  await new Promise((ok) => srv.listen(0, "127.0.0.1", ok));
+  const url = `http://127.0.0.1:${srv.address().port}/v1`;
+  const voice = (id, model) => ({ id, label: id, kind: "openai", provider: "lim", family: id, model, default: true });
+  try {
+    const { call, waitDone } = await moEngine({
+      providers: { lim: { name: "Limitato", baseUrl: url, keyEnv: "CHAOS_KEY", maxConcurrent: 2 } },
+      judge: voice("g", "m1"),
+      models: [voice("v1", "m1"), voice("v2", "m2"), voice("v3", "m3")],
+    });
+    peak = 0;
+    const post = (tag) => call("POST", "/api/debates", { question: QUESTION(tag), models: ["v1", "v2", "v3"], rounds: 1, judge: "v1", claudeModel: "sonnet" });
+    const [a, b] = await Promise.all([post("mo5a"), post("mo5b")]);
+    if (a.status !== 201 || b.status !== 201) return [false, `POST → ${a.status}/${b.status}`, secs()];
+    const [sa, sb] = await Promise.all([waitDone(a.body.id, 90), waitDone(b.body.id, 90)]);
+    if (sa?.status !== "done" || sb?.status !== "done") return [false, `stati ${sa?.status}/${sb?.status}`, secs()];
+    if (peak > 2) return [false, `${peak} richieste in volo insieme (limite 2)`, secs()];
+    if (peak < 2) return [false, `mai 2 richieste insieme (picco ${peak}): il limite serializza troppo`, secs()];
+    return [true, `2 dibattiti completi, ${chats} chiamate, picco ${peak} in volo (limite 2)`, secs()];
+  } finally {
+    srv.closeAllConnections?.();
+    srv.close();
+  }
+};
+DESCR.mo5 = "semaforo per provider con due dibattiti insieme";
+
+// P2.1b: catena del giudice al massimo di 4 e tetto totale della fase (qui abbreviato a 8 s).
+SCENARIOS.mo6 = async function mo6() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const voice = (id, model) => ({ id, label: id, kind: "openai", provider: "chaos", family: id, model, default: false });
+  const { call, waitDone } = await moEngine({
+    providers: { chaos: { name: "Chaos", baseUrl: `http://127.0.0.1:${mockPort}/v1`, keyEnv: "CHAOS_KEY" } },
+    judge: voice("cj", "titleonly"),
+    models: [...[1, 2, 3, 4, 5, 6].map((n) => voice(`t${n}`, "titleonly")), voice("o1", "ok-a"), voice("o2", "ok-b"), voice("hj", "hang")],
+  }, { COUNCIL_VERDICT_BUDGET_MS: "8000" });
+  const wrong = [];
+  // 1. Sei giudici che falliscono subito (solo il titolo): se ne provano 4.
+  const a = await call("POST", "/api/debates", { question: QUESTION("mo6a"), models: ["t1", "t2", "t3", "t4", "t5", "t6"], rounds: 0, judge: "t1", claudeModel: "sonnet" });
+  // 2. Giudice bloccato e riserve funzionanti: il tetto della fase ferma la catena.
+  const b = await call("POST", "/api/debates", { question: QUESTION("mo6b"), models: ["o1", "o2"], rounds: 0, judge: "hj", claudeModel: "sonnet" });
+  if (a.status !== 201 || b.status !== 201) return [false, `POST → ${a.status}/${b.status}`, secs()];
+  const t0 = Date.now();
+  const [sa, sb] = await Promise.all([waitDone(a.body.id, 60), waitDone(b.body.id, 60)]);
+  const verdictErrs = (st) => (st?.messages ?? []).filter((m) => m.phase === "verdict" && m.error);
+  if (sa?.status !== "failed") wrong.push(`catena: stato ${sa?.status}`);
+  if (verdictErrs(sa).length !== 4) wrong.push(`catena: ${verdictErrs(sa).length} giudici provati invece di 4`);
+  if (sb?.status !== "failed") wrong.push(`tetto: stato ${sb?.status} (le riserve non andavano provate)`);
+  if (verdictErrs(sb).length !== 1) wrong.push(`tetto: ${verdictErrs(sb).length} giudici provati invece di 1`);
+  const waited = (Date.now() - t0) / 1000;
+  if (waited > 25) wrong.push(`tetto non rispettato: ${waited.toFixed(0)} s`);
+  if (wrong.length) return [false, wrong.slice(0, 4).join("; "), secs()];
+  return [true, `catena fermata a 4 giudici, tetto di 8 s rispettato (${waited.toFixed(0)} s)`, secs()];
+};
+DESCR.mo6 = "verdetto: massimo 4 giudici e tetto totale";
+
 // ---------- main ----------
 
 async function main() {
