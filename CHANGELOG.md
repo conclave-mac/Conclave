@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-11-21
+
+### Added
+- A "Roles" menu next to Rounds and Judge (with at least one round) to make a member the devil's advocate or the
+  fact-checker, also reachable from the keyboard and with VoiceOver actions on each participant.
+- When the judge is also one of the voices, the verdict says so ("also took part in the debate"); otherwise the
+  judge is told truthfully whether it took part.
+
+### Changed
+- Every member now knows which answer is its own in the critique, revision and final rounds, and critiques are
+  labelled by their author, so "answer the critiques about you" works as intended.
+- Answers reach the judge in letter order, and backup judges that did not take part come first.
+- At most 3 requests in flight per provider key, a 4-minute cap on the verdict phase (at most 4 judges), and images
+  only in the opening answers and to the judge: fewer rate-limit errors on free plans.
+- Status, warning and error text is darker in light mode and meets the 4.5:1 contrast ratio, with an even stronger
+  variant under Increase Contrast. Selected participants show a check mark and an accent border.
+- Without any API key, Settings now open on the API Keys pane.
+
+### Fixed
+- Engine responses (questions, verdicts, attachments) are no longer stored in the system HTTP cache; the old cache
+  is cleared once.
+- Live debates use a separate connection pool, so API calls are never stuck behind open streams; a live view that
+  receives nothing for 15 seconds rechecks the debate and catches up.
+- The header duration no longer includes follow-up questions (old discussions are corrected too).
+- The language of the verdict is detected more reliably (Portuguese and Dutch added; uncertain cases fall back to
+  the question's language rule instead of a wrong guess).
+- A slow member is no longer cut from a round when the others failed quickly, nor while it waits for a free slot
+  with its provider.
+
 ## [0.5.4] - 2026-11-21
 
 ### Changed
@@ -209,7 +238,8 @@ versions.
 - Data folder `0700`, files `0600`; atomic writes for settings and health cache.
 - Claude CLI run without tools, MCP servers or user settings, and stopped on shutdown.
 
-[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.5.4...HEAD
+[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.5.5...HEAD
+[0.5.5]: https://github.com/peppolone/Conclave/releases/tag/v0.5.5
 [0.5.4]: https://github.com/peppolone/Conclave/releases/tag/v0.5.4
 [0.5.3]: https://github.com/peppolone/Conclave/releases/tag/v0.5.3
 [0.5.2]: https://github.com/peppolone/Conclave/releases/tag/v0.5.2
