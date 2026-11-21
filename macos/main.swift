@@ -82,12 +82,81 @@ enum Engine {
         // Il motore accetta le richieste che cambiano stato solo come JSON, anche senza corpo.
         if method != "GET" { req.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         req.httpBody = body
-        let (data, resp) = try await URLSession.shared.data(for: req)
+        let (data, resp) = try await session.data(for: req)
         if let h = resp as? HTTPURLResponse, h.statusCode >= 400 {
             let msg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
             throw NSError(domain: "council", code: h.statusCode, userInfo: [NSLocalizedDescriptionKey: msg ?? String(format: L("errore %d"), h.statusCode)])
         }
         return data
+    }
+
+    /// Configurazione comune: effimera (niente cache né cookie su disco: domande, verdetti e allegati
+    /// non devono uscire dalla cartella dati 0700) e senza cache in memoria.
+    private static func configuration() -> URLSessionConfiguration {
+        let c = URLSessionConfiguration.ephemeral
+        c.urlCache = nil
+        c.requestCachePolicy = .reloadIgnoringLocalCacheData
+        c.httpCookieStorage = nil
+        return c
+    }
+
+    /// Chiamate all'API (JSON): limite di connessioni predefinito.
+    static let session = URLSession(configuration: configuration())
+
+    /// Flussi SSE: sessione separata, così le connessioni lunghe (dibattito mostrato più quelli seguiti
+    /// in background) non occupano le 6 connessioni per host delle chiamate, che altrimenti restano in
+    /// coda fino al timeout. Ogni sessione ha il suo insieme di connessioni.
+    static let streamSession: URLSession = {
+        let c = configuration()
+        c.httpMaximumConnectionsPerHost = 64
+        c.timeoutIntervalForRequest = 3600
+        return URLSession(configuration: c, delegate: nil, delegateQueue: nil)
+    }()
+
+    /// Fino alla 0.5.4 le risposte del motore passavano da `URLSession.shared`, che le salvava nella
+    /// cache HTTP dell'app (`~/Library/Caches`): la si svuota una volta.
+    static func purgeLegacyCache() {
+        let key = "purgedEngineHTTPCache1"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        URLCache.shared.removeAllCachedResponses()
+        UserDefaults.standard.set(true, forKey: key)
+    }
+
+    /// Log dei tipi di evento SSE ricevuti, solo con `COUNCIL_DEBUG_SSE=1` (su stderr).
+    static let debugSSE = ProcessInfo.processInfo.environment["COUNCIL_DEBUG_SSE"] == "1"
+    static func logSSE(_ text: @autoclosure () -> String) {
+        guard debugSSE else { return }
+        FileHandle.standardError.write(Data("[sse] \(text())\n".utf8))
+    }
+}
+
+/// Evento SSE decodificato: passa dal thread di lettura al main actor.
+struct SSEEvent: @unchecked Sendable {
+    let fields: [String: Any]
+
+    /// Riga `data: {...}` del flusso; i commenti (`: ping`) e le righe vuote danno nil.
+    /// `only`: tipi da tenere; le altre righe si scartano senza decodificarle.
+    static func parse(_ line: String, only: Set<String>? = nil) -> SSEEvent? {
+        guard line.hasPrefix("data: ") else { return nil }
+        if let only, !only.contains(where: { line.contains("\"type\":\"\($0)\"") }) { return nil }
+        guard let d = line.dropFirst(6).data(using: .utf8),
+              let f = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return nil }
+        return SSEEvent(fields: f)
+    }
+
+    /// Legge il flusso fuori dal main actor e consegna ogni evento a `deliver` (sul main actor, in ordine;
+    /// `false` = basta così). Ritorna quando il flusso finisce; lancia su annullamento o errore di rete.
+    nonisolated static func read(_ req: URLRequest, id: Int, only: Set<String>? = nil,
+                                 deliver: @escaping @MainActor (SSEEvent) -> Bool) async throws {
+        let (bytes, resp) = try await Engine.streamSession.bytes(for: req)
+        Engine.logSSE("\(id) aperto (\((resp as? HTTPURLResponse)?.statusCode ?? 0))")
+        defer { Engine.logSSE("\(id) chiuso") }
+        for try await line in bytes.lines {
+            try Task.checkCancellation()
+            guard let e = parse(line, only: only) else { continue }
+            Engine.logSSE("\(id) \(e.fields["type"] as? String ?? "?") turno \(e.fields["turn"] as? Int ?? 0)")
+            guard await deliver(e) else { return }
+        }
     }
 }
 
@@ -1282,6 +1351,7 @@ struct EngineStatusView: View {
 // Scrivere sullo stdin di un motore già uscito deve dare un errore, non chiudere l'app.
 signal(SIGPIPE, SIG_IGN)
 LegacyMigration.run()
+Engine.purgeLegacyCache()
 // macOS 26 aggiunge da solo icone alle voci di menu note (Informazioni, Servizi, Nascondi, Esci…) e rientra
 // le altre voci della sezione; l'utente vuole i menu senza icone. Va registrato prima di creare i menu.
 UserDefaults.standard.register(defaults: ["NSMenuEnableActionImages": false])

@@ -523,18 +523,20 @@ final class CouncilStore: ObservableObject {
 
     private func listen(_ id: Int) {
         stream?.cancel()
+        // Un solo flusso per id: quello nuovo rimanda tutti gli eventi dall'inizio, il watcher non serve più.
         watchers.removeValue(forKey: id)?.cancel()
+        lastEventAt = .now
+        startStaleCheck(id)
         stream = Task { [weak self] in
             guard let self, let u = Engine.url(self.port(), "/api/debates/\(id)/events") else { return }
             let req = Engine.request(u, timeout: 3600)
-            do {
-                let (bytes, _) = try await URLSession.shared.bytes(for: req)
-                for try await line in bytes.lines {
-                    if Task.isCancelled { return }
-                    guard let e = Self.event(line) else { continue }
-                    self.apply(e, debateId: id)
-                }
-            } catch {}
+            // Lettura e decodifica fuori dal main actor; gli eventi si applicano sul main, in ordine.
+            try? await SSEEvent.read(req, id: id) { [weak self] e in
+                guard let self, !Task.isCancelled else { return false }
+                self.lastEventAt = .now
+                self.apply(e.fields, debateId: id)
+                return true
+            }
             // Flusso finito senza "done" (errore, 404, riavvio): si rilegge lo stato salvato,
             // altrimenti la discussione resterebbe "in corso" per sempre.
             guard !Task.isCancelled, self.current?.id == id, self.current?.busy == true else { return }
@@ -547,9 +549,38 @@ final class CouncilStore: ObservableObject {
         }
     }
 
-    private static func event(_ line: String) -> [String: Any]? {
-        guard line.hasPrefix("data: "), let d = line.dropFirst(6).data(using: .utf8) else { return nil }
-        return try? JSONSerialization.jsonObject(with: d) as? [String: Any]
+    /// Ultimo evento ricevuto dal flusso della discussione mostrata (i ping del motore non contano).
+    private var lastEventAt = Date.now
+    private var staleCheck: Task<Void, Never>?
+    /// Silenzio oltre il quale si rilegge lo stato dal motore.
+    static let staleAfter: TimeInterval = 15
+
+    /// Rete di sicurezza: una discussione mostrata "in corso" che non riceve eventi per `staleAfter`
+    /// secondi si confronta con `GET /api/debates/:id`. Finita nel motore → si riapre dallo stato
+    /// salvato; ancora in corso ma senza flusso → si riapre il flusso.
+    private func startStaleCheck(_ id: Int) {
+        staleCheck?.cancel()
+        staleCheck = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard let self, !Task.isCancelled, let d = self.current, d.id == id, d.busy else { return }
+                guard Date.now.timeIntervalSince(self.lastEventAt) > Self.staleAfter else { continue }
+                self.lastEventAt = .now
+                guard let data = try? await self.request("GET", "/api/debates/\(id)") else { continue }
+                guard !Task.isCancelled, self.current?.id == id, self.current?.busy == true else { return }
+                let live = self.json(data)["live"] as? Bool == true
+                if !live {
+                    Engine.logSSE("\(id) fermo da \(Int(Self.staleAfter)) s ma concluso nel motore: si rilegge")
+                    await self.open(id)
+                    return
+                }
+                if self.stream == nil {
+                    Engine.logSSE("\(id) senza flusso: si riapre")
+                    self.listen(id)
+                    return
+                }
+            }
+        }
     }
 
     /// Chiude il flusso della discussione mostrata; se è ancora in corso la si segue in background,
@@ -567,15 +598,13 @@ final class CouncilStore: ObservableObject {
             var done: [String: Any]?
             // Il flusso può ripetere gli eventi dei turni già conclusi: conta solo la fine dell'ultimo.
             var lastTurn = turn
-            if let (bytes, _) = try? await URLSession.shared.bytes(for: Engine.request(u, timeout: 3600)) {
-                do {
-                    for try await line in bytes.lines {
-                        guard let e = Self.event(line) else { continue }
-                        let n = e["turn"] as? Int ?? 0
-                        if e["type"] as? String == "turn" { lastTurn = max(lastTurn, n) }
-                        if e["type"] as? String == "done", n >= lastTurn { done = e; break }
-                    }
-                } catch {}
+            // Si decodificano solo le righe che servono (`turn` e `done`): i pezzi di testo si scartano prima.
+            try? await SSEEvent.read(Engine.request(u, timeout: 3600), id: id, only: ["turn", "done"]) { s in
+                let e = s.fields
+                let n = e["turn"] as? Int ?? 0
+                if e["type"] as? String == "turn" { lastTurn = max(lastTurn, n) }
+                if e["type"] as? String == "done", n >= lastTurn { done = e; return false }
+                return true
             }
             guard let self, !Task.isCancelled else { return }
             self.watchers[id] = nil
@@ -879,11 +908,14 @@ final class CouncilStore: ObservableObject {
     // MARK: Apertura, nuova discussione, annullamento
 
     func open(_ id: Int) async {
-        if current?.id == id { stream?.cancel(); resetStreams() } else { leaveCurrent() }
+        // Riapertura della discussione mostrata: il flusso in corso resta finché non arriva lo stato
+        // nuovo. Annullarlo prima lasciava la vista "in corso" per sempre se la lettura falliva.
+        if current?.id != id { leaveCurrent() }
         // Due aperture ravvicinate: vale solo l'ultima richiesta, anche se risponde prima l'altra.
         openSeq += 1
         let seq = openSeq
         guard let data = try? await request("GET", "/api/debates/\(id)"), seq == openSeq else { return }
+        if current?.id == id { stream?.cancel(); stream = nil; resetStreams() }
         let j = json(data)
         let status = j["status"] as? String ?? "done"
         let live = (j["live"] as? Bool) == true
