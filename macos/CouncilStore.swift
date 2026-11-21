@@ -78,6 +78,8 @@ struct DebateState: Equatable {
     var displayTitle: String { debateTitle(title, question: question) }
     var rounds: Int?
     var judgeLabel: String?
+    /// Il giudice è anche una delle voci (`judgeParticipated` di `start`, `judge: true` in `_meta`).
+    var judgeParticipated = false
     var status: String        // running, done, failed, cancelled, interrupted
     var statusText: String
     var startedAt: Date?
@@ -752,6 +754,7 @@ final class CouncilStore: ObservableObject {
             Self.readParticipants(e["participants"], into: &d)
             if let r = e["rounds"] as? Int { d.rounds = r }
             if let j = e["judge"] as? String { d.judgeLabel = j }
+            if let p = e["judgeParticipated"] as? Bool { d.judgeParticipated = p }
             d.statusText = Self.statusText("running")
         case "phase":
             let phase = e["phase"] as? String ?? ""
@@ -1007,6 +1010,7 @@ final class CouncilStore: ObservableObject {
             guard let id = p["id"] as? String else { continue }
             let role = (p["role"] as? String).flatMap { ["devil", "checker"].contains($0) ? $0 : nil }
             d.participants[id] = (p["label"] as? String ?? id, p["letter"] as? String ?? "", role)
+            if p["judge"] as? Bool == true { d.judgeParticipated = true }
         }
     }
 

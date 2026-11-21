@@ -779,6 +779,7 @@ struct DebateView: View {
                     // bloccata sul segnaposto (e con lei la vista).
                     if debate.verdict != nil || (debate.isRunning && debate.judging) {
                         DebateResult(store: store, debate: debate, text: debate.verdict, draft: debate.verdictDraft, verdictBy: debate.verdictBy,
+                                     judgeParticipated: debate.judgeParticipated,
                                      confidence: debate.confidence, key: "verdict", copiedKey: $copiedKey, saveFile: saveFile)
                             .accessibilityRotorEntry(id: "phase-verdict", in: rotorNS)
                             .readingRow("phase-verdict", reading)

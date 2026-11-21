@@ -11,6 +11,8 @@ struct DebateResult: View {
     /// Verdetto in arrivo (streaming): si mostra al posto del segnaposto finché non arriva `text`.
     var draft: String? = nil
     let verdictBy: String?
+    /// Il giudice di questo verdetto ha anche partecipato al dibattito: lo si dice accanto al nome.
+    var judgeParticipated = false
     let confidence: String?
     /// "verdict" o "turn-<n>": quale verdetto è stato appena copiato.
     let key: String
@@ -204,7 +206,8 @@ struct DebateResult: View {
                 .font(Brand.Fonts.section)
                 .foregroundStyle(Brand.text)
             if let by = verdictBy, !by.isEmpty {
-                Text(String(format: L("Giudice: %@"), by))
+                Text(judgeParticipated ? String(format: L("Giudice: %@ · ha anche partecipato al dibattito"), by)
+                                       : String(format: L("Giudice: %@"), by))
                     .font(Brand.Fonts.small)
                     .foregroundStyle(Brand.secondaryText)
             }
