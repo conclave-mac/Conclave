@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-11-21
+
+### Changed
+- New logo and app icon: a c within a c around a gold dot, the council's voices around the verdict, in the app's
+  warm palette. The icon fills the square like Apple's own icons and has proper dark and tinted variants.
+
 ## [0.5.3] - 2026-11-20
 
 ### Added
@@ -203,7 +209,8 @@ versions.
 - Data folder `0700`, files `0600`; atomic writes for settings and health cache.
 - Claude CLI run without tools, MCP servers or user settings, and stopped on shutdown.
 
-[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/peppolone/Conclave/compare/v0.5.4...HEAD
+[0.5.4]: https://github.com/peppolone/Conclave/releases/tag/v0.5.4
 [0.5.3]: https://github.com/peppolone/Conclave/releases/tag/v0.5.3
 [0.5.2]: https://github.com/peppolone/Conclave/releases/tag/v0.5.2
 [0.5.1]: https://github.com/peppolone/Conclave/releases/tag/v0.5.1
