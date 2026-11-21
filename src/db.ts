@@ -59,6 +59,15 @@ db.exec(`
   if (!acols.has("turn")) db.exec(`ALTER TABLE attachments ADD COLUMN turn INTEGER NOT NULL DEFAULT 0`);
   // Immagine ridotta (JPEG base64) di un allegato "image": solo per le voci Gemini, mai restituita all'app.
   if (!acols.has("image")) db.exec(`ALTER TABLE attachments ADD COLUMN image TEXT`);
+  // (Dopo le colonne dei messaggi: serve `messages.turn`.) Fine del turno 0 per le discussioni vecchie (una volta, quando la colonna nasce): senza seguiti è `finished_at`,
+  // con seguiti l'ultimo messaggio del turno 0 (il verdetto), così la durata non include le domande di seguito.
+  if (!cols.has("debate_finished_at")) {
+    db.exec(`UPDATE debates SET debate_finished_at = CASE
+        WHEN EXISTS (SELECT 1 FROM messages m WHERE m.debate_id = debates.id AND m.turn > 0)
+          THEN (SELECT MAX(m.created_at) FROM messages m WHERE m.debate_id = debates.id AND m.turn = 0)
+        ELSE finished_at END
+      WHERE debate_finished_at IS NULL AND finished_at IS NOT NULL`);
+  }
 }
 // Dibattiti rimasti a metà per un riavvio del server.
 db.exec(`UPDATE debates SET status = 'interrupted' WHERE status = 'running'`);
