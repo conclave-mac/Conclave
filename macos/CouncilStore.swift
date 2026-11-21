@@ -577,7 +577,7 @@ final class CouncilStore: ObservableObject {
                     await self.open(id)
                     return
                 }
-                if self.stream == nil {
+                if self.stream == nil, self.watchers[id] == nil {
                     Engine.logSSE("\(id) senza flusso: si riapre")
                     self.listen(id)
                     return
@@ -591,6 +591,10 @@ final class CouncilStore: ObservableObject {
     private func leaveCurrent() {
         stream?.cancel()
         stream = nil
+        // Il controllo dei 15 s è della discussione mostrata: lasciato attivo, durante l'apertura di un'altra
+        // riga (current resta questa finché non arriva la GET) riaprirebbe `listen` e cancellerebbe il watcher.
+        staleCheck?.cancel()
+        staleCheck = nil
         resetStreams()
         if let d = current, d.busy { watch(d.id, title: d.displayTitle, turn: d.turns.last(where: \.isRunning)?.turn ?? 0) }
     }
