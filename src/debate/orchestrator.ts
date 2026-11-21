@@ -354,7 +354,7 @@ export async function runDebate(
       const randomDevil = hasDevil ? null : pool[Math.floor(Math.random() * pool.length)];
       await phase(
         "critique",
-        (d) => P.critiquePrompt(question, d.initial!, others(d, (x) => x.initial), d === randomDevil ? "devil" : roles[d.def.id] ?? null, material),
+        (d) => P.critiquePrompt(question, d.initial!, others(d, (x) => x.initial), d === randomDevil ? "devil" : roles[d.def.id] ?? null, material, d.letter),
         (d, t) => (d.critique = t),
         () => {},
       );
@@ -362,7 +362,7 @@ export async function runDebate(
       if (opts.rounds >= 2) {
         // Round 2: ognuno risponde alle critiche e rivede la propria risposta.
         const allCritiques = () => alive().filter((x) => x.critique).map((x) => ({ label: x.letter, text: x.critique! }));
-        await phase("revise", (d) => P.revisePrompt(question, d.initial!, allCritiques(), material), (d, t) => (d.revised = t),
+        await phase("revise", (d) => P.revisePrompt(question, d.initial!, allCritiques(), material, d.letter), (d, t) => (d.revised = t),
           (d) => { d.revised = d.initial; });
 
         if (opts.rounds >= 3) {
@@ -375,7 +375,7 @@ export async function runDebate(
             save(ctx, { model_id: "_note", phase: "final", content: note, error: null, ms: null });
             for (const d of alive()) d.final = d.revised;
           } else {
-            await phase("final", (d) => P.finalPrompt(question, d.revised!, others(d, (x) => x.revised), material), (d, t) => (d.final = t),
+            await phase("final", (d) => P.finalPrompt(question, d.revised!, others(d, (x) => x.revised), material, d.letter), (d, t) => (d.final = t),
               (d) => { d.final = d.revised; });
           }
         }

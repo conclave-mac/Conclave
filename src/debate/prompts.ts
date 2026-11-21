@@ -55,6 +55,11 @@ export type Labeled = { label: string; text: string };
 
 const INITIAL_EXCERPT_MAX = 1000;
 const block = (items: Labeled[]) => items.map((i) => `### Risposta ${i.label}\n${clip(i.text)}`).join("\n\n");
+/** Critiche intestate con l'autore, non con il bersaglio: "### Risposta X" faceva credere che fossero rivolte a X. */
+const critiqueBlock = (items: Labeled[], own?: string) =>
+  items.map((i) => `### Critica scritta da ${i.label}${i.label === own ? " (la tua)" : ""}\n${clip(i.text)}`).join("\n\n");
+/** Lettera propria: gli altri restano anonimi, ma ognuno deve sapere come lo chiamano gli altri. */
+const ownHead = (what: string, letter?: string) => (letter ? `${what} (sei la Risposta ${letter}):` : `${what}:`);
 
 export type ParentContext = { question: string; verdict: string };
 
@@ -175,9 +180,9 @@ const ROLE_TEXT: Record<Role, string> = {
   checker: `\nRUOLO SPECIALE: sei il VERIFICATORE DI FATTI. Oltre alla critica, controlla le affermazioni verificabili di ogni risposta (numeri, date, nomi, citazioni, nessi causali) e segnala quelle sbagliate, imprecise o non verificabili, dicendo cosa è corretto. Non inventare correzioni: se non sei sicuro, scrivilo.`,
 };
 
-export function critiquePrompt(question: string, own: string, others: Labeled[], role: Role | null, m?: Material): string {
+export function critiquePrompt(question: string, own: string, others: Labeled[], role: Role | null, m?: Material, letter?: string): string {
   const roleText = role ? ROLE_TEXT[role] : "";
-  return `${roundHead(m)}\n${question}${attachmentsExcerpt(m)}\n\nLA TUA RISPOSTA INIZIALE:\n${clip(own)}\n\nRISPOSTE DEGLI ALTRI MEMBRI:\n${block(others)}
+  return `${roundHead(m)}\n${question}${attachmentsExcerpt(m)}\n\n${ownHead("LA TUA RISPOSTA INIZIALE", letter)}\n${clip(own)}\n\nRISPOSTE DEGLI ALTRI MEMBRI:\n${block(others)}
 ${roleText}
 Round 1 — Critica. Per ciascuna risposta degli altri, citando la lettera:
 - l'errore o la lacuna più grave (fatti sbagliati, ragionamenti deboli, cose importanti mancanti), con il motivo;
@@ -185,16 +190,17 @@ Round 1 — Critica. Per ciascuna risposta degli altri, citando la lettera:
 Concentrati su ciò che cambia la risposta finale, non sui dettagli. Poi indica in una riga il punto più debole della TUA risposta.`;
 }
 
-export function revisePrompt(question: string, own: string, critiques: Labeled[], m?: Material): string {
-  return `${roundHead(m)}\n${question}${attachmentsExcerpt(m)}\n\nLA TUA RISPOSTA INIZIALE:\n${clip(own)}\n\nCRITICHE FORMULATE DAI MEMBRI DEL CONSIGLIO (riguardano tutte le risposte, inclusa la tua):\n${block(critiques)}
+export function revisePrompt(question: string, own: string, critiques: Labeled[], m?: Material, letter?: string): string {
+  const mine = letter ? ` Sei la Risposta ${letter}: ti riguardano i punti rivolti alla Risposta ${letter}.` : "";
+  return `${roundHead(m)}\n${question}${attachmentsExcerpt(m)}\n\n${ownHead("LA TUA RISPOSTA INIZIALE", letter)}\n${clip(own)}\n\nCRITICHE FORMULATE DAI MEMBRI DEL CONSIGLIO (ognuna intestata con chi l'ha scritta; riguardano tutte le risposte, inclusa la tua):\n${critiqueBlock(critiques, letter)}
 
-Round 2 — Revisione. In breve, rispondi alle critiche che ti riguardano: accetta quelle fondate, respingi motivatamente le altre (una critica non è fondata solo perché la ripetono in tanti). Poi scrivi la tua risposta rivista, completa e autonoma.
+Round 2 — Revisione.${mine} In breve, rispondi alle critiche che ti riguardano: accetta quelle fondate, respingi motivatamente le altre (una critica non è fondata solo perché la ripetono in tanti). Poi scrivi la tua risposta rivista, completa e autonoma.
 Termina con una riga esattamente in questo formato (la parola CAMBIAMENTI e i valori restano in italiano, qualunque sia la lingua della risposta):
 CAMBIAMENTI: nessuno | minori | sostanziali`;
 }
 
-export function finalPrompt(question: string, own: string, others: Labeled[], m?: Material): string {
-  return `${roundHead(m)}\n${question}${attachmentsExcerpt(m)}\n\nLA TUA RISPOSTA RIVISTA:\n${clip(own)}\n\nRISPOSTE RIVISTE DEGLI ALTRI MEMBRI:\n${block(others)}
+export function finalPrompt(question: string, own: string, others: Labeled[], m?: Material, letter?: string): string {
+  return `${roundHead(m)}\n${question}${attachmentsExcerpt(m)}\n\n${ownHead("LA TUA RISPOSTA RIVISTA", letter)}\n${clip(own)}\n\nRISPOSTE RIVISTE DEGLI ALTRI MEMBRI:\n${block(others)}
 
 Round 3 — Posizione finale. Tenendo conto delle revisioni altrui, scrivi la tua conclusione definitiva, completa e autonoma. Se resti in disaccordo con altri membri, indica su cosa e perché.
 Chiudi con una riga esattamente in questo formato (la parola FIDUCIA e i valori restano in italiano):
@@ -203,7 +209,7 @@ FIDUCIA: alta | media | bassa`;
 
 export function judgePrompt(question: string, finals: Labeled[], critiques: Labeled[], parent?: ParentContext, m?: Material, initials: Labeled[] = []): string {
   const crit = critiques.length
-    ? `\n\nCRITICHE EMERSE NEL DIBATTITO (estratto):\n${block(critiques.map((c) => ({ ...c, text: c.text.slice(0, 1500) })))}`
+    ? `\n\nCRITICHE EMERSE NEL DIBATTITO (estratto):\n${critiqueBlock(critiques.map((c) => ({ ...c, text: c.text.slice(0, 1500) })))}`
     : "";
   // Estratto delle risposte iniziali: serve al giudice per vedere chi ha cambiato posizione.
   const init = initials.length
