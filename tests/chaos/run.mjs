@@ -2442,6 +2442,73 @@ SCENARIOS.bm = async function bm() {
   return [wrong.length === 0, wrong.slice(0, 4).join("; ") || `${table.length} testi classificati, codici su eventi e righe, 3 casi immagini`, secs()];
 };
 
+// ---------- rete: cache HTTP e durata del turno 0 ----------
+
+/** Solo gli header di una risposta del motore (GET, POST o flusso SSE, chiuso subito). */
+function engineHeaders(method, path, body) {
+  return new Promise((resolve, reject) => {
+    const data = body === undefined ? undefined : JSON.stringify(body);
+    const h = { Host: `127.0.0.1:${enginePort}`, Authorization: `Bearer ${TOKEN}` };
+    if (data !== undefined) { h["Content-Type"] = "application/json"; h["Content-Length"] = Buffer.byteLength(data); }
+    const req = request({ host: "127.0.0.1", port: enginePort, method, path, headers: h, timeout: 30_000 }, (res) => {
+      resolve({ status: res.statusCode, headers: res.headers });
+      res.destroy();
+    });
+    req.on("timeout", () => req.destroy(new Error(`timeout ${method} ${path}`)));
+    req.on("error", reject);
+    if (data !== undefined) req.write(data);
+    req.end();
+  });
+}
+
+// Nessuna risposta del motore va in cache: `Cache-Control: no-store` su GET, POST (anche d'errore) e SSE.
+SCENARIOS.rj = async function rj() {
+  const started = Date.now();
+  const wrong = [];
+  const check = (what, r, status) => {
+    if (status && r.status !== status) wrong.push(`${what}: stato ${r.status}`);
+    if (r.headers["cache-control"] !== "no-store") wrong.push(`${what}: cache-control ${r.headers["cache-control"]}`);
+  };
+  check("GET /api/models", await engineHeaders("GET", "/api/models"), 200);
+  check("GET /api/debates", await engineHeaders("GET", "/api/debates"), 200);
+  check("POST non valido", await engineHeaders("POST", "/api/debates", { question: "" }), 400);
+  const post = await engineHeaders("POST", "/api/debates", { question: QUESTION("rj"), models: ["ok-a", "ok-b"], rounds: 0, judge: "ok-a", claudeModel: "sonnet" });
+  check("POST /api/debates", post, 201);
+  const list = await api("GET", "/api/debates");
+  const id = (list.body ?? []).find((d) => String(d.question).includes("[scenario:rj]"))?.id;
+  if (id) {
+    check("GET /events", await engineHeaders("GET", `/api/debates/${id}/events`));
+    await followEvents(id, 60_000);
+    check("GET /api/debates/:id", await engineHeaders("GET", `/api/debates/${id}`), 200);
+  } else wrong.push("dibattito non trovato nella lista");
+  check("GET inesistente", await engineHeaders("GET", "/api/nulla"), 404);
+  return [wrong.length === 0, wrong.slice(0, 4).join("; ") || "no-store su GET, POST, errori e SSE", (Date.now() - started) / 1000];
+};
+
+// La fine del dibattito originale resta quella anche dopo una domanda di seguito (`debate_finished_at`),
+// mentre `finished_at` segue l'ultimo turno.
+SCENARIOS.rk = async function rk() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const r = await baseDebate("rk");
+  const before = (await api("GET", `/api/debates/${r.id}`)).body;
+  const end0 = before?.debate_finished_at;
+  if (!end0) return [false, `debate_finished_at mancante (${end0})`, secs()];
+  if (end0 !== before.finished_at) return [false, `turno 0: ${end0} ≠ finished_at ${before.finished_at}`, secs()];
+  // datetime('now') ha la risoluzione del secondo: il seguito deve finire in un secondo diverso.
+  await new Promise((ok) => setTimeout(ok, 1500));
+  const t = await turnOf(r.id, { question: FQ("rk", "E con i bagagli?"), responder: "ok-b" }, 60_000);
+  if (t.post.status !== 201) return [false, `seguito: ${t.post.status}`, secs()];
+  const after = t.state;
+  const wrong = [];
+  if (after?.debate_finished_at !== end0) wrong.push(`turno 0 cambiato: ${end0} → ${after?.debate_finished_at}`);
+  if (!(after?.finished_at > end0)) wrong.push(`finished_at non aggiornato dal seguito: ${after?.finished_at}`);
+  return [wrong.length === 0, wrong.join("; ") || `turno 0 fermo a ${end0}, ultimo turno ${after.finished_at}`, secs()];
+};
+
+DESCR.rj = "nessuna risposta del motore in cache: Cache-Control no-store su GET, POST, errori e SSE";
+DESCR.rk = "durata del dibattito originale invariata dopo una domanda di seguito";
+
 // ---------- main ----------
 
 async function main() {
