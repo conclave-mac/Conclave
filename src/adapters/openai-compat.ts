@@ -72,6 +72,57 @@ export function parseTryAgain(msg: string): number {
   return h * 3600 + min * 60 + s;
 }
 
+/**
+ * Richieste in volo per provider (stesso indirizzo e stessa chiave): due dibattiti insieme sulla stessa chiave
+ * Groq gratuita (~8.000 token al minuto) davano raffiche di 429. Si attende il proprio turno, interrompibile.
+ * `maxConcurrent` nel provider di models.json lo cambia; i server locali (Ollama, LM Studio, i finti delle
+ * prove) gestiscono la coda da soli: nessun limite salvo `maxConcurrent` esplicito.
+ */
+export const PROVIDER_SLOTS = 3;
+const slots = new Map<string, { busy: number; queue: (() => void)[] }>();
+
+export function providerSlots(p: Provider): number {
+  const n = (p as Provider & { maxConcurrent?: unknown }).maxConcurrent;
+  if (typeof n === "number" && Number.isInteger(n) && n >= 1) return n;
+  try {
+    const host = new URL(p.baseUrl).hostname;
+    if (["127.0.0.1", "localhost", "[::1]", "::1"].includes(host)) return Infinity;
+  } catch { /* indirizzo non valido: limite predefinito */ }
+  return PROVIDER_SLOTS;
+}
+
+/** Prende un posto per il provider (passato di mano in mano quando si libera); restituisce la funzione che lo rilascia. */
+export async function acquireSlot(p: Provider, signal?: AbortSignal): Promise<() => void> {
+  const limit = providerSlots(p);
+  if (limit === Infinity) return () => {};
+  const key = `${p.baseUrl}|${p.keyEnv}`;
+  let s = slots.get(key);
+  if (!s) slots.set(key, (s = { busy: 0, queue: [] }));
+  const st = s;
+  if (st.busy < limit) st.busy++;
+  else {
+    await new Promise<void>((resolve, reject) => {
+      if (signal?.aborted) return reject(signal.reason ?? new Error("annullato"));
+      const go = () => { signal?.removeEventListener("abort", onAbort); resolve(); };
+      const onAbort = () => {
+        const i = st.queue.indexOf(go);
+        if (i >= 0) st.queue.splice(i, 1);
+        reject(signal!.reason ?? new Error("annullato"));
+      };
+      st.queue.push(go);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const next = st.queue.shift();
+    if (next) next(); // il posto passa a chi aspetta: `busy` resta uguale
+    else st.busy--;
+  };
+}
+
 /** Attesa interrompibile: se il dibattito viene annullato o scade il tempo, si smette subito. */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -279,6 +330,16 @@ async function readStream(res: Response, model: string, req: ChatRequest, touch:
 export async function once(p: Provider, model: string, req: ChatRequest, timeoutMs = TIMEOUT_MS): Promise<string> {
   const key = process.env[p.keyEnv]?.trim();
   if (!key) throw new CodedError("missing_key", `chiave ${p.keyEnv} mancante: aggiungila in Impostazioni ▸ Chiavi API`);
+  // Il turno si aspetta prima di far partire i tempi del tentativo; l'attesa la ferma il segnale del round.
+  const release = await acquireSlot(p, req.signal);
+  try {
+    return await attempt(p, model, key, req, timeoutMs);
+  } finally {
+    release();
+  }
+}
+
+async function attempt(p: Provider, model: string, key: string, req: ChatRequest, timeoutMs: number): Promise<string> {
 
   // Streaming solo per chi lo chiede; la ricerca sul web resta intera (servono le fonti di `executed_tools`).
   const streaming = !!req.onText && !req.webSearch;
