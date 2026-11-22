@@ -1,8 +1,9 @@
 // Ricerca sul web prima del dibattito: un solo ricercatore prepara un dossier di fatti
 // recenti con le fonti, che entra nel prompt iniziale e in quello del giudice.
-// Chi cerca: Claude (strumenti WebSearch/WebFetch, inclusi nell'abbonamento) se c'è una voce
-// Claude; altrimenti GPT-OSS su Groq con browser_search (gratuito). Gemini gratuito non ha
-// la ricerca, OpenRouter la fa pagare, Mistral non la offre in chat/completions.
+// Chi cerca: Claude (strumenti WebSearch/WebFetch, inclusi nell'abbonamento) solo se l'utente l'ha
+// scelto come voce o come giudice; altrimenti GPT-OSS su Groq con browser_search (gratuito, anche
+// se non è tra le voci); altrimenti nessuno. Gemini gratuito non ha la ricerca, OpenRouter la fa
+// pagare, Mistral non la offre in chat/completions.
 import { config, isAvailable, type ModelDef } from "../config.ts";
 import { chatClaude } from "../adapters/claude-cli.ts";
 import { chatOpenAI } from "../adapters/openai-compat.ts";
@@ -28,14 +29,30 @@ function isGroq(m: ModelDef): boolean {
   return m.provider === "groq" || /(^|\.)groq\.com(\/|$)/.test(p?.baseUrl.replace(/^https?:\/\//, "") ?? "");
 }
 
-/** Chi può fare la ricerca adesso, o null se nessuno. */
-export function findResearcher(): Researcher | null {
+/** Scelta dell'utente per il dibattito o il turno: voci e giudice (o risponditore). */
+export interface ResearchSelection {
+  models: ModelDef[];
+  judge?: ModelDef;
+}
+
+/**
+ * Chi farà la ricerca: Claude solo se è tra le voci scelte o è il giudice; altrimenti GPT-OSS su Groq (se
+ * disponibile, anche se non scelto); altrimenti null. Senza `selection` (GET /api/models, campo `via`) si
+ * risponde come se Claude fosse scelto: chi può fare la ricerca in generale.
+ */
+export function findResearcher(selection?: ResearchSelection): Researcher | null {
   // Claude "down" (es. limite del piano raggiunto): si passa subito a Groq invece di attendere l'errore.
-  const claude = config.models.find((m) => m.kind === "claude-cli" && isAvailable(m) && getHealth(m.id).status !== "down");
-  if (claude) return { def: claude, via: "Claude" };
+  const usable = (m: ModelDef) => isAvailable(m) && getHealth(m.id).status !== "down";
+  const chosen = selection ? [...selection.models, ...(selection.judge ? [selection.judge] : [])] : undefined;
+  const claudeChosen = chosen ? chosen.find((m) => m.kind === "claude-cli") : true;
+  if (claudeChosen) {
+    // La voce Claude del catalogo (stato di salute), o quella scelta se il catalogo non ne ha.
+    const claude = config.models.find((m) => m.kind === "claude-cli" && usable(m))
+      ?? (typeof claudeChosen === "object" && usable(claudeChosen) ? claudeChosen : undefined);
+    if (claude) return { def: claude, via: "Claude" };
+  }
   const groq = config.models.find((m) =>
-    m.kind === "openai" && isGroq(m) && (m.family ?? familyOf(m.model).id) === "gpt-oss" &&
-    isAvailable(m) && getHealth(m.id).status !== "down");
+    m.kind === "openai" && isGroq(m) && (m.family ?? familyOf(m.model).id) === "gpt-oss" && usable(m));
   if (groq) return { def: groq, via: "GPT-OSS (Groq)" };
   return null;
 }
