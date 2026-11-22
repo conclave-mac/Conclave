@@ -32,6 +32,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - name: Prove Swift
+        run: tests/swift/run.sh
       - run: npm run test:chaos
 
       - name: Compilazione dell'app
