@@ -144,8 +144,10 @@ struct SSEEvent: @unchecked Sendable {
         return SSEEvent(fields: f)
     }
 
-    /// Legge il flusso fuori dal main actor e consegna ogni evento a `deliver` (sul main actor, in ordine;
-    /// `false` = basta così). Ritorna quando il flusso finisce; lancia su annullamento o errore di rete.
+    /// Legge il flusso fuori dal main actor e consegna ogni evento a `deliver` sul main thread, in ordine,
+    /// passando dal run loop (`MainRunLoop`), non dalla coda principale (`false` = basta così).
+    /// Ritorna quando il flusso finisce; lancia su annullamento o errore di rete.
+    /// Con `COUNCIL_DEBUG_SSE=1` ogni evento scrive l'ora di lettura e di consegna (ms monotoni).
     nonisolated static func read(_ req: URLRequest, id: Int, label: String, only: Set<String>? = nil,
                                  deliver: @escaping @MainActor (SSEEvent) -> Bool) async throws {
         let (bytes, resp) = try await Engine.streamSession.bytes(for: req)
@@ -154,9 +156,46 @@ struct SSEEvent: @unchecked Sendable {
         for try await line in bytes.lines {
             try Task.checkCancellation()
             guard let e = parse(line, only: only) else { continue }
-            Engine.logSSE("\(label) \(id) \(e.fields["type"] as? String ?? "?") turno \(e.fields["turn"] as? Int ?? 0)")
-            guard await deliver(e) else { return }
+            let readAt = MainRunLoop.nowMs()
+            let more = await MainRunLoop.run { () -> Bool in
+                if Engine.debugSSE {
+                    let at = MainRunLoop.nowMs()
+                    Engine.logSSE("\(label) \(id) \(e.fields["type"] as? String ?? "?") turno \(e.fields["turn"] as? Int ?? 0) letto \(readAt) consegnato \(at) (+\(at - readAt) ms)")
+                }
+                return deliver(e)
+            }
+            guard more else { return }
         }
+    }
+}
+
+/// Lavoro da fare sul main thread passando dal run loop (modi comuni) invece che dalla coda principale
+/// (`DispatchQueue.main`, `Task @MainActor`). Durante i dibattiti dal vivo AppKit può girare a lungo in
+/// `stepIdle`/`CA::Context::synchronize` senza svuotare la coda principale (sample del 21 nov 2026: 0 campioni
+/// in `_dispatch_main_queue_callback_4CF` per oltre 10 s), mentre i blocchi e i timer del run loop continuano a girare.
+enum MainRunLoop {
+    /// Millisecondi monotoni (tempo di attività del sistema), per misurare i ritardi di consegna.
+    nonisolated static func nowMs() -> UInt64 { DispatchTime.now().uptimeNanoseconds / 1_000_000 }
+
+    /// Accoda `body` al run loop principale, nei modi comuni (anche durante scorrimento e menu), e lo sveglia.
+    nonisolated static func perform(_ body: @escaping @MainActor () -> Void) {
+        let loop = CFRunLoopGetMain()
+        CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue) { MainActor.assumeIsolated { body() } }
+        CFRunLoopWakeUp(loop)
+    }
+
+    /// Come `perform`, ma attende il risultato.
+    nonisolated static func run<T>(_ body: @escaping @MainActor () -> T) async -> T {
+        await withCheckedContinuation { (c: CheckedContinuation<T, Never>) in
+            perform { c.resume(returning: body()) }
+        }
+    }
+
+    /// Timer sul run loop principale nei modi comuni. Va creato e fermato sul main thread.
+    @MainActor static func timer(after seconds: TimeInterval, repeats: Bool = false, _ body: @escaping @MainActor () -> Void) -> Timer {
+        let t = Timer(timeInterval: seconds, repeats: repeats) { _ in MainActor.assumeIsolated { body() } }
+        RunLoop.main.add(t, forMode: .common)
+        return t
     }
 }
 
