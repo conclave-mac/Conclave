@@ -484,7 +484,11 @@ export async function chatOpenAI(p: Provider, models: string[], req: ChatRequest
         return { text, ms: Date.now() - started, model };
       } catch (e) {
         lastError = e;
-        if (req.signal?.aborted) throw e;
+        if (req.signal?.aborted) {
+          // Fermo nel tempo in più oltre il tetto (il budget si chiude subito): la variante scivola comunque in fondo.
+          if (e instanceof CodedError && e.code === "timeout") req.onModelFail?.(model);
+          throw e;
+        }
         // Il provider rifiuta le immagini (o il formato): una volta sola si riprova senza, invece di far fallire la voce.
         // Un 400 per max_tokens oltre il limite (Groq, Qwen) non riguarda le immagini: lo gestisce il tetto più sotto,
         // e il riprova senza immagini le toglierebbe a questo modello fino al riavvio.
