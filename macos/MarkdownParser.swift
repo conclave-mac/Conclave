@@ -27,7 +27,8 @@ enum MarkdownBlock: Equatable {
 /// Funzione pura: divide il testo Markdown in blocchi. Non va mai in crash.
 func parseMarkdownBlocks(_ text: String) -> [MarkdownBlock] {
     if text.isEmpty { return [] }
-    let normalized = text.contains("\r")
+    // "\r\n" in Swift è un solo Character: `text.contains("\r")` non lo trovava e il testo restava su una riga.
+    let normalized = text.unicodeScalars.contains("\r")
         ? text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         : text
     let lines = normalized.split(separator: "\n", omittingEmptySubsequences: false).map { String($0) }
