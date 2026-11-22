@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-11-22
+
+### Changed
+- A member that is already writing when its time is up may finish as long as it keeps sending text (safety cap 3
+  minutes, 4 for the judge and quick answers); the straggler rule follows the same logic.
+- Web research uses Claude only when Claude is one of the voices or the chosen judge; otherwise GPT-OSS on Groq.
+- Attachments and the research dossier are fenced off in the prompts, so a document cannot imitate the debate's own
+  structure; the judge now knows each member's role, skipped rounds and truncated answers, and models' self-references
+  are masked to keep answers anonymous.
+- Changing the interface language restarts the app only after the old instance has quit, asking first during a debate.
+
+### Fixed
+- The live debate view no longer freezes for seconds or minutes on macOS 26 while the engine keeps going.
+- Quitting no longer waits forever for a stuck engine (3 seconds, then it is stopped together with any `claude` process).
+- Scanned PDFs are read one page at a time, with much lower peak memory.
+- Keychain access can no longer hang the app indefinitely.
+- Follow-up turns show their own duration.
+
 ## [0.5.5] - 2026-11-21
 
 ### Added
@@ -238,7 +256,8 @@ versions.
 - Data folder `0700`, files `0600`; atomic writes for settings and health cache.
 - Claude CLI run without tools, MCP servers or user settings, and stopped on shutdown.
 
-[Unreleased]: https://github.com/conclave-mac/Conclave/compare/v0.5.5...HEAD
+[Unreleased]: https://github.com/conclave-mac/Conclave/compare/v0.5.6...HEAD
+[0.5.6]: https://github.com/conclave-mac/Conclave/releases/tag/v0.5.6
 [0.5.5]: https://github.com/conclave-mac/Conclave/releases/tag/v0.5.5
 [0.5.4]: https://github.com/conclave-mac/Conclave/releases/tag/v0.5.4
 [0.5.3]: https://github.com/conclave-mac/Conclave/releases/tag/v0.5.3
