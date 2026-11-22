@@ -315,7 +315,8 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       })),
       // Tempi tipici (mediana degli ultimi 20 riusciti): null se non ci sono dati.
       judgeAvgMs: medians.get(JUDGE_KEY) ?? null,
-      webSearch: { available: researcher !== null, via: researcher?.via ?? null },
+      // `viaWithoutClaude` (additivo): chi cerca quando Claude non è né voce né giudice (null = nessuno).
+      webSearch: { available: researcher !== null, via: researcher?.via ?? null, viaWithoutClaude: findResearcher({ models: [] })?.via ?? null },
     });
   }
 
