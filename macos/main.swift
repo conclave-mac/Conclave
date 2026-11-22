@@ -479,12 +479,28 @@ final class ServerController {
             defer { launching = nil }
             return launching
         }
-        for p in [process, pending].compactMap({ $0 }) {
-            p.terminate()
-            p.waitUntilExit()
-        }
+        for p in [process, pending].compactMap({ $0 }) { Self.terminate(p) }
         process = nil
         log?.close()
+    }
+
+    /// SIGTERM (il motore annulla i dibattiti e ferma i processi `claude`), al massimo `stopGrace` secondi
+    /// di attesa, poi SIGKILL: un motore bloccato non deve bloccare la chiusura o il riavvio dell'app.
+    static let stopGrace: TimeInterval = 3
+
+    private static func terminate(_ p: Process) {
+        guard p.isRunning else { return }
+        let exited = DispatchSemaphore(value: 0)
+        // `waitUntilExit` gira il run loop del thread che lo chiama: lo si chiama su un thread a parte.
+        Thread.detachNewThread {
+            p.waitUntilExit()
+            exited.signal()
+        }
+        p.terminate()
+        guard exited.wait(timeout: .now() + stopGrace) == .timedOut else { return }
+        NSLog("Conclave: il motore non si è chiuso entro %.0f s, lo si termina con SIGKILL", stopGrace)
+        kill(p.processIdentifier, SIGKILL)
+        _ = exited.wait(timeout: .now() + 2)
     }
 }
 
