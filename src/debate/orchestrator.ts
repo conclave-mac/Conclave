@@ -3,7 +3,7 @@ import { chat } from "../adapters/index.ts";
 import { saveMessage, finishDebate, finishTurn, type MessageRow } from "../db.ts";
 import * as P from "./prompts.ts";
 import { redact } from "../redact.ts";
-import { findResearcher, runResearch } from "./research.ts";
+import { findResearcher, runResearch, type ResearchSelection } from "./research.ts";
 import { CodedError, errorCode, type ErrorCode } from "../errors.ts";
 
 export type Phase = "research" | "initial" | "critique" | "revise" | "final" | "verdict" | "answer";
@@ -74,9 +74,17 @@ const LETTERS = "ABCDEFGHIJKL";
  *  serve solo per chi scrive piano: 90 s dai tempi reali (nov 2026) lasciano finire Nemotron (fino a 57 s)
  *  anche con una riserva dietro. Nella risposta iniziale non c'è la regola del ritardatario: lì si può
  *  attendere fino a 90 s un modello che sta ancora scrivendo (prima: 45 s, senza vedere nulla). */
-const PARTICIPANT_BUDGET_MS = 90_000;
+const PARTICIPANT_BUDGET_MS = testMs("COUNCIL_PARTICIPANT_BUDGET_MS", 90_000);
+/**
+ * Tetto di sicurezza assoluto per chi ha iniziato a scrivere entro il tetto normale: può finire finché manda
+ * pezzi (lo ferma l'attesa senza pezzi), ma non oltre il doppio. 180 s: Nemotron, il più lento dei modelli
+ * reali (fino a 57 s a risposta), resta lontano; una risposta che a 90 s scrive ancora ha di solito più o meno
+ * la stessa strada davanti; oltre, è un flusso che non finisce (modello in ciclo) e la fase non può restare
+ * ferma per lui.
+ */
+const PARTICIPANT_HARD_MS = 2 * PARTICIPANT_BUDGET_MS;
 /** Streaming: nessun pezzo da tanto = tentativo fermo, si passa alla riserva (vedi openai-compat.ts). */
-const STREAM_IDLE_MS = 20_000;
+const STREAM_IDLE_MS = testMs("COUNCIL_STREAM_IDLE_MS", 20_000);
 /** Giudice e risposta rapida: richieste lunghe (tutto il dibattito o la conversazione), primo pezzo più lento. */
 const JUDGE_IDLE_MS = 30_000;
 /** Pezzi raggruppati al massimo ogni 50 ms: meno eventi SSE, il ritmo della vista lo decide l'app. */
@@ -86,6 +94,11 @@ const DELTA_EVERY_MS = 50;
 const STRAGGLER_GRACE_MS = 15_000;
 const STRAGGLER_FLOOR_MS = 30_000;
 const JUDGE_BUDGET_MS = 150_000;
+/**
+ * Giudice e risposta rapida che stanno scrivendo: fino a 240 s, come il tetto della fase del verdetto (che resta
+ * il limite vero del giudice) e il tempo massimo della Claude CLI: un tetto più alto non servirebbe a nessuno.
+ */
+const JUDGE_HARD_MS = 240_000;
 /** Tetto della fase del verdetto (tutta la catena) e numero massimo di giudici provati: verdetto entro 4 min
  *  al peggio, invece di 150 s × (partecipanti + 2). Abbreviabile solo per le prove. */
 const VERDICT_BUDGET_MS = (() => {
@@ -98,6 +111,12 @@ const RESEARCH_BUDGET_MS = (() => {
   const t = Number(process.env.COUNCIL_RESEARCH_TIMEOUT_MS);
   return Number.isInteger(t) && t >= 1000 && t < 180_000 ? t : 180_000;
 })();
+
+/** Tempi abbreviabili solo per le prove (chaos): un valore fuori da 1 s…predefinito resta il predefinito. */
+function testMs(name: string, fallback: number): number {
+  const t = Number(process.env[name]);
+  return Number.isInteger(t) && t >= 1000 && t < fallback ? t : fallback;
+}
 
 /** Dove salvare ed emettere: discussione, turno, flusso di eventi, annullamento. */
 export interface TurnCtx {
@@ -115,34 +134,92 @@ export function save(ctx: TurnCtx, m: MessageRow): void {
 /** Copia del modello con il modello Claude scelto: config non viene modificata. */
 export const withClaudeModel = (m: ModelDef, claudeModel: string): ModelDef => (m.kind === "claude-cli" ? { ...m, model: claudeModel } : m);
 
+/** Timer che si ferma e riparte (attesa nella coda del provider). */
+function pausableTimer(ms: number, fire: () => void) {
+  let left = ms, since = Date.now(), done = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const arm = () => { since = Date.now(); timer = setTimeout(() => { timer = undefined; done = true; fire(); }, left); };
+  arm();
+  return {
+    pause(paused: boolean) {
+      if (done) return;
+      if (paused && timer) { clearTimeout(timer); timer = undefined; left = Math.max(0, left - (Date.now() - since)); }
+      else if (!paused && !timer) arm();
+    },
+    stop() { done = true; clearTimeout(timer); },
+  };
+}
+
 /**
  * Esegue una chiamata con un tempo massimo. L'errore che ne esce è già pronto da mostrare:
  * tempo scaduto riconosciuto dal segnale (non dal testo: "504 Gateway Timeout" è un errore
  * del provider, non un nostro tempo scaduto) e chiavi mascherate.
+ *
+ * Con `hardMs` > `ms`: chi allo scadere di `ms` sta già scrivendo (ultimo testo ricevuto con `progress` non vuoto)
+ * può finire finché manda pezzi (l'attesa senza pezzi `idleMs` la decide l'adapter), fino a `hardMs`. Se nel
+ * tempo in più il tentativo fallisce e il testo si azzera (`progress("")`), l'intervento scade subito: una riserva
+ * non riparte da capo fuori tempo.
  */
 export async function withBudget<T>(ms: number, signal: AbortSignal,
-                                    run: (budget: AbortSignal, hold: (paused: boolean) => void) => Promise<T>): Promise<T> {
+                                    run: (budget: AbortSignal, hold: (paused: boolean) => void, progress: (text: string) => void) => Promise<T>,
+                                    hardMs = ms): Promise<T> {
   // Il tempo si ferma mentre l'intervento aspetta il posto nella coda del provider (`hold(true)`): l'attesa
   // dipende dagli altri, non dal modello.
   const timeout = new AbortController();
-  let left = ms, since = Date.now(), timer: ReturnType<typeof setTimeout> | undefined;
-  const arm = () => { since = Date.now(); timer = setTimeout(() => timeout.abort(new DOMException("tempo scaduto", "TimeoutError")), left); };
-  const hold = (paused: boolean) => {
-    if (paused && timer) { clearTimeout(timer); timer = undefined; left = Math.max(0, left - (Date.now() - since)); }
-    else if (!paused && !timer && !timeout.signal.aborted) arm();
+  // `stopped`: scaduto perché nel tempo in più il tentativo si è fermato; l'errore vero (es. "nessun testo da 20 s")
+  // è quello che l'adapter lancia subito dopo aver azzerato il testo.
+  let writing = false, overtime = false, hardHit = false, stopped = false;
+  const expire = (hard: boolean, byStop = false) => {
+    if (timeout.signal.aborted) return;
+    hardHit = hard;
+    stopped = byStop;
+    timeout.abort(new DOMException("tempo scaduto", "TimeoutError"));
   };
-  arm();
+  const soft = pausableTimer(ms, () => { if (writing && hardMs > ms) overtime = true; else expire(false); });
+  const hard = pausableTimer(Math.max(ms, hardMs), () => expire(true));
+  const hold = (paused: boolean) => { if (!timeout.signal.aborted) { soft.pause(paused); hard.pause(paused); } };
+  const progress = (text: string) => { writing = text !== ""; if (overtime && !writing) expire(false, true); };
   try {
-    return await run(AbortSignal.any([signal, timeout.signal]), hold);
+    return await run(AbortSignal.any([signal, timeout.signal]), hold, progress);
   } catch (e) {
-    const timedOut = timeout.signal.aborted || (e as Error).name === "TimeoutError";
+    const timedOut = (timeout.signal.aborted && !stopped) || (e as Error).name === "TimeoutError";
     // Il codice si decide qui, sull'errore originale: il messaggio riscritto non basta sempre a ritrovarlo.
     throw timedOut
-      ? new CodedError("timeout", `nessuna risposta entro ${Math.round(ms / 1000)} s`)
+      ? new CodedError("timeout", hardHit
+        ? `risposta non finita entro ${Math.round(hardMs / 1000)} s`
+        : `nessuna risposta entro ${Math.round(ms / 1000)} s`)
       : new CodedError(errorCode(e), redact((e as Error).message));
   } finally {
-    clearTimeout(timer);
+    soft.stop();
+    hard.stop();
   }
+}
+
+/**
+ * Riga dei tempi di un intervento in server.log (per tarare l'attesa senza pezzi sui dati veri): fase, voce,
+ * modello usato, ms al primo pezzo di testo dell'ultimo tentativo che ne ha mandato (dall'inizio dell'intervento;
+ * "-" se nessun pezzo), ms totali, ms in coda sul provider, esito. Mai testo né chiavi.
+ */
+export function meter(phase: string, voice: string) {
+  const t0 = Date.now();
+  let first: number | undefined, fresh = false, model: string | undefined, queuedMs = 0, queuedSince: number | undefined;
+  return {
+    text(t: string, m: string) {
+      model = m;
+      // Testo azzerato: il tentativo è fallito, il prossimo pezzo è di un tentativo nuovo.
+      if (!t) { fresh = true; return; }
+      if (first === undefined || fresh) { first = Date.now() - t0; fresh = false; }
+    },
+    queued(q: boolean) {
+      if (q) queuedSince ??= Date.now();
+      else if (queuedSince !== undefined) { queuedMs += Date.now() - queuedSince; queuedSince = undefined; }
+    },
+    end(outcome: string, used?: string) {
+      const clean = (s: string) => s.replace(/[^\w.:/@+-]/g, "_").slice(0, 80);
+      console.error(`[tempi] fase=${phase} voce=${clean(voice)} modello=${clean(used ?? model ?? "-")} primo=${first ?? "-"} ` +
+        `totale=${Date.now() - t0} coda=${queuedMs} esito=${clean(outcome)}`);
+    },
+  };
 }
 
 /**
@@ -209,7 +286,7 @@ export function chainOf(chosen: ModelDef, others: ModelDef[], claudeModel: strin
  */
 export async function firstInChain(
   chain: ModelDef[], ctx: TurnCtx,
-  attempt: (m: ModelDef, budget: AbortSignal) => Promise<void>,
+  attempt: (m: ModelDef, budget: AbortSignal, progress: (text: string) => void) => Promise<void>,
   fail: (m: ModelDef, error: string, code: ErrorCode) => void,
   totalMs = Infinity,
 ): Promise<boolean> {
@@ -219,7 +296,9 @@ export async function firstInChain(
     const left = until - Date.now();
     if (left < 1000) break;
     try {
-      await withBudget(Math.min(JUDGE_BUDGET_MS, left), ctx.signal, (budget) => attempt(m, budget));
+      // Chi sta scrivendo allo scadere del tetto può finire (fino a JUDGE_HARD_MS), sempre dentro il tetto totale.
+      await withBudget(Math.min(JUDGE_BUDGET_MS, left), ctx.signal, (budget, _hold, progress) => attempt(m, budget, progress),
+        Math.min(JUDGE_HARD_MS, left));
       return true;
     } catch (e) {
       if (ctx.signal.aborted) throw new Error("cancelled");
@@ -233,8 +312,8 @@ export async function firstInChain(
  * Ricerca sul web: un solo ricercatore, prima delle risposte. Ogni esito diverso dal
  * dossier (nessun ricercatore, errore, tempo scaduto) è non fatale: si prosegue senza.
  */
-export async function researchPhase(ctx: TurnCtx, question: string, claudeModel: string): Promise<P.Material["research"]> {
-  const who = findResearcher();
+export async function researchPhase(ctx: TurnCtx, question: string, claudeModel: string, selection: ResearchSelection): Promise<P.Material["research"]> {
+  const who = findResearcher(selection);
   if (!who) {
     const note = "Ricerca sul web non disponibile: serve Claude oppure una chiave Groq con GPT-OSS.";
     ctx.emit({ type: "phase", phase: "research", note });
@@ -242,13 +321,16 @@ export async function researchPhase(ctx: TurnCtx, question: string, claudeModel:
     return undefined;
   }
   ctx.emit({ type: "phase", phase: "research" });
+  const m = meter("research", who.def.id);
   try {
     const r = await withBudget(RESEARCH_BUDGET_MS, ctx.signal, (budget) => runResearch(who, question, claudeModel, budget));
+    m.end("ok", r.model);
     const modelId = `research:${who.def.id}`;
     save(ctx, { model_id: modelId, phase: "research", content: r.text, error: null, ms: r.ms, model_used: r.model, replaced: r.replaced });
     ctx.emit({ type: "message", phase: "research", modelId, text: r.text, ms: r.ms, model: r.model, replaced: r.replaced });
     return { text: r.text, date: new Date().toISOString().slice(0, 10) };
   } catch (e) {
+    m.end(ctx.signal.aborted ? "cancelled" : errorCode(e));
     if (ctx.signal.aborted) throw new Error("cancelled");
     failure(ctx, "research", "research", `ricerca non riuscita, si prosegue senza (${(e as Error).message})`, errorCode(e));
     return undefined;
@@ -324,7 +406,8 @@ export async function runDebate(
                        keep?: (d: Debater) => void) {
     emit({ type: "phase", phase: name });
     const started = Date.now();
-    const running = alive().map((d) => ({ d, late: new AbortController(), queued: false, done: false, since: started }));
+    // `writing`: l'ultimo testo ricevuto non è vuoto; `lateGrace`: il ritardatario stava scrivendo allo scadere del suo tempo.
+    const running = alive().map((d) => ({ d, late: new AbortController(), queued: false, done: false, since: started, writing: false, lateGrace: false }));
     let pending = running.length;
     let answered = 0;
     let lateTimer: ReturnType<typeof setTimeout> | undefined;
@@ -335,7 +418,13 @@ export async function runDebate(
       const last = running.find((x) => !x.done);
       if (!last || last.queued) return;
       const wait = Math.max(STRAGGLER_GRACE_MS, STRAGGLER_FLOOR_MS - (Date.now() - last.since));
-      lateTimer = setTimeout(() => running.forEach((x) => x.late.abort()), wait);
+      // Chi sta scrivendo non si taglia a metà: lo si lascia finire finché manda pezzi (lo ferma l'attesa senza
+      // pezzi dell'adapter, che azzera il testo) e il tetto di sicurezza dell'intervento.
+      lateTimer = setTimeout(() => running.forEach((x) => {
+        if (x.done) return;
+        if (x.writing) x.lateGrace = true;
+        else x.late.abort();
+      }), wait);
     };
     const finished = (r: (typeof running)[number], ok: boolean) => {
       r.done = true;
@@ -351,26 +440,41 @@ export async function runDebate(
       running.map(async (run) => {
         const { d, late } = run;
         const live = streamer(ctx, name, d.def.id);
+        const tm = meter(name, d.def.id);
         let ok = false;
         try {
           // Ogni intervento ha un tempo massimo: un modello bloccato non ferma il dibattito.
           // In coda: niente tempo dell'intervento né del ritardatario; con il posto si riparte a contare.
           const onQueue = (hold: (p: boolean) => void) => (queued: boolean) => {
             hold(queued);
+            tm.queued(queued);
             run.queued = queued;
             if (!queued) { run.since = Date.now(); armLate(); }
           };
           const r = await withBudget(PARTICIPANT_BUDGET_MS, AbortSignal.any([signal, late.signal]),
             // Immagini solo nella risposta iniziale (poi i membri ne discutono a parole) e al giudice: per Qwen
             // costano 2.048 token l'una a ogni chiamata.
-            (budget, hold) => chat(d.def, { system: P.SYSTEM_DEBATER, user: build(d), images: name === "initial" ? images : undefined, signal: budget, onText: live.onText, idleMs: STREAM_IDLE_MS, onQueued: onQueue(hold) }));
+            (budget, hold, progress) => chat(d.def, {
+              system: P.SYSTEM_DEBATER, user: build(d), images: name === "initial" ? images : undefined, signal: budget,
+              onText: (t, m) => {
+                run.writing = t !== "";
+                progress(t);
+                tm.text(t, m);
+                // Ritardatario lasciato finire che si ferma (tentativo fallito, testo azzerato): ora salta il round.
+                if (run.lateGrace && !run.writing) run.late.abort();
+                live.onText(t, m);
+              },
+              idleMs: STREAM_IDLE_MS, onQueued: onQueue(hold),
+            }), PARTICIPANT_HARD_MS);
           live.close();
+          tm.end("ok", r.model);
           store(d, r.text);
           save(ctx, { model_id: d.def.id, phase: name, content: r.text, error: null, ms: r.ms, model_used: r.model, replaced: r.replaced });
           emit({ type: "message", phase: name, modelId: d.def.id, text: r.text, ms: r.ms, model: r.model, replaced: r.replaced });
           ok = true;
         } catch (e) {
           live.close();
+          tm.end(signal.aborted ? "cancelled" : late.signal.aborted ? "late" : errorCode(e));
           if (signal.aborted) return;
           const raw = late.signal.aborted
             ? `troppo lento: gli altri avevano finito, nessuna risposta entro ${Math.round((Date.now() - started) / 1000)} s`
@@ -398,7 +502,8 @@ export async function runDebate(
   try {
     if (opts.webSearch) {
       const q = material.followup ? P.followupResearchQuestion(question, material.followup.original) : question;
-      material.research = await researchPhase(ctx, q, opts.claudeModel);
+      // Claude cerca solo se è una voce o il giudice scelto (non le riserve automatiche).
+      material.research = await researchPhase(ctx, q, opts.claudeModel, { models, judge: chosenJudge });
     }
 
     // Fase iniziale: risposte indipendenti.
@@ -463,9 +568,12 @@ export async function runDebate(
     let verdict: string | undefined;
     let title: string | null = null;
     let confidence: P.Confidence = null;
-    await firstInChain(judges, ctx, async (j, budget) => {
+    await firstInChain(judges, ctx, async (j, budget, progress) => {
       const live = streamer(ctx, "verdict", `judge:${j.id}`, P.draftVerdict);
-      const r = await chat(j, { system: P.judgeSystem(isParticipant(j, models)), user: judgeUser, images, maxTokens: 8192, signal: budget, onText: live.onText, idleMs: JUDGE_IDLE_MS })
+      const tm = meter("verdict", j.id);
+      const onText = (t: string, m: string) => { progress(t); tm.text(t, m); live.onText(t, m); };
+      const r = await chat(j, { system: P.judgeSystem(isParticipant(j, models)), user: judgeUser, images, maxTokens: 8192, signal: budget, onText, idleMs: JUDGE_IDLE_MS })
+        .then((x) => { tm.end("ok", x.model); return x; }, (e) => { tm.end(ctx.signal.aborted ? "cancelled" : errorCode(e)); throw e; })
         .finally(live.close);
       // Riga TITOLO e riga AFFIDABILITÀ in qualunque ordine: si tolgono entrambe dal verdetto.
       const split = P.splitTitle(r.text);
@@ -519,14 +627,19 @@ export async function runQuickAnswer(
   const material: P.Material = { attachments: opts.attachments?.length ? opts.attachments : undefined };
   try {
     if (opts.webSearch) {
-      material.research = await researchPhase(ctx, P.followupResearchQuestion(question, opts.conversation.question), opts.claudeModel);
+      // Voci della discussione e risponditore scelto (al posto del giudice).
+      material.research = await researchPhase(ctx, P.followupResearchQuestion(question, opts.conversation.question), opts.claudeModel,
+        { models: opts.fallbacks, judge: chosen });
     }
     emit({ type: "phase", phase: "answer" });
     const user = P.quickPrompt(question, P.conversationBlock(opts.conversation, true), material);
     const chain = chainOf(chosen, opts.fallbacks.map((m) => withClaudeModel(m, opts.claudeModel)), opts.claudeModel);
-    const ok = await firstInChain(chain, ctx, async (m, budget) => {
+    const ok = await firstInChain(chain, ctx, async (m, budget, progress) => {
       const live = streamer(ctx, "answer", m.id);
-      const r = await chat(m, { system: P.SYSTEM_RESPONDER, user, images: P.imagesOf(opts.conversation.attachments, opts.attachments), signal: budget, onText: live.onText, idleMs: JUDGE_IDLE_MS })
+      const tm = meter("answer", m.id);
+      const onText = (t: string, model: string) => { progress(t); tm.text(t, model); live.onText(t, model); };
+      const r = await chat(m, { system: P.SYSTEM_RESPONDER, user, images: P.imagesOf(opts.conversation.attachments, opts.attachments), signal: budget, onText, idleMs: JUDGE_IDLE_MS })
+        .then((x) => { tm.end("ok", x.model); return x; }, (e) => { tm.end(ctx.signal.aborted ? "cancelled" : errorCode(e)); throw e; })
         .finally(live.close);
       if (!r.text.trim()) throw new Error("risposta vuota");
       const text = m.id === chosen.id ? r.text : `> Risposta di riserva: ${m.label} (${chosen.label} non disponibile)\n\n${r.text}`;
