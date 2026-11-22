@@ -233,8 +233,7 @@ final class CouncilStore: ObservableObject {
 
     func engineStopped() {
         engineReady = false
-        stream?.cancel()
-        stream = nil
+        stopStream()
         // Il riavvio interrompe anche i dibattiti seguiti in background.
         for w in watchers.values { w.cancel() }
         watchers = [:]
@@ -524,37 +523,55 @@ final class CouncilStore: ObservableObject {
 
     // MARK: Streaming (Server-Sent Events)
 
-    private func listen(_ id: Int) {
+    /// Cambia a ogni apertura o chiusura del flusso: un evento già accodato sul run loop da un flusso
+    /// chiuso non deve più arrivare (la consegna non avviene dentro il task, `Task.isCancelled` lì non vale).
+    private var listenSeq = 0
+
+    private func stopStream() {
         stream?.cancel()
+        stream = nil
+        listenSeq += 1
+    }
+
+    private func listen(_ id: Int) {
+        stopStream()
         // Un solo flusso per id: quello nuovo rimanda tutti gli eventi dall'inizio, il watcher non serve più.
         watchers.removeValue(forKey: id)?.cancel()
         lastEventAt = .now
         startStaleCheck(id)
-        stream = Task { [weak self] in
-            guard let self, let u = Engine.url(self.port(), "/api/debates/\(id)/events") else { return }
-            let req = Engine.request(u, timeout: 3600)
-            // Lettura e decodifica fuori dal main actor; gli eventi si applicano sul main, in ordine.
+        guard let u = Engine.url(port(), "/api/debates/\(id)/events") else { return }
+        let req = Engine.request(u, timeout: 3600)
+        let seq = listenSeq
+        // Lettura e decodifica fuori dal main actor; gli eventi si applicano sul main thread tramite il
+        // run loop (`MainRunLoop`), in ordine: la coda principale può restare ferma per decine di secondi.
+        stream = Task.detached { [weak self] in
             try? await SSEEvent.read(req, id: id, label: "listen") { [weak self] e in
-                guard let self, !Task.isCancelled else { return false }
+                guard let self, self.listenSeq == seq else { return false }
                 self.lastEventAt = .now
                 self.apply(e.fields, debateId: id)
                 return true
             }
             // Flusso finito senza "done" (errore, 404, riavvio): si rilegge lo stato salvato,
             // altrimenti la discussione resterebbe "in corso" per sempre.
-            guard !Task.isCancelled, self.current?.id == id, self.current?.busy == true else { return }
+            guard !Task.isCancelled else { return }
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled else { return }
-            // open() annulla il flusso della discussione mostrata, cioè questo task: lo si
-            // stacca prima, o la rilettura verrebbe annullata e resterebbe "in corso".
-            self.stream = nil
-            await self.open(id)
+            MainRunLoop.perform { [weak self] in
+                guard let self, self.listenSeq == seq, self.current?.id == id, self.current?.busy == true else { return }
+                // open() annulla il flusso della discussione mostrata: lo si stacca prima (è già finito).
+                self.stream = nil
+                Task { await self.open(id) }
+            }
         }
     }
 
     /// Ultimo evento ricevuto dal flusso della discussione mostrata (i ping del motore non contano).
     private var lastEventAt = Date.now
-    private var staleCheck: Task<Void, Never>?
+    /// Timer del controllo sul run loop (modi comuni), come la consegna degli eventi: `Task.sleep` sul main actor
+    /// resta fermo con la coda principale. `staleSeq` scarta le risposte di un controllo fermato nel frattempo.
+    private var staleCheck: Timer?
+    private var staleSeq = 0
+    private var staleProbing = false
     /// Silenzio oltre il quale si rilegge lo stato dal motore.
     static let staleAfter: TimeInterval = 15
 
@@ -562,27 +579,40 @@ final class CouncilStore: ObservableObject {
     /// secondi si confronta con `GET /api/debates/:id`. Finita nel motore → si riapre dallo stato
     /// salvato; ancora in corso ma senza flusso → si riapre il flusso.
     private func startStaleCheck(_ id: Int) {
-        staleCheck?.cancel()
-        staleCheck = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(5))
-                guard let self, !Task.isCancelled, let d = self.current, d.id == id, d.busy else { return }
-                guard Date.now.timeIntervalSince(self.lastEventAt) > Self.staleAfter else { continue }
-                self.lastEventAt = .now
-                // Un'apertura partita nel frattempo (clic su un'altra riga) vince: mai scavalcarla.
-                let seq = self.openSeq
-                guard let data = try? await self.request("GET", "/api/debates/\(id)") else { continue }
-                guard !Task.isCancelled, self.openSeq == seq, self.current?.id == id, self.current?.busy == true else { continue }
+        stopStaleCheck()
+        let check = staleSeq
+        staleCheck = MainRunLoop.timer(after: 5, repeats: true) { [weak self] in self?.staleTick(id, check) }
+    }
+
+    private func stopStaleCheck() {
+        staleCheck?.invalidate()
+        staleCheck = nil
+        staleSeq += 1
+        staleProbing = false
+    }
+
+    private func staleTick(_ id: Int, _ check: Int) {
+        guard check == staleSeq else { return }
+        guard let d = current, d.id == id, d.busy else { stopStaleCheck(); return }
+        guard !staleProbing, Date.now.timeIntervalSince(lastEventAt) > Self.staleAfter else { return }
+        lastEventAt = .now
+        staleProbing = true
+        // Un'apertura partita nel frattempo (clic su un'altra riga) vince: mai scavalcarla.
+        let seq = openSeq, port = port()
+        Task.detached { [weak self] in
+            let data = try? await Engine.call(port, "GET", "/api/debates/\(id)")
+            MainRunLoop.perform { [weak self] in
+                guard let self, check == self.staleSeq else { return }
+                self.staleProbing = false
+                guard let data, self.openSeq == seq, self.current?.id == id, self.current?.busy == true else { return }
                 let live = self.json(data)["live"] as? Bool == true
                 if !live {
                     Engine.logSSE("\(id) fermo da \(Int(Self.staleAfter)) s ma concluso nel motore: si rilegge")
-                    await self.open(id)
-                    return
-                }
-                if self.stream == nil, self.watchers[id] == nil {
+                    self.stopStaleCheck()
+                    Task { await self.open(id) }
+                } else if self.stream == nil, self.watchers[id] == nil {
                     Engine.logSSE("\(id) senza flusso: si riapre")
                     self.listen(id)
-                    return
                 }
             }
         }
@@ -591,12 +621,10 @@ final class CouncilStore: ObservableObject {
     /// Chiude il flusso della discussione mostrata; se è ancora in corso la si segue in background,
     /// così cronologia, notifica e badge arrivano anche guardando altro.
     private func leaveCurrent() {
-        stream?.cancel()
-        stream = nil
+        stopStream()
         // Il controllo dei 15 s è della discussione mostrata: lasciato attivo, durante l'apertura di un'altra
         // riga (current resta questa finché non arriva la GET) riaprirebbe `listen` e cancellerebbe il watcher.
-        staleCheck?.cancel()
-        staleCheck = nil
+        stopStaleCheck()
         resetStreams()
         if let d = current, d.busy { watch(d.id, title: d.displayTitle, turn: d.turns.last(where: \.isRunning)?.turn ?? 0) }
     }
@@ -638,11 +666,12 @@ final class CouncilStore: ObservableObject {
 
     /// Ritmo massimo con cui i pezzi arrivati aggiornano la vista (il Markdown si ricalcola a ogni
     /// aggiornamento): come Claude, che non ridisegna a ogni pezzo ma a intervalli.
-    static let deltaFlushInterval: Duration = .milliseconds(80)
+    static let deltaFlushInterval: TimeInterval = 0.08
     /// Testo accumulato per messaggio in corso ("debate|turn|phase|modelId") e ultimo evento da applicare.
     private var streamTexts: [String: String] = [:]
     private var pendingDeltas: [String: (debateId: Int, event: [String: Any])] = [:]
-    private var flushTask: Task<Void, Never>?
+    /// Timer sul run loop (modi comuni), non `Task.sleep`: vedi `MainRunLoop`.
+    private var flushTimer: Timer?
 
     private static func streamKey(_ debateId: Int, _ e: [String: Any]) -> String {
         "\(debateId)|\(e["turn"] as? Int ?? 0)|\(e["phase"] as? String ?? "")|\(e["modelId"] as? String ?? "")"
@@ -657,11 +686,10 @@ final class CouncilStore: ObservableObject {
         var merged = e
         merged["text"] = text
         pendingDeltas[key] = (debateId, merged)
-        guard flushTask == nil else { return }
-        flushTask = Task { [weak self] in
-            try? await Task.sleep(for: Self.deltaFlushInterval)
-            guard let self, !Task.isCancelled else { return }
-            self.flushTask = nil
+        guard flushTimer == nil else { return }
+        flushTimer = MainRunLoop.timer(after: Self.deltaFlushInterval) { [weak self] in
+            guard let self else { return }
+            self.flushTimer = nil
             let batch = self.pendingDeltas
             self.pendingDeltas = [:]
             for (_, p) in batch { self.apply(p.event, debateId: p.debateId, flushing: true) }
@@ -677,8 +705,8 @@ final class CouncilStore: ObservableObject {
 
     /// Discussione lasciata o finita: via tutti i pezzi in corso.
     private func resetStreams() {
-        flushTask?.cancel()
-        flushTask = nil
+        flushTimer?.invalidate()
+        flushTimer = nil
         streamTexts = [:]
         pendingDeltas = [:]
     }
@@ -926,7 +954,7 @@ final class CouncilStore: ObservableObject {
         openSeq += 1
         let seq = openSeq
         guard let data = try? await request("GET", "/api/debates/\(id)"), seq == openSeq else { return }
-        if current?.id == id { stream?.cancel(); stream = nil; resetStreams() }
+        if current?.id == id { stopStream(); resetStreams() }
         let j = json(data)
         let status = j["status"] as? String ?? "done"
         let live = (j["live"] as? Bool) == true
@@ -1114,8 +1142,7 @@ final class CouncilStore: ObservableObject {
         drafts[id] = nil
         guard current?.id == id else { return }
         // Niente da seguire in background: la discussione non esiste più.
-        stream?.cancel()
-        stream = nil
+        stopStream()
         current = nil
         newDiscussion()
     }
