@@ -1,0 +1,5 @@
+# Chiavi finte dei test chaos (mock locale), non segreti veri.
+cbfe91e7909d33669f86691660d2ae5fbcf28471:tests/chaos/run.mjs:generic-api-key:649
+cb823c85c79d823daa8c72c54e72ac80d3ed5a62:tests/chaos/mock-provider.mjs:generic-api-key:18
+cb823c85c79d823daa8c72c54e72ac80d3ed5a62:tests/chaos/run.mjs:generic-api-key:23
+cb823c85c79d823daa8c72c54e72ac80d3ed5a62:tests/chaos/run.mjs:generic-api-key:25
