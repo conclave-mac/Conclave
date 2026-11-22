@@ -995,6 +995,8 @@ final class CouncilStore: ObservableObject {
                 var t = newTurn(d, n: n, question: "", mode: "quick")
                 t.participants = d.participants.mapValues { ($0.label, $0.letter, nil) }
                 t.startedAt = Self.date(msgs.first?["created_at"])
+                // Fine del turno: l'ultimo messaggio salvato (il motore non salva la fine dei turni di seguito).
+                t.finishedAt = Self.date(msgs.last?["created_at"])
                 t.status = n < lastTurn ? (Self.hasResult(msgs) ? "done" : "failed") : (live ? "running" : status)
                 t.statusText = t.isRunning ? t.statusText : Self.statusText(t.status)
                 // Turno in corso: le risposte le rimanda il flusso, dalla cronologia solo domanda e opzioni.
@@ -1308,12 +1310,23 @@ final class CouncilStore: ObservableObject {
         if let s = d.startedAt {
             let end = d.finishedAt ?? (d.isRunning ? Date.now : nil)
             if let end {
-                let secs = max(0, Int(end.timeIntervalSince(s)))
-                let dur = secs >= 60 ? String(format: L("%d min %d s"), secs / 60, secs % 60) : String(format: L("%d s"), secs)
+                let dur = Self.durationText(end.timeIntervalSince(s))
                 parts.append(("clock", String(format: d.isRunning ? L("in corso da %@") : L("durata %@"), dur)))
             }
         }
         return parts
+    }
+
+    /// "1 min 34 s", "12 s".
+    static func durationText(_ interval: TimeInterval) -> String {
+        let secs = max(0, Int(interval))
+        return secs >= 60 ? String(format: L("%d min %d s"), secs / 60, secs % 60) : String(format: L("%d s"), secs)
+    }
+
+    /// Durata di un turno di seguito concluso ("durata 12 s"); nil se è in corso o manca un estremo.
+    static func turnDuration(_ t: DebateState) -> String? {
+        guard !t.busy, let s = t.startedAt, let e = t.finishedAt, e >= s else { return nil }
+        return String(format: L("durata %@"), durationText(e.timeIntervalSince(s)))
     }
 
     func exportMarkdown() -> (filename: String, text: String)? {
