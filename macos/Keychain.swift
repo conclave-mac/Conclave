@@ -41,7 +41,7 @@ struct Keychain {
 
     /// Attesa massima di un comando `security` (di solito 0,2–1 s). Larga perché un portachiavi bloccato
     /// mostra la richiesta della password e l'utente deve avere il tempo di scriverla.
-    static let timeout: TimeInterval = 30
+    static let timeout: TimeInterval = 120
 
     /// Esegue `/usr/bin/security`; restituisce codice di uscita, stdout e stderr. Il comando e la lettura
     /// delle uscite girano su thread a parte; oltre `timeout` il processo si termina e la chiamata fallisce
