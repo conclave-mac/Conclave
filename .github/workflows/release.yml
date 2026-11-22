@@ -1,18 +1,17 @@
 # Un DMG per architettura, Apple Silicon e Intel (Node è il 95% dell'app: un DMG universale
 # pesava il doppio).
-# - Push su main: controlli + DMG come artifact (ogni commit ha la sua build di prova).
-# - Tag v* (es. v0.1.0): in più crea la GitHub Release con il DMG e i checksum.
-# - Avvio manuale (Actions ▸ Release ▸ Run workflow): come un push.
+# - Tag v* (es. v0.1.0): controlli, DMG provati e GitHub Release con i DMG e i checksum. Una sola build per versione:
+#   la versione dentro l'app viene dal tag, quindi una build di main non si potrebbe riusare (i push su main e le PR
+#   li controlla ci.yml, senza DMG).
+# - Avvio manuale (Actions ▸ Release ▸ Run workflow): DMG di prova come artifact, senza release.
 name: Release
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
-    paths-ignore: ["**.md", "docs/**"]
   workflow_dispatch:
 
-# Un push nuovo annulla la build superata dello stesso ramo (le release non si annullano).
+# Un avvio manuale nuovo annulla quello superato dello stesso ramo (le release non si annullano).
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
@@ -77,7 +76,8 @@ jobs:
             COUNCIL_DATA="$DATA" PORT=0 arch "-$2" "$1/Contents/MacOS/node" --disable-warning=ExperimentalWarning \
               "$1/Contents/Resources/server/src/server.ts" > "$DATA/out.log" 2>&1 &
             local PID=$!
-            for i in {1..30}; do grep -q COUNCIL_PORT "$DATA/out.log" && break; sleep 1; done
+            # Sotto Rosetta, su un runner appena avviato, la prima traduzione di Node può superare i 30 s.
+            for i in {1..90}; do grep -q COUNCIL_PORT "$DATA/out.log" && break; sleep 1; done
             kill $PID 2>/dev/null || true
             grep -q COUNCIL_PORT "$DATA/out.log" && echo "  motore $2: OK ($(arch -$2 "$1/Contents/MacOS/node" -v))" \
               || { echo "  motore $2: FALLITO"; cat "$DATA/out.log"; return 1; }
