@@ -114,7 +114,7 @@ const INITIAL_EXCERPT_MAX = 1000;
 // sviluppato da Anthropic», firma «— Qwen»): i nomi da soli restano, perché la domanda può parlare proprio di
 // quei modelli, e alcuni sono parole comuni (Claude Monet, il mistral, il segno dei Gemini).
 const MODEL_NAME = "(?:Claude|Gemini|Gemma|ChatGPT|(?:GPT|gpt)(?:-?(?:OSS|oss)|-?\\d[\\w.]*)?|Qwen[\\d.]*|Nemotron|Mistral|Mixtral|Llama|DeepSeek|Kimi|Grok)";
-const MODEL_TIER = "(?:[ -](?:\\d[\\w.]*|Sonnet|Opus|Haiku|Flash|Pro|Lite|Ultra|Large|Small|Medium|Nano|Super|OSS|Instruct))*";
+const MODEL_TIER = "(?:[ -](?:\\d\\w*(?:\\.\\d+)*|Sonnet|Opus|Haiku|Flash|Pro|Lite|Ultra|Large|Small|Medium|Nano|Super|OSS|Instruct))*";
 /** Dopo il nome non deve seguire un'altra parola maiuscola: «Come Claude Monet» è una persona. */
 const NOT_SURNAME = "(?![ \\t]+\\p{Lu})";
 const ARTICLE = "(?:(?:un|una|il|a|an|the)\\s+)?(?:(?:modello|model|assistente|assistant|IA|AI)\\s+)?";
@@ -450,7 +450,7 @@ export function conversationBlock(c: Conversation, full: boolean, nonce: string 
   }
   if (c.verdict) parts.push(`Verdetto del consiglio:\n${clip(c.verdict)}`);
   else if (c.answers.length) {
-    parts.push(`Il consiglio non ha emesso un verdetto. Ultime posizioni dei membri:\n${c.answers.map((a, i) => `### Posizione ${i + 1}\n${cut(a, TURN0_ANSWER_MAX)}`).join("\n\n")}`);
+    parts.push(`Il consiglio non ha emesso un verdetto. Ultime posizioni dei membri:\n${c.answers.map((a, i) => `### Posizione ${i + 1}\n${cut(maskSelfIds(a), TURN0_ANSWER_MAX)}`).join("\n\n")}`);
   }
   if (c.exchanges.length) {
     const firstFull = Math.max(0, c.exchanges.length - EXCHANGES_FULL);

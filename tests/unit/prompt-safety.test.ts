@@ -152,3 +152,9 @@ test("mascheramento senza falsi positivi", () => {
   ];
   for (const t of keep) assert.equal(maskSelfIds(t), t);
 });
+
+test("il mascheramento non si mangia il punto finale né i numeri di versione", () => {
+  assert.equal(maskSelfIds("Ciao! Sono Qwen 3."), "Ciao! Sono [nome nascosto].");
+  assert.equal(maskSelfIds("Sono Gemini 3.1 Pro."), "Sono [nome nascosto].");
+  assert.equal(maskSelfIds("Versione 2.5 di Python."), "Versione 2.5 di Python.");
+});
