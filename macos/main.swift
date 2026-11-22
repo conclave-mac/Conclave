@@ -499,6 +499,11 @@ final class ServerController {
         p.terminate()
         guard exited.wait(timeout: .now() + stopGrace) == .timedOut else { return }
         NSLog("Conclave: il motore non si è chiuso entro %.0f s, lo si termina con SIGKILL", stopGrace)
+        // Prima i figli (processi `claude -p`): senza lo `shutdown` del motore continuerebbero a consumare l'abbonamento.
+        let children = Process()
+        children.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        children.arguments = ["-KILL", "-P", String(p.processIdentifier)]
+        if (try? children.run()) != nil { children.waitUntilExit() }
         kill(p.processIdentifier, SIGKILL)
         _ = exited.wait(timeout: .now() + 2)
     }
