@@ -65,6 +65,8 @@ interface Debater {
   critique?: string;
   revised?: string;
   final?: string;
+  /** Round saltati (1 critica, 2 revisione, 3 posizione finale): note per il giudice. */
+  skipped?: number[];
 }
 
 const LETTERS = "ABCDEFGHIJKL";
@@ -93,6 +95,8 @@ const DELTA_EVERY_MS = 50;
  *  30 s dall'inizio del round (la Claude CLI impiega ~24 s anche quando gli altri finiscono in 3). */
 const STRAGGLER_GRACE_MS = 15_000;
 const STRAGGLER_FLOOR_MS = 30_000;
+/** Numero del round per fase, per le note al giudice sui round saltati. */
+const ROUND_OF: Record<string, number> = { critique: 1, revise: 2, final: 3 };
 const JUDGE_BUDGET_MS = 150_000;
 /**
  * Giudice e risposta rapida che stanno scrivendo: fino a 240 s, come il tetto della fase del verdetto (che resta
@@ -483,7 +487,7 @@ export async function runDebate(
           // Senza risposta iniziale il modello esce; nei round successivi salta il round,
           // mantiene la posizione precedente e rientra nel round dopo.
           let error = raw;
-          if (keep) { keep(d); error = `ha saltato questo round (${raw})`; } else d.alive = false;
+          if (keep) { keep(d); (d.skipped ??= []).push(ROUND_OF[name] ?? 0); error = `ha saltato questo round (${raw})`; } else d.alive = false;
           failure(ctx, name, d.def.id, error, code);
         } finally {
           finished(run, ok);
@@ -498,6 +502,9 @@ export async function runDebate(
   const byLetter = (a: P.Labeled, b: P.Labeled) => a.label.localeCompare(b.label);
   const others = (d: Debater, pick: (x: Debater) => string | undefined): P.Labeled[] =>
     alive().filter((x) => x !== d && pick(x)).map((x) => ({ label: x.letter, text: pick(x)! })).sort(byLetter);
+
+  // Avvocato del diavolo estratto a caso nel round di critica (serve anche alle note per il giudice).
+  let randomDevil: Debater | null = null;
 
   try {
     if (opts.webSearch) {
@@ -521,7 +528,7 @@ export async function runDebate(
       const hasDevil = alive().some((d) => roles[d.def.id] === "devil");
       const free = alive().filter((d) => !roles[d.def.id]);
       const pool = free.length ? free : alive();
-      const randomDevil = hasDevil ? null : pool[Math.floor(Math.random() * pool.length)];
+      randomDevil = hasDevil ? null : pool[Math.floor(Math.random() * pool.length)];
       await phase(
         "critique",
         (d) => P.critiquePrompt(question, d.initial!, others(d, (x) => x.initial), d === randomDevil ? "devil" : roles[d.def.id] ?? null, material, d.letter),
@@ -564,7 +571,15 @@ export async function runDebate(
     emit({ type: "phase", phase: "verdict" });
     const judges = chainOf(chosenJudge, alive().map((d) => d.def), opts.claudeModel, models).slice(0, JUDGE_CHAIN_MAX);
     const initials = ds.filter((d) => d.initial).map((d) => ({ label: d.letter, text: d.initial! })).sort(byLetter);
-    const judgeUser = P.judgePrompt(question, finals, critiques, parent, material, initials);
+    // Note per il giudice: ruolo (solo se il round di critica c'è stato), round saltati, risposte troncate.
+    const roles = opts.roles ?? {};
+    const critiqueHeld = ds.some((d) => d.critique);
+    const meta: Record<string, P.MemberMeta> = Object.fromEntries(ds.filter((d) => d.initial).map((d) => [d.letter, {
+      role: critiqueHeld ? (d === randomDevil ? "devil" : roles[d.def.id] ?? null) : null,
+      skippedRounds: d.skipped ?? [],
+      truncated: [d.initial, d.critique, d.revised, d.final].some(P.isTruncated),
+    }]));
+    const judgeUser = P.judgePrompt(question, finals, critiques, parent, material, initials, meta);
     let verdict: string | undefined;
     let title: string | null = null;
     let confidence: P.Confidence = null;
