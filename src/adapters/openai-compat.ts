@@ -7,6 +7,12 @@ const TIMEOUT_MS = 120_000;
 const MAX_RETRIES = 2;
 const ATTEMPT_WITH_RESERVE_MS = 35_000;
 /**
+ * Streaming: tempo massimo di un tentativo. Chi sta scrivendo lo fermano l'attesa senza pezzi e il tetto di chi
+ * chiama (orchestrator.ts: fino a 180 s per i partecipanti e 240 s per giudice e risposta rapida che scrivono
+ * ancora allo scadere del tetto normale); qui solo una rete di sicurezza che non li tagli prima.
+ */
+const STREAM_TIMEOUT_MS = 240_000;
+/**
  * Streaming: tempo massimo senza alcun dato dal provider. 20 s dai tempi reali (nov 2026, risposte intere):
  * Gemini al 90° percentile 11 s, GPT-OSS al massimo 8 s, Claude CLI 24–26 s ma con i primi pezzi dopo
  * l'avvio del processo; Nemotron (OpenRouter, fino a 57 s) manda commenti e ragionamento mentre pensa.
@@ -472,7 +478,7 @@ export async function chatOpenAI(p: Provider, models: string[], req: ChatRequest
         // Con una riserva il primo testo deve arrivare entro 35 s come prima (un modello in coda su OpenRouter
         // manda solo commenti e terrebbe vivo il tentativo fino al tetto dell'intervento).
         const text = await once(p, model, { ...r, ...(hasNext && req.onText ? { firstTextMs: ATTEMPT_WITH_RESERVE_MS } : {}) },
-          req.timeoutMs ?? (hasNext && !req.onText ? ATTEMPT_WITH_RESERVE_MS : TIMEOUT_MS));
+          req.timeoutMs ?? (req.onText ? STREAM_TIMEOUT_MS : hasNext ? ATTEMPT_WITH_RESERVE_MS : TIMEOUT_MS));
         // Le immagini erano la causa del 400 solo se il solo testo passa: allora non si riprovano più.
         if (withoutImages && !imagesTooBig) imageRefused.add(model);
         return { text, ms: Date.now() - started, model };
