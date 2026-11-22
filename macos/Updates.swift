@@ -50,18 +50,8 @@ enum UpdateCheck {
         return testAPI != nil && u.scheme == "http" && u.host == "127.0.0.1"
     }
 
-    /// Confronto numerico per componenti ("0.10.0" > "0.9.1"); i suffissi come "-beta" si ignorano.
-    static func isNewer(_ a: String, than b: String) -> Bool {
-        let parts = { (s: String) in
-            s.split(separator: "-")[0].split(separator: ".").map { Int($0.filter(\.isNumber)) ?? 0 }
-        }
-        let x = parts(a), y = parts(b)
-        for i in 0..<max(x.count, y.count) {
-            let l = i < x.count ? x[i] : 0, r = i < y.count ? y[i] : 0
-            if l != r { return l > r }
-        }
-        return false
-    }
+    /// Confronto numerico per componenti (vedi `ReleaseText.isNewer`).
+    static func isNewer(_ a: String, than b: String) -> Bool { ReleaseText.isNewer(a, than: b) }
 
     /// Legge la risposta di GitHub.
     static func parse(_ data: Data) -> Release? {
@@ -79,30 +69,8 @@ enum UpdateCheck {
         return Release(version: version, notes: j["body"] as? String ?? "", page: page, assets: assets)
     }
 
-    /// Note della release in testo semplice per l'avviso. Toglie le parti che GitHub genera da sé
-    /// (`--generate-notes`: "Full Changelog", "What's Changed", "by @utente in <link>") e i segni
-    /// Markdown, che `NSAlert` mostrerebbe così come sono. Vuoto se non resta niente di utile.
-    static func readableNotes(_ raw: String) -> String {
-        var out: [String] = []
-        for var line in raw.components(separatedBy: .newlines) {
-            line = line.trimmingCharacters(in: .whitespaces)
-            let lower = line.lowercased()
-            if line.isEmpty || lower.contains("full changelog") || lower.hasPrefix("## what's changed")
-                || lower.hasPrefix("## new contributors") || lower.contains("made their first contribution") { continue }
-            // "* fix qualcosa by @utente in https://github.com/…/pull/12" → "fix qualcosa"
-            if let r = line.range(of: #" by @[\w-]+ in https?://\S+$"#, options: .regularExpression) {
-                line.removeSubrange(r)
-            }
-            line = line.replacingOccurrences(of: #"\[([^\]]*)\]\([^)]*\)"#, with: "$1", options: .regularExpression)
-            line = line.replacingOccurrences(of: #"https?://\S+"#, with: "", options: .regularExpression)
-            line = line.replacingOccurrences(of: #"\*\*|__|`"#, with: "", options: .regularExpression)
-            line = line.replacingOccurrences(of: #"^#+\s*"#, with: "", options: .regularExpression)
-            line = line.replacingOccurrences(of: #"^[*-]\s+"#, with: "• ", options: .regularExpression)
-            line = line.trimmingCharacters(in: .whitespaces)
-            if !line.isEmpty, line != "•" { out.append(line) }
-        }
-        return out.joined(separator: "\n")
-    }
+    /// Note della release in testo semplice (vedi `ReleaseText.readableNotes`).
+    static func readableNotes(_ raw: String) -> String { ReleaseText.readableNotes(raw) }
 
     /// Ultima versione pubblicata; nil se non ce n'è ancora nessuna.
     static func latest() async throws -> Release? {

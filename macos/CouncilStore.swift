@@ -58,19 +58,6 @@ struct PhaseState: Identifiable, Equatable {
     var startedAt: Date? = nil    // quando è iniziata la fase (solo in diretta): per "In attesa · 12 s"
 }
 
-/// Titolo da mostrare per una discussione: quello scritto dal giudice o, finché manca
-/// (dibattito in corso, discussioni vecchie), l'inizio della domanda in poche parole.
-func debateTitle(_ title: String?, question: String) -> String {
-    if let t = title?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty { return t }
-    let q = question.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-    // Prima frase, se basta; altrimenti le prime parole.
-    let first = q.split(omittingEmptySubsequences: true, whereSeparator: { ".?!;:".contains($0) }).first.map(String.init) ?? q
-    let words = first.split(separator: " ")
-    let t = words.count <= 8 ? first + (first.count < q.count && q[q.index(q.startIndex, offsetBy: first.count)] == "?" ? "?" : "")
-        : words.prefix(7).joined(separator: " ") + "…"
-    return t.prefix(1).uppercased() + t.dropFirst()
-}
-
 struct DebateState: Equatable {
     let id: Int
     var question: String
@@ -1522,12 +1509,7 @@ extension CouncilStore {
     /// Ultimo valore di una riga macchina ("CAMBIAMENTI: minori", "FIDUCIA: alta") nel testo,
     /// anche con ** intorno o nella forma inglese; restituito in italiano.
     static func machineValue(_ text: String, keys: String, map: [String: String]) -> String? {
-        let words = map.keys.joined(separator: "|")
-        guard let re = try? NSRegularExpression(pattern: "(?:\(keys))[ \\t]*\\**[ \\t]*:[ \\t]*\\**[ \\t]*(\(words))\\b",
-                                                options: [.caseInsensitive]) else { return nil }
-        let ns = text as NSString
-        guard let m = re.matches(in: text, range: NSRange(location: 0, length: ns.length)).last else { return nil }
-        return map[ns.substring(with: m.range(at: 1)).lowercased()]
+        MachineLine.value(text, keys: keys, map: map)
     }
 
     private static let changeWords = ["nessuno": "nessuno", "minori": "minori", "sostanziali": "sostanziali",
