@@ -39,7 +39,13 @@ struct Keychain {
     /// con un prefisso (come `go-keyring-base64:`), così la lettura è univoca.
     private static let base64Prefix = "conclave-base64:"
 
-    /// Esegue `/usr/bin/security`; restituisce codice di uscita, stdout e stderr.
+    /// Attesa massima di un comando `security` (di solito 0,2–1 s). Larga perché un portachiavi bloccato
+    /// mostra la richiesta della password e l'utente deve avere il tempo di scriverla.
+    static let timeout: TimeInterval = 30
+
+    /// Esegue `/usr/bin/security`; restituisce codice di uscita, stdout e stderr. Il comando e la lettura
+    /// delle uscite girano su thread a parte; oltre `timeout` il processo si termina e la chiamata fallisce
+    /// con un errore: per chi chiama è una voce che non si legge, quindi non viene mai riscritta (KeyStore.write).
     private func run(_ args: [String], stdin: String? = nil) throws -> (Int32, String, String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
@@ -48,13 +54,37 @@ struct Keychain {
         process.standardOutput = out
         process.standardError = err
         process.standardInput = input
+        let ended = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in ended.signal() }
         try process.run()
-        if let stdin { input.fileHandleForWriting.write(Data(stdin.utf8)) }
+        // Le due uscite si leggono insieme: lette una dopo l'altra, un stderr pieno bloccherebbe `security`.
+        let reads = DispatchGroup()
+        let buffers = Buffers()
+        for (pipe, isOut) in [(out, true), (err, false)] {
+            DispatchQueue.global(qos: .userInitiated).async(group: reads) {
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                buffers.set(data, out: isOut)
+            }
+        }
+        if let stdin { try? input.fileHandleForWriting.write(contentsOf: Data(stdin.utf8)) }
         try? input.fileHandleForWriting.close()
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        guard ended.wait(timeout: .now() + Self.timeout) == .success else {
+            process.terminate()
+            if ended.wait(timeout: .now() + 1) == .timedOut { kill(process.processIdentifier, SIGKILL) }
+            throw KeychainError(status: errSecIO, account: args.count > 4 ? args[4] : "",
+                                detail: String(format: L("security non ha risposto entro %d s"), Int(Self.timeout)))
+        }
+        _ = reads.wait(timeout: .now() + 2)
+        let (outData, errData) = buffers.get()
         return (process.terminationStatus, String(decoding: outData, as: UTF8.self), String(decoding: errData, as: UTF8.self))
+    }
+
+    /// Uscite di `security` scritte dai thread di lettura.
+    private final class Buffers: @unchecked Sendable {
+        private let lock = NSLock()
+        private var out = Data(), err = Data()
+        func set(_ d: Data, out isOut: Bool) { lock.withLock { if isOut { out = d } else { err = d } } }
+        func get() -> (Data, Data) { lock.withLock { (out, err) } }
     }
 
     private func failure(_ account: String, _ code: Int32, _ stderr: String) -> KeychainError {
