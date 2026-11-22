@@ -167,12 +167,17 @@ enum AttachmentReader {
         guard let doc = PDFDocument(url: url) else { throw Failure(message: L("PDF non leggibile.")) }
         if doc.isLocked { throw Failure(message: L("PDF protetto da password.")) }
         if let s = doc.string, !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return s }
-        var images: [CGImage] = []
+        // Una pagina alla volta (resa e OCR) in un autoreleasepool: tenere in memoria 30 pagine a 200 dpi
+        // (fino a ~30 MB l'una) poteva arrivare a centinaia di MB.
+        var pages: [String] = []
         for i in 0..<min(doc.pageCount, 30) {
-            guard let page = doc.page(at: i), let img = render(page) else { continue }
-            images.append(img)
+            let text: String? = try autoreleasepool {
+                guard let page = doc.page(at: i), let img = render(page) else { return nil }
+                return try recognize(img)
+            }
+            if let text { pages.append(text) }
         }
-        return try ocr(images)
+        return try joined(pages)
     }
 
     /// Pagina del PDF come immagine a ~200 dpi, per l'OCR.
@@ -194,16 +199,22 @@ enum AttachmentReader {
 
     /// OCR con Vision (accurato, italiano e inglese); le immagini sono pagine in ordine.
     private static func ocr(_ images: [CGImage]) throws -> String {
-        var pages: [String] = []
-        for img in images {
-            let req = VNRecognizeTextRequest()
-            req.recognitionLevel = .accurate
-            req.recognitionLanguages = ["it-IT", "en-US"]
-            req.usesLanguageCorrection = true
-            try VNImageRequestHandler(cgImage: img, options: [:]).perform([req])
-            let lines = (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-            if !lines.isEmpty { pages.append(lines.joined(separator: "\n")) }
-        }
+        try joined(images.compactMap { try recognize($0) })
+    }
+
+    /// Testo riconosciuto in una pagina (nil se non ce n'è).
+    private static func recognize(_ img: CGImage) throws -> String? {
+        let req = VNRecognizeTextRequest()
+        req.recognitionLevel = .accurate
+        req.recognitionLanguages = ["it-IT", "en-US"]
+        req.usesLanguageCorrection = true
+        try VNImageRequestHandler(cgImage: img, options: [:]).perform([req])
+        let lines = (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
+    /// Pagine unite; errore se in nessuna c'era testo.
+    private static func joined(_ pages: [String]) throws -> String {
         let text = pages.joined(separator: "\n\n")
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw Failure(message: L("Nessun testo riconosciuto."))
