@@ -215,7 +215,8 @@ const SCENARIOS = {
   },
 
   // Ritardatario: la risposta iniziale lo aspetta (40 s < 45 s); nel round, quando gli altri hanno finito,
-  // ha ancora al massimo 30 s dall'inizio del round, poi salta il round senza uscire dal dibattito.
+  // ha ancora al massimo 30 s dall'inizio del round, ma chi sta scrivendo (lag manda pezzi per 40 s) non si
+  // taglia a metà (task tm, 22 nov 2026): finisce la critica. Il ritardatario muto resta fermato (scenario tm2).
   async lag() {
     const max = 180;
     const r = await debate("lag", ["ok-a", "ok-b", "lag"], 1, "ok-a", max * 1000);
@@ -223,10 +224,10 @@ const SCENARIOS = {
     if (bad) return [false, `${bad} dopo ${r.secs.toFixed(0)} s`, r.secs];
     if (!okMsgs(r.state, "lag", "initial").length) return [false, "risposta iniziale di lag non attesa", r.secs];
     const crit = msgs(r.state, "lag", "critique")[0];
-    if (!crit?.error?.includes("troppo lento")) return [false, `critica di lag: ${crit?.error ?? crit?.content?.slice(0, 40) ?? "assente"}`, r.secs];
-    // Iniziale ~40 s + round ~30 s + giudice: ben sotto i 40 + 45 s che servirebbero senza la regola.
-    if (r.secs > 80) return [false, `troppo lungo: ${r.secs.toFixed(0)} s`, r.secs];
-    return [true, `done in ${r.secs.toFixed(0)} s, lag atteso nella risposta iniziale e fermato nel round`, r.secs];
+    if (!crit?.content || crit.error) return [false, `critica di lag: ${crit?.error ?? "assente"}`, r.secs];
+    // Iniziale ~40 s + critica ~40 s + giudice: entro il tetto di sicurezza (180 s per intervento).
+    if (r.secs > 110) return [false, `troppo lungo: ${r.secs.toFixed(0)} s`, r.secs];
+    return [true, `done in ${r.secs.toFixed(0)} s, lag atteso nella risposta iniziale e lasciato finire nel round mentre scrive`, r.secs];
   },
 
   // Se resta un solo modello i round si saltano, ma va detto (nota salvata nella cronologia).
@@ -1511,7 +1512,7 @@ const DESCR = {
   p: "chiavi e token mai visibili", q: "permessi dei file dati",
   n: "voce resta sulla riserva", o: "limite token in uscita (OTPM)",
   m: "voce di famiglia: riserva se il principale si blocca",
-  a: "ok-a + ok-b, 3 round", b: "ok-a + ok-b + hang, 2 round", lag: "ritardatario fermato nel round", b2: "un solo modello rimasto", c: "flaky-critique rientra", d: "ratelimit con attesa",
+  a: "ok-a + ok-b, 3 round", b: "ok-a + ok-b + hang, 2 round", lag: "ritardatario che scrive lasciato finire nel round", b2: "un solo modello rimasto", c: "flaky-critique rientra", d: "ratelimit con attesa",
   e: "giudice hang → riserva", f: "html non alterato", g: "empty/crash500/gone esclusi", h: "huge 300k caratteri",
   i: "annullamento", j: "input non validi", l: "quota + length (extra)", k: "motore vivo alla fine",
   aa: "ricerca sul web via Groq finto", ab: "ricerca senza ricercatore disponibile", ac: "ricercatore bloccato",
@@ -2734,6 +2735,247 @@ SCENARIOS.rk = async function rk() {
 
 DESCR.rj = "nessuna risposta del motore in cache: Cache-Control no-store su GET, POST, errori e SSE";
 DESCR.rk = "durata del dibattito originale invariata dopo una domanda di seguito";
+
+// ---------- tm: tempi degli interventi, coda del provider e scelta del ricercatore ----------
+
+/**
+ * Provider finto con streaming vero per gli scenari tm. `plan(model, user, system)` restituisce il copione:
+ * `{ text }` risposta intera, oppure `{ silenceMs, commentEvery?, pieces, every, hang? }`: commenti SSE durante il
+ * silenzio, poi `pieces` pezzi di testo ogni `every` ms; con `hang` dopo l'ultimo pezzo il flusso resta aperto e muto.
+ * Ogni richiesta (non le prove "OK") finisce in `seen` con modello e istante.
+ */
+async function tmProvider(models, plan) {
+  const { createServer } = await import("node:http");
+  const seen = [];
+  const timers = new Set();
+  const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); return t; };
+  const srv = createServer(async (req, res) => {
+    let s = "";
+    for await (const c of req) s += c;
+    const json = (body) => { if (!res.destroyed) { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(body)); } };
+    if (req.method === "GET" && req.url.endsWith("/models")) return json({ data: models.map((id) => ({ id })) });
+    let body = {};
+    try { body = JSON.parse(s || "{}"); } catch { /* corpo non JSON */ }
+    const system = String(body.messages?.find((m) => m.role === "system")?.content ?? "");
+    const user = String(body.messages?.find((m) => m.role === "user")?.content ?? "");
+    const whole = (text) => json({ choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: text } }] });
+    if (user.trim() === "Scrivi solo: OK") return whole("OK");
+    seen.push({ model: body.model, at: Date.now(), user });
+    const p = plan(body.model, user, system) ?? { text: "Risposta di prova." };
+    if (p.text !== undefined || !body.stream) return whole(p.text ?? "Risposta di prova.");
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
+    const chunk = (delta, finish = null) => `data: ${JSON.stringify({ id: "tm", object: "chat.completion.chunk", model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+    const alive = () => !res.destroyed && !res.writableEnded;
+    res.write(chunk({ role: "assistant", content: "" }));
+    let comments;
+    if (p.commentEvery) comments = setInterval(() => { if (alive()) res.write(": in coda\n\n"); }, p.commentEvery);
+    res.on("close", () => clearInterval(comments));
+    later(() => {
+      clearInterval(comments);
+      let i = 0;
+      const next = () => {
+        if (!alive()) return;
+        if (i < p.pieces) { res.write(chunk({ content: i === p.pieces - 1 && !p.hang ? "FINE-TM." : `pezzo ${i} ` })); i++; later(next, p.every); return; }
+        if (p.hang) return; // muto, connessione aperta
+        res.write(chunk({}, "stop"));
+        res.write("data: [DONE]\n\n");
+        res.end();
+      };
+      next();
+    }, p.silenceMs ?? 0);
+  });
+  await new Promise((ok) => srv.listen(0, "127.0.0.1", ok));
+  return {
+    url: `http://127.0.0.1:${srv.address().port}/v1`, seen,
+    close() { timers.forEach(clearTimeout); srv.closeAllConnections?.(); srv.close(); },
+  };
+}
+
+const tmVoice = (id, model, extra = {}) => ({ id, label: id, kind: "openai", provider: "tm", family: id, model, default: false, ...extra });
+const tmJudgeText = "TITOLO: Prova\nAFFIDABILITÀ: alta\n\nVerdetto di prova.";
+/** Righe [tempi] del motore per una voce. */
+const tmTimes = (e, voice) => e.proc.log.filter((l) => l.includes("[tempi]") && l.includes(` voce=${voice} `));
+
+// Task 1: chi comincia a scrivere tardi (4 s di soli commenti) entro il tetto finisce anche oltre il tetto
+// (abbreviato a 6 s, tetto di sicurezza 12 s); chi si ferma a metà scade per l'attesa senza pezzi (3 s); chi
+// scrive senza fine si ferma al tetto di sicurezza. Più la riga dei tempi in server.log (task 3).
+SCENARIOS.tm1 = async function tm1() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const prov = await tmProvider(["slow", "stall", "endless", "fast"], (model, user, system) => {
+    if (/giudice/i.test(system)) return { text: tmJudgeText };
+    if (model === "slow") return { silenceMs: 4000, commentEvery: 1000, pieces: 24, every: 250 };
+    if (model === "stall") return { silenceMs: 1000, pieces: 24, every: 250, hang: true };
+    if (model === "endless") return { silenceMs: 500, pieces: 100_000, every: 250 };
+    return { silenceMs: 100, pieces: 3, every: 50 };
+  });
+  try {
+    const { e, call, waitDone } = await moEngine({
+      providers: { tm: { name: "Tempi", baseUrl: prov.url, keyEnv: "CHAOS_KEY" } },
+      judge: tmVoice("fast", "fast"),
+      models: ["slow", "stall", "endless", "fast"].map((m) => tmVoice(m, m)),
+    }, { COUNCIL_PARTICIPANT_BUDGET_MS: "6000", COUNCIL_STREAM_IDLE_MS: "3000" });
+    const r = await call("POST", "/api/debates", { question: QUESTION("tm1"), models: ["slow", "stall", "endless", "fast"], rounds: 0, judge: "fast", claudeModel: "sonnet" });
+    if (r.status !== 201) return [false, `POST → ${r.status}`, secs()];
+    const st = await waitDone(r.body.id, 60);
+    if (st?.status !== "done") return [false, `stato ${st?.status}`, secs()];
+    const one = (id) => (st.messages ?? []).find((m) => m.model_id === id && m.phase === "initial");
+    const wrong = [];
+    const slow = one("slow");
+    if (!slow?.content?.endsWith("FINE-TM.") || slow.error) wrong.push(`slow: ${slow?.error ?? "testo incompleto"}`);
+    const stall = one("stall");
+    if (!stall?.error || stall.error_code !== "timeout" || !/nessun testo/.test(stall.error)) wrong.push(`stall: ${stall?.error ?? "nessun errore"} (${stall?.error_code})`);
+    const endless = one("endless");
+    if (!endless?.error || !/non finita entro 12 s/.test(endless.error)) wrong.push(`endless: ${endless?.error ?? "nessun errore"}`);
+    const line = tmTimes(e, "slow").find((l) => l.includes("fase=initial"));
+    const m = line?.match(/modello=slow primo=(\d+) totale=(\d+) coda=\d+ esito=ok/);
+    if (!m) wrong.push(`riga dei tempi: ${line ?? "assente"}`);
+    else if (!(Number(m[1]) >= 3500 && Number(m[2]) >= 9000)) wrong.push(`tempi strani: ${line}`);
+    if (!tmTimes(e, "stall").some((l) => /esito=timeout/.test(l))) wrong.push("riga dei tempi di stall senza esito=timeout");
+    if (e.proc.log.some((l) => l.includes("[tempi]") && l.includes("pezzo"))) wrong.push("testo della risposta nella riga dei tempi");
+    if (wrong.length) return [false, wrong.slice(0, 4).join("; "), secs()];
+    return [true, `slow completo dopo il tetto (${m[2]} ms, primo pezzo a ${m[1]} ms), stall fermato dall'attesa, endless dal tetto di sicurezza`, secs()];
+  } finally {
+    prov.close();
+  }
+};
+DESCR.tm1 = "chi scrive allo scadere del tetto finisce; chi si ferma scade; riga dei tempi";
+
+// Task 1, ritardatario: nella critica l'ultimo comincia a scrivere a 26 s e finisce a ~36 s, oltre i 30 s del
+// ritardatario: non va tagliato. Un altro, nello stesso punto, si ferma a metà: salta il round per l'attesa.
+SCENARIOS.tm2 = async function tm2() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const critique = (user) => user.includes("Round 1 — Critica");
+  const prov = await tmProvider(["quick", "lag", "lagstop", "lagmute"], (model, user, system) => {
+    if (/giudice/i.test(system)) return { text: tmJudgeText };
+    if (model === "lag" && critique(user)) return { silenceMs: 26_000, commentEvery: 1000, pieces: 40, every: 250 };
+    if (model === "lagstop" && critique(user)) return { silenceMs: 26_000, commentEvery: 1000, pieces: 12, every: 250, hang: true };
+    // Solo commenti fino a 45 s: allo scadere del ritardatario non scrive, va fermato a ~30 s.
+    if (model === "lagmute" && critique(user)) return { silenceMs: 45_000, commentEvery: 1000, pieces: 3, every: 50 };
+    return { silenceMs: 100, pieces: 3, every: 50 };
+  });
+  try {
+    const { e, call, waitDone } = await moEngine({
+      providers: { tm: { name: "Tempi", baseUrl: prov.url, keyEnv: "CHAOS_KEY" } },
+      judge: tmVoice("quick", "quick"),
+      models: [tmVoice("quick", "quick"), tmVoice("quick2", "quick"), tmVoice("quick3", "quick"), tmVoice("lag", "lag"), tmVoice("lagstop", "lagstop"), tmVoice("lagmute", "lagmute")],
+    }, { COUNCIL_STREAM_IDLE_MS: "3000" });
+    const post = (tag, first, other) => call("POST", "/api/debates", { question: QUESTION(tag), models: [first, other], rounds: 1, judge: "quick", claudeModel: "sonnet" });
+    const [a, b, c] = await Promise.all([post("tm2a", "quick", "lag"), post("tm2b", "quick2", "lagstop"), post("tm2c", "quick3", "lagmute")]);
+    if ([a, b, c].some((r) => r.status !== 201)) return [false, `POST → ${a.status}/${b.status}/${c.status}`, secs()];
+    const [sa, sb, sc] = await Promise.all([waitDone(a.body.id, 90), waitDone(b.body.id, 90), waitDone(c.body.id, 90)]);
+    if (sa?.status !== "done" || sb?.status !== "done" || sc?.status !== "done") return [false, `stati ${sa?.status}/${sb?.status}/${sc?.status}`, secs()];
+    const crit = (st, id) => (st.messages ?? []).find((m) => m.model_id === id && m.phase === "critique");
+    const wrong = [];
+    const lag = crit(sa, "lag");
+    if (!lag?.content?.endsWith("FINE-TM.") || lag.error) wrong.push(`lag: ${lag?.error ?? "testo incompleto"}`);
+    const stop = crit(sb, "lagstop");
+    if (!stop?.error || !/ha saltato questo round/.test(stop.error)) wrong.push(`lagstop: ${stop?.error ?? "nessun errore"}`);
+    if (!tmTimes(e, "lagstop").some((l) => /fase=critique .*esito=late/.test(l))) wrong.push("lagstop senza riga esito=late");
+    const mute = crit(sc, "lagmute");
+    if (!mute?.error?.includes("troppo lento")) wrong.push(`lagmute: ${mute?.error ?? "non fermato"}`);
+    if (wrong.length) return [false, wrong.join("; "), secs()];
+    return [true, "il ritardatario che scrive finisce la critica; quello che si ferma o che tace salta il round", secs()];
+  } finally {
+    prov.close();
+  }
+};
+DESCR.tm2 = "ritardatario: chi sta scrivendo non si taglia, chi si ferma o tace sì";
+
+// Task 2 (P2.1 residuo): provider con un posto solo. Un dibattito lo occupa 40 s; la voce di famiglia dell'altro
+// (main con riserva res) aspetta in coda più dei 35 s del "primo testo con una riserva": quando ha il posto deve
+// rispondere main, non scadere né passare alla riserva.
+SCENARIOS.tm3 = async function tm3() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const prov = await tmProvider(["hog", "main", "res", "jm"], (model, user, system) => {
+    if (/giudice/i.test(system)) return { text: tmJudgeText };
+    if (model === "hog") return { silenceMs: 200, pieces: 80, every: 500 };
+    return { silenceMs: 100, pieces: 3, every: 50 };
+  });
+  try {
+    const { e, call, waitDone } = await moEngine({
+      providers: { tm: { name: "Un posto", baseUrl: prov.url, keyEnv: "CHAOS_KEY", maxConcurrent: 1 } },
+      judge: tmVoice("j", "jm"),
+      models: [tmVoice("hog", "hog"), tmVoice("fam", "main", { fallback: ["res"] }), tmVoice("j", "jm")],
+    });
+    const a = await call("POST", "/api/debates", { question: QUESTION("tm3a"), models: ["hog", "j"], rounds: 0, judge: "j", claudeModel: "sonnet" });
+    if (a.status !== 201) return [false, `POST a → ${a.status} ${a.body?.error}`, secs()];
+    for (let i = 0; i < 40 && !prov.seen.some((s) => s.model === "hog"); i++) await new Promise((ok) => setTimeout(ok, 250));
+    const b = await call("POST", "/api/debates", { question: QUESTION("tm3b"), models: ["fam", "j"], rounds: 0, judge: "j", claudeModel: "sonnet" });
+    if (b.status !== 201) return [false, `POST b → ${b.status} ${b.body?.error}`, secs()];
+    const [sa, sb] = await Promise.all([waitDone(a.body.id, 120), waitDone(b.body.id, 120)]);
+    if (sa?.status !== "done" || sb?.status !== "done") return [false, `stati ${sa?.status}/${sb?.status}`, secs()];
+    const fam = (sb.messages ?? []).filter((m) => m.model_id === "fam" && m.phase === "initial");
+    const hogAt = prov.seen.find((s) => s.model === "hog")?.at ?? 0;
+    const mainAt = prov.seen.find((s) => s.model === "main")?.at ?? 0;
+    const wrong = [];
+    if (fam.length !== 1 || fam[0].error || fam[0].model_used !== "main" || fam[0].replaced) {
+      wrong.push(`fam: ${fam.map((m) => m.error ?? `model_used ${m.model_used} replaced ${m.replaced}`).join(", ") || "assente"}`);
+    }
+    if (mainAt - hogAt < 36_000) wrong.push(`main chiamato dopo ${((mainAt - hogAt) / 1000).toFixed(0)} s: la coda non è durata oltre i 35 s`);
+    if (prov.seen.some((s) => s.model === "res")) wrong.push("chiamata la riserva res");
+    const line = tmTimes(e, "fam").find((l) => l.includes("fase=initial"));
+    if (!(Number(line?.match(/coda=(\d+)/)?.[1]) > 30_000)) wrong.push(`riga dei tempi senza la coda: ${line}`);
+    if (wrong.length) return [false, wrong.join("; "), secs()];
+    return [true, `fam in coda ${((mainAt - hogAt) / 1000).toFixed(0)} s, poi risponde main senza riserva`, secs()];
+  } finally {
+    prov.close();
+  }
+};
+DESCR.tm3 = "coda del provider oltre i 35 s del primo testo: niente scadenza né riserva";
+
+// Task 4: Claude fa la ricerca solo se è voce o giudice; altrimenti GPT-OSS su Groq (non scelto); senza Groq
+// nessuno, con la nota. Claude CLI finta (mai quella vera).
+SCENARIOS.tm4 = async function tm4() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const bin = await mkdtemp(join(tmpdir(), "council-chaos-bin-"));
+  extraDirs.push(bin);
+  await writeFile(join(bin, "claude"), `#!${process.execPath}\nprocess.stdin.resume();process.stdin.on("end",()=>{process.stdout.write(JSON.stringify({result:"TITOLO: Prova\\nAFFIDABILITÀ: alta\\n\\nFINTA-CLAUDE"}))});\n`);
+  await chmod(join(bin, "claude"), 0o755);
+  const base = (withGroq) => ({
+    providers: {
+      chaos: { name: "Chaos", baseUrl: `http://127.0.0.1:${mockPort}/v1`, keyEnv: "CHAOS_KEY" },
+      groq: { name: "Groq finto", baseUrl: `http://127.0.0.1:${mockPort}/v1`, keyEnv: withGroq ? "CHAOS_KEY" : "TM4_NO_KEY" },
+    },
+    judge: { id: "j", label: "Giudice", kind: "openai", provider: "chaos", model: "ok-a" },
+    models: [
+      { id: "ok-a", label: "A", kind: "openai", provider: "chaos", model: "ok-a", family: "ok-a", default: false },
+      { id: "ok-b", label: "B", kind: "openai", provider: "chaos", model: "ok-b", family: "ok-b", default: false },
+      { id: "fakeclaude", label: "Finta Claude", kind: "claude-cli", model: "sonnet", default: false },
+      { id: "gptoss", label: "GPT-OSS", kind: "openai", provider: "groq", model: "openai/gpt-oss-120b", family: "gpt-oss", default: false },
+    ],
+  });
+  const env = { PATH: `${bin}:${process.env.PATH}` };
+  const [one, two] = await Promise.all([moEngine(base(true), env), moEngine(base(false), env)]);
+  const wrong = [];
+  const ws1 = (await one.call("GET", "/api/models")).body?.webSearch;
+  if (ws1?.via !== "Claude" || ws1?.available !== true || ws1?.viaWithoutClaude !== "GPT-OSS (Groq)") wrong.push(`webSearch con Groq: ${JSON.stringify(ws1)}`);
+  const ws2 = (await two.call("GET", "/api/models")).body?.webSearch;
+  if (ws2?.via !== "Claude" || ws2?.viaWithoutClaude !== null) wrong.push(`webSearch senza Groq: ${JSON.stringify(ws2)}`);
+  const post = (eng, tag, models, judge) => eng.call("POST", "/api/debates", { question: QUESTION(tag), models, rounds: 0, judge, claudeModel: "haiku", webSearch: true });
+  const runs = await Promise.all([
+    post(one, "tm4a", ["ok-a", "ok-b"], "ok-a"),       // solo voci non Claude → GPT-OSS
+    post(one, "tm4b", ["ok-a", "ok-b"], "fakeclaude"), // Claude giudice → Claude
+    post(one, "tm4c", ["ok-a", "fakeclaude"], "ok-a"), // Claude voce → Claude
+    post(two, "tm4d", ["ok-a", "ok-b"], "ok-a"),       // né Claude né Groq → nota
+  ]);
+  if (runs.some((r) => r.status !== 201)) return [false, `POST → ${runs.map((r) => r.status).join("/")}`, secs()];
+  const states = await Promise.all(runs.map((r, i) => (i < 3 ? one : two).waitDone(r.body.id, 60)));
+  const research = (st) => (st?.messages ?? []).filter((m) => m.phase === "research").map((m) => m.model_id).join(",");
+  const want = ["research:gptoss", "research:fakeclaude", "research:fakeclaude", "_note"];
+  states.forEach((st, i) => {
+    if (st?.status !== "done") wrong.push(`tm4${"abcd"[i]}: stato ${st?.status}`);
+    else if (research(st) !== want[i]) wrong.push(`tm4${"abcd"[i]}: ricerca ${research(st) || "assente"} invece di ${want[i]}`);
+  });
+  const note = (states[3]?.messages ?? []).find((m) => m.model_id === "_note" && m.phase === "research")?.content ?? "";
+  if (states[3] && !/Ricerca sul web non disponibile/.test(note)) wrong.push(`nota: ${note}`);
+  if (wrong.length) return [false, wrong.slice(0, 4).join("; "), secs()];
+  return [true, "senza Claude scelto cerca GPT-OSS; Claude giudice o voce cerca Claude; senza Groq la nota", secs()];
+};
+DESCR.tm4 = "ricercatore: Claude solo se scelto, altrimenti GPT-OSS, altrimenti nota";
 
 // ---------- main ----------
 
