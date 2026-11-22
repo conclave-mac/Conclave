@@ -1432,7 +1432,8 @@ private struct TurnQuestion: View {
     let turn: DebateState
 
     private var kind: String {
-        turn.isQuick ? L("Domanda di seguito · risposta rapida") : L("Domanda di seguito · il consiglio ridiscute")
+        let base = turn.isQuick ? L("Domanda di seguito · risposta rapida") : L("Domanda di seguito · il consiglio ridiscute")
+        return CouncilStore.turnDuration(turn).map { base + " · " + $0 } ?? base
     }
 
     var body: some View {
