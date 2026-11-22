@@ -44,13 +44,49 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     /// Scelta valida in questa esecuzione (letta una volta all'avvio).
     static let launched = current
 
-    /// Riavvia l'app (apre una nuova istanza e chiude questa).
-    static func relaunch() {
-        let cfg = NSWorkspace.OpenConfiguration()
-        cfg.createsNewApplicationInstance = true
-        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: cfg) { _, _ in
-            DispatchQueue.main.async { NSApp.terminate(nil) }
+    /// Riavvio chiesto e chiusura in corso: lo script che riapre l'app parte in `applicationWillTerminate`.
+    /// Torna false se la chiusura viene annullata (Impostazioni non salvate), come gli aggiornamenti.
+    @MainActor static var relaunchPending = false
+
+    /// Riavvia l'app: chiude questa e la riapre solo dopo la sua uscita (mai due app e due motori insieme).
+    /// Con una discussione in corso chiede prima, perché il riavvio la interrompe.
+    @MainActor static func relaunch() {
+        if UpdateCheck.isBusy() {
+            let alert = NSAlert()
+            alert.messageText = L("Una discussione è in corso")
+            alert.informativeText = L("Il riavvio interrompe la discussione in corso.")
+            alert.addButton(withTitle: L("Riavvia ora"))
+            alert.addButton(withTitle: L("Annulla"))
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
+        relaunchPending = true
+        NSApp.terminate(nil)
+    }
+
+    /// Da `applicationWillTerminate`, dopo l'arresto del motore: uno script staccato aspetta che questo
+    /// processo esca (al massimo 60 s) e che finisca un eventuale script di aggiornamento (che riapre l'app da
+    /// sé o sostituisce il pacchetto: riaprirla prima farebbe saltare lo scambio), poi la riapre.
+    /// Con `COUNCIL_DATA` (prove) l'app si riapre con le stesse variabili, mai sui dati reali.
+    @MainActor static func launchIfPending() {
+        guard relaunchPending else { return }
+        relaunchPending = false
+        // Il nome dello script di aggiornamento arriva come argomento ("conclave-" + "update"): scritto per
+        // intero nel testo, `pgrep -f` troverebbe anche questo script.
+        let script = """
+        PID="$1" APP="$2" OTHER="conclave-$3"
+        for _ in $(seq 300); do kill -0 "$PID" 2>/dev/null || break; sleep 0.2; done
+        for _ in $(seq 450); do /usr/bin/pgrep -f "$OTHER" >/dev/null 2>&1 || break; sleep 0.2; done
+        env=()
+        for v in COUNCIL_DATA COUNCIL_MODELS COUNCIL_UPDATE_API; do [ -n "${!v}" ] && env+=(--env "$v=${!v}"); done
+        /usr/bin/open "${env[@]}" "$APP"
+        """
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["-c", script, "conclave-relaunch", String(getpid()), Bundle.main.bundleURL.path, "update"]
+        p.standardInput = FileHandle.nullDevice
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        try? p.run()
     }
 }
 

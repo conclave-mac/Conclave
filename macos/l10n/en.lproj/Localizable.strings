@@ -618,3 +618,5 @@
 "Togli il ruolo" = "Remove role";
 "1 ruolo assegnato" = "1 role assigned";
 "Giudice: %@ · ha anche partecipato al dibattito" = "Judge: %@ · also took part in the debate";
+"Il riavvio interrompe la discussione in corso." = "Restarting interrupts the discussion in progress.";
+"security non ha risposto entro %d s" = "security did not respond within %d s";
