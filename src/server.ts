@@ -3,7 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { config, isAvailable, findModel, PORT, selection, validateSelection, saveSelection, type ModelDef } from "./config.ts";
 import { medianMsByModel, JUDGE_KEY, createDebate, listDebates, getDebate, deleteDebate, renameDebate, saveAttachments, saveMessage, nextTurn, hasTurnZeroContent, startTurn, finishTurn, finishDebate } from "./db.ts";
 import { ROLES, type Role } from "./debate/prompts.ts";
-import { runDebate, runQuickAnswer, type DebateEvent, type Rounds } from "./debate/orchestrator.ts";
+import { runDebate, runQuickAnswer, withJudgeUsed, type DebateEvent, type Rounds } from "./debate/orchestrator.ts";
 import { buildConversation, discussionRoles } from "./debate/followup.ts";
 import type { Attachment } from "./debate/prompts.ts";
 import { findResearcher } from "./debate/research.ts";
@@ -482,7 +482,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
 
     if (req.method === "GET" && !sub) {
       const d = getDebate(id);
-      return d ? json(res, 200, { ...d, live: running.has(id) && d.status === "running" }) : json(res, 404, { error: "non trovato" });
+      return d ? json(res, 200, { ...d, messages: withJudgeUsed(d.messages), live: running.has(id) && d.status === "running" }) : json(res, 404, { error: "non trovato" });
     }
 
     // Rinomina dalla cronologia: `{title}` → `{ok, title}`. Non cambia `updated_at` (la cronologia non si riordina)

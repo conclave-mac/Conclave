@@ -47,7 +47,7 @@ export type DebateEvent = (
   | { type: "phase"; phase: Phase; note?: string }
   | { type: "message"; phase: Phase; modelId: string; text: string; ms: number; model?: string; replaced?: string; confidence?: "alta" | "media" | "bassa" | null }
   | { type: "error"; phase: Phase; modelId: string; error: string; error_code?: ErrorCode }
-  | { type: "done"; status: "done" | "failed" | "cancelled"; verdict?: string; title?: string; confidence?: "alta" | "media" | "bassa" | null; error?: string; error_code?: ErrorCode }
+  | { type: "done"; status: "done" | "failed" | "cancelled"; verdict?: string; title?: string; confidence?: "alta" | "media" | "bassa" | null; error?: string; error_code?: ErrorCode; judge_used?: JudgeUsed }
   /**
    * Streaming (additivo): pezzo di testo del messaggio in corso di `modelId` in `phase`. `reset` = il testo
    * sostituisce quello accumulato (riserva che riparte, "" = tentativo fallito a metà). Il messaggio completo
@@ -69,6 +69,36 @@ interface Debater {
   skipped?: number[];
   /** Almeno una risposta tagliata dal limite di token (lo dice l'adattatore, non il testo): nota per il giudice. */
   truncated?: boolean;
+}
+
+/**
+ * Giudice che ha scritto davvero il verdetto (anche una riserva della catena): campo additivo `judge_used` sul
+ * messaggio del verdetto in `GET /api/debates/:id` e sull'evento `done`. `participated`: è anche un partecipante.
+ * Si salva nella riga nascosta `_judge` (fase `judge`) del turno, che il server toglie dai messaggi.
+ */
+export type JudgeUsed = { id: string; label: string; participated: boolean };
+
+/**
+ * Messaggi per `GET /api/debates/:id`: le righe `_judge` diventano il campo `judge_used` del verdetto riuscito dello
+ * stesso turno e spariscono dall'elenco. Discussioni vecchie (senza `_judge`) e righe rovinate: nessun campo.
+ */
+export function withJudgeUsed<M extends { model_id: string; phase: string; content: string | null; error?: string | null; turn?: number }>(
+  messages: M[],
+): (M & { judge_used?: JudgeUsed })[] {
+  const byTurn = new Map<number, JudgeUsed>();
+  for (const m of messages) {
+    if (m.model_id !== "_judge" || !m.content) continue;
+    try {
+      const j = JSON.parse(m.content);
+      if (typeof j?.id === "string" && typeof j.label === "string" && typeof j.participated === "boolean") {
+        byTurn.set(m.turn ?? 0, { id: j.id, label: j.label, participated: j.participated });
+      }
+    } catch { /* riga rovinata: nessun campo */ }
+  }
+  return messages.filter((m) => m.model_id !== "_judge").map((m) => {
+    const j = m.phase === "verdict" && m.content && !m.error ? byTurn.get(m.turn ?? 0) : undefined;
+    return j && m.model_id === `judge:${j.id}` ? { ...m, judge_used: j } : m;
+  });
 }
 
 const LETTERS = "ABCDEFGHIJKL";
@@ -612,6 +642,7 @@ export async function runDebate(
     let verdict: string | undefined;
     let title: string | null = null;
     let confidence: P.Confidence = null;
+    let judgeUsed: JudgeUsed | undefined;
     await firstInChain(judges, ctx, async (j, budget, progress, queued) => {
       const live = streamer(ctx, "verdict", `judge:${j.id}`, P.draftVerdict);
       const tm = meter("verdict", j.id);
@@ -632,13 +663,15 @@ export async function runDebate(
       confidence = conf.confidence;
       verdict = j.id === chosenJudge.id ? split.verdict : `> Giudice di riserva: ${j.label} (${chosenJudge.label} non disponibile)\n\n${split.verdict}`;
       save(ctx, { model_id: `judge:${j.id}`, phase: "verdict", content: verdict, error: null, ms: r.ms, confidence });
+      judgeUsed = { id: j.id, label: j.label, participated: isParticipant(j, models) };
+      save(ctx, { model_id: "_judge", phase: "judge", content: JSON.stringify(judgeUsed), error: null, ms: null });
       emit({ type: "message", phase: "verdict", modelId: `judge:${j.id}`, text: verdict, ms: r.ms, confidence });
     }, (j, error, code) => failure(ctx, "verdict", `judge:${j.id}`, error, code), VERDICT_BUDGET_MS);
     if (!verdict) throw new CodedError("no_verdict", "Nessun giudice ha prodotto il verdetto.");
 
     // Titolo rinominato dall'utente durante il dibattito: resta quello, anche nell'evento.
     const shown = finish(ctx, "done", verdict, title, confidence);
-    emit({ type: "done", status: "done", verdict, ...(shown ? { title: shown } : {}), confidence });
+    emit({ type: "done", status: "done", verdict, ...(shown ? { title: shown } : {}), confidence, ...(judgeUsed ? { judge_used: judgeUsed } : {}) });
   } catch (e) {
     const cancelled = signal.aborted;
     const error = cancelled ? (turn > 0 ? "Turno annullato" : "Dibattito annullato") : redact((e as Error).message);
