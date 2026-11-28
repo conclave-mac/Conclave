@@ -14,6 +14,8 @@ export const MODELS = [
   "empty", "huge", "html", "flaky-critique", "length", "gone", "otpm", "leaky", "titleonly", "tpm", "lag",
   "stream-stall", "stream-cut", "stream-error", "drip",
   "roundquota",
+  // Gruppo motore (zd1): risposta completa che finisce citando l'avviso di troncatura (finish_reason "stop").
+  "tailmark",
 ];
 
 /** Finti modelli Gemini (non in MODELS: li usa solo lo scenario "bc"). "gemini-noimg" rifiuta con 400 le richieste con immagini. */
@@ -36,7 +38,7 @@ const probes = Object.create(null);  // prove del controllo d'avvio per modello
 const auths = Object.create(null);   // intestazione Authorization ricevuta per modello ("whoami")
 const seenPhase = new Set();         // "ratelimit": prima chiamata per fase già vista
 let hanging = 0;                     // connessioni "hang" ancora aperte
-/** Prompt ricevuti per scenario (solo scenari "web…", "att…", "conv…", "mo…" del gruppo motore e "zc…" del gruppo qualità): /prompts/<scenario>. */
+/** Prompt ricevuti per scenario (solo scenari "web…", "att…", "conv…", "mo…" e "zd…" del gruppo motore e "zc…" del gruppo qualità): /prompts/<scenario>. */
 const prompts = Object.create(null);
 
 /** Fase del dibattito ricavata dal prompt. */
@@ -217,7 +219,7 @@ async function handle(req, res) {
   calls[model] = (calls[model] ?? 0) + 1;
   const searching = Array.isArray(body.tools) && body.tools.some((t) => t?.type === "browser_search");
   const scenario = scenarioOf(user);
-  if (/^(web|att|conv|mo\d|zc\d)/.test(scenario)) {
+  if (/^(web|att|conv|mo\d|zc\d|zd\d)/.test(scenario)) {
     (prompts[scenario] ??= []).push({
       model, phase: searching ? "research" : phaseOf(system, user), system, user,
       images: images.length, imageUrls: images.map((u) => u.slice(0, 30)), tools: body.tools ?? null, reasoning_effort: body.reasoning_effort ?? null, max_tokens: body.max_tokens ?? null,
@@ -281,6 +283,8 @@ async function handle(req, res) {
       return send(res, 200, completion(model, okText(model, user)));
     case "length":
       return send(res, 200, completion(model, okText(model, user), "length"));
+    case "tailmark":
+      return send(res, 200, completion(model, `${okText(model, user)}\n\nCome diceva un'altra risposta: […risposta troncata dal limite di lunghezza]`, "stop"));
     case "otpm": {
       // Come Qwen su Groq gratis: rifiuta max_tokens oltre 1000.
       const mt = Number(body.max_tokens ?? 0);

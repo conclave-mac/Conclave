@@ -152,11 +152,12 @@ export function maskSelfIds(text: string): string {
   return SELF_ID.reduce((t, re) => t.replace(re, (_m, a: string, b: string) => `${a}${b}${HIDDEN_NAME}`), text);
 }
 
-/** Avviso che l'adattatore OpenAI-compat aggiunge a una risposta con `finish_reason: "length"`. */
+/**
+ * Avviso che gli adattatori aggiungono in fondo a una risposta tagliata dal limite di token, per chi la legge. Chi è
+ * stato troncato lo dice il risultato della chiamata (`ChatResult.truncated`), non questo testo: una risposta può
+ * finire citando l'avviso.
+ */
 export const TRUNCATION_MARK = "[…risposta troncata dal limite di lunghezza]";
-// L'adattatore mette l'avviso in fondo: solo lì conta (chi cita l'avviso a metà testo non è troncato).
-// Claude CLI non lo aggiunge mai: `finish_reason` non arriva oltre il testo dell'adattatore.
-export const isTruncated = (text: string | undefined) => !!text?.trimEnd().endsWith(TRUNCATION_MARK);
 const block = (items: Labeled[]) => items.map((i) => `### Risposta ${i.label}\n${clip(maskSelfIds(i.text))}`).join("\n\n");
 /** Critiche intestate con l'autore, non con il bersaglio: "### Risposta X" faceva credere che fossero rivolte a X. */
 const critiqueBlock = (items: Labeled[], own?: string) =>
@@ -209,8 +210,11 @@ export type Material = {
   /** Nonce dei delimitatori: assente = casuale per ogni prompt (fisso solo nei test). */
   nonce?: string;
   research?: { text: string; date: string };
-  /** Turno ≥ 1 della chat: conversazione già formattata (conversationBlock) e domanda originale. */
-  followup?: { conversation: string; original: string };
+  /**
+   * Turno ≥ 1 della chat: conversazione e domanda originale. Il blocco della conversazione (conversationBlock) lo
+   * scrive ogni prompt con il proprio nonce: uno solo per prompt, anche per il materiale della conversazione.
+   */
+  followup?: { conversation: Conversation; original: string };
 };
 
 const RESEARCH_MAX = 6000;
@@ -297,7 +301,8 @@ Elenco puntato: titolo della pagina e URL completo.`;
 }
 
 /** Turni ≥ 1: la conversazione precede la domanda, che diventa "NUOVA DOMANDA". */
-const head = (m?: Material) => (m?.followup ? `${m.followup.conversation}\n\nNUOVA DOMANDA:` : "DOMANDA:");
+const head = (m: Material | undefined, nonce: string) =>
+  (m?.followup ? `${conversationBlock(m.followup.conversation, false, nonce)}\n\nNUOVA DOMANDA:` : "DOMANDA:");
 
 /** Nei round intermedi dei turni ≥ 1 solo un richiamo breve: il quadro completo era nel prompt iniziale. */
 const roundHead = (m?: Material) => m?.followup
@@ -306,7 +311,7 @@ const roundHead = (m?: Material) => m?.followup
 
 export function initialPrompt(question: string, parent?: ParentContext, m?: Material): string {
   const nonce = nonceOf(m);
-  return `${contextBlock(parent, nonce)}${head(m)}\n${question}${attachmentsBlock(m, nonce)}${researchBlock(m, nonce)}
+  return `${contextBlock(parent, nonce)}${head(m, nonce)}\n${question}${attachmentsBlock(m, nonce)}${researchBlock(m, nonce)}
 
 Dai la tua risposta indipendente: prima la conclusione, poi il ragionamento essenziale e le ipotesi su cui si regge. Chiudi con una riga su cosa ti farebbe cambiare idea.`;
 }
@@ -389,7 +394,7 @@ export function judgePrompt(question: string, finals: Labeled[], critiques: Labe
   const titleLine = m?.followup ? "Produci il verdetto sulla NUOVA DOMANDA così:\n" : `Inizia con una riga esattamente in questo formato (la parola TITOLO resta in italiano, il titolo è nella lingua della domanda):
 TITOLO: titolo breve della discussione, al massimo 6 parole, senza virgolette né punto finale
 `;
-  return `${contextBlock(parent, nonce)}${m?.followup ? head(m) : "DOMANDA ORIGINALE:"}\n${question}${attachmentsBlock(m, nonce)}${researchBlock(m, nonce)}
+  return `${contextBlock(parent, nonce)}${m?.followup ? head(m, nonce) : "DOMANDA ORIGINALE:"}\n${question}${attachmentsBlock(m, nonce)}${researchBlock(m, nonce)}
 
 POSIZIONI FINALI DEI MEMBRI:\n${block(finals)}${init}${crit}${membersNotes(meta)}
 
@@ -453,7 +458,7 @@ const TURN0_ANSWER_MAX = 1500;
  * Blocco "CONVERSAZIONE FINORA" dei turni ≥ 1. `full` = allegati per intero (risposta rapida);
  * altrimenti solo un estratto (consiglio, che ha molti più prompt).
  */
-export function conversationBlock(c: Conversation, full: boolean, nonce: string = newNonce()): string {
+export function conversationBlock(c: Conversation, full: boolean, nonce: string): string {
   const parts = [`CONVERSAZIONE FINORA:\nDomanda originale:\n${cut(c.question, MAX_CHARS)}`];
   if (c.attachments.length) {
     const each = Math.floor((full ? ATTACH_QUICK_MAX : ATTACH_EXCERPT_MAX) / c.attachments.length);
@@ -501,9 +506,9 @@ Regole:
 - ${DATA_RULE}
 - Markdown semplice.`;
 
-export function quickPrompt(question: string, conversation: string, m?: Material): string {
+export function quickPrompt(question: string, conversation: Conversation, m?: Material): string {
   const nonce = nonceOf(m);
-  return `${conversation}\n\nNUOVA DOMANDA:\n${question}${attachmentsBlock(m, nonce)}${researchBlock(m, nonce)}
+  return `${conversationBlock(conversation, true, nonce)}\n\nNUOVA DOMANDA:\n${question}${attachmentsBlock(m, nonce)}${researchBlock(m, nonce)}
 
 Rispondi alla nuova domanda tenendo conto della conversazione.`;
 }

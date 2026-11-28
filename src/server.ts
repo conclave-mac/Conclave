@@ -1,9 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
-import { config, isAvailable, findModel, PORT, selection, validateSelection, saveSelection, type ModelDef } from "./config.ts";
+import { config, isAvailable, findModel, PORT, selection, pendingSelection, validateSelection, saveSelection, type ModelDef } from "./config.ts";
 import { medianMsByModel, JUDGE_KEY, createDebate, listDebates, getDebate, deleteDebate, renameDebate, saveAttachments, saveMessage, nextTurn, hasTurnZeroContent, startTurn, finishTurn, finishDebate } from "./db.ts";
 import { ROLES, type Role } from "./debate/prompts.ts";
-import { runDebate, runQuickAnswer, type DebateEvent, type Rounds } from "./debate/orchestrator.ts";
+import { runDebate, runQuickAnswer, withJudgeUsed, type DebateEvent, type Rounds } from "./debate/orchestrator.ts";
 import { buildConversation, discussionRoles } from "./debate/followup.ts";
 import type { Attachment } from "./debate/prompts.ts";
 import { findResearcher } from "./debate/research.ts";
@@ -347,7 +347,12 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     return json(res, 200, await probe(b.provider, b.model));
   }
 
-  if (req.method === "GET" && path === "/api/selection") return json(res, 200, selection);
+  // Con un riavvio rimandato ("Applica al termine") vale la selezione salvata, non quella ancora attiva: riaprendo le
+  // Impostazioni si vede l'ultima scelta. Campo additivo `pending: true` solo in quel caso.
+  if (req.method === "GET" && path === "/api/selection") {
+    const p = pendingSelection();
+    return json(res, 200, p ? { ...p, pending: true } : selection);
+  }
 
   if (req.method === "PUT" && path === "/api/selection") {
     if (!isJsonPost()) return json(res, 415, { error: "serve JSON" });
@@ -482,7 +487,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
 
     if (req.method === "GET" && !sub) {
       const d = getDebate(id);
-      return d ? json(res, 200, { ...d, live: running.has(id) && d.status === "running" }) : json(res, 404, { error: "non trovato" });
+      return d ? json(res, 200, { ...d, messages: withJudgeUsed(d.messages), live: running.has(id) && d.status === "running" }) : json(res, 404, { error: "non trovato" });
     }
 
     // Rinomina dalla cronologia: `{title}` → `{ok, title}`. Non cambia `updated_at` (la cronologia non si riordina)

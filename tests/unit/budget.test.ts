@@ -23,9 +23,30 @@ function writer(start: number, every: number, n: number, onEnd?: (progress: (t: 
   });
 }
 
-test("withBudget: chi scrive già allo scadere del tetto finisce", async () => {
-  const t = await withBudget(100, never, writer(60, 20, 8), 400); // pezzi da 60 a 200 ms, tetto 100
-  assert.equal(t, "xxxxxxxx");
+/** Avanza i timer finti a passi di 10 ms, lasciando girare le promesse tra un passo e l'altro, finché `done()` o `maxMs`. */
+async function advance(timers: { tick(ms: number): void }, maxMs: number, done: () => boolean): Promise<number> {
+  let ms = 0;
+  while (ms < maxMs && !done()) {
+    timers.tick(10);
+    ms += 10;
+    await new Promise((ok) => setImmediate(ok)); // setImmediate non è finto
+  }
+  return ms;
+}
+
+// Tempi finti: col Mac carico i timer veri scattavano in ritardo e il tetto di sicurezza (400 ms) poteva arrivare prima
+// della fine (220 ms). Con l'orologio finto l'ordine degli eventi è esatto e il test non dipende dal carico.
+test("withBudget: chi scrive già allo scadere del tetto finisce", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  let out: string | undefined, err: unknown;
+  const run = withBudget(100, never, writer(60, 20, 8), 400) // pezzi da 60 a 200 ms, fine a 220, tetto 100
+    .then((v) => { out = v; }, (e) => { err = e; });
+  const ms = await advance(t.mock.timers, 1000, () => out !== undefined || err !== undefined);
+  await run;
+  assert.equal(err, undefined);
+  assert.equal(out, "xxxxxxxx");
+  // Finito oltre il tetto normale (100 ms) e prima di quello di sicurezza (400 ms).
+  assert.ok(ms >= 220 && ms < 400, `finito a ${ms} ms`);
 });
 
 test("withBudget: senza testo allo scadere del tetto si ferma", async () => {

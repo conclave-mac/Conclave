@@ -600,6 +600,8 @@
 "Riprova o scegli un altro modello." = "Try again or choose another model.";
 "Claude non si avvia." = "Claude doesn't start.";
 "Controlla che Claude Code sia installato e collegato al tuo account." = "Check that Claude Code is installed and signed in to your account.";
+"Claude chiede un credito o un piano a parte per l'uso da altre app." = "Claude asks for separate credits or a separate plan for use from other apps.";
+"Usa un altro giudice o un'altra voce al posto di Claude." = "Use another judge or another voice instead of Claude.";
 "Errore del provider." = "Provider error.";
 "Riprova più tardi." = "Try again later.";
 "Nessun modello ha risposto." = "No model answered.";
