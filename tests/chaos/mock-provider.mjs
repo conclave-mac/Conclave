@@ -170,6 +170,9 @@ function completion(model, content, finish = "stop") {
 
 const err = (message, type = "error") => ({ error: { message, type } });
 
+/** Modelli finti del banco di valutazione, caricati solo quando servono. */
+const evalOracle = () => import("../eval/oracle.mjs");
+
 async function readJson(req) {
   let s = "";
   for await (const c of req) s += c;
@@ -183,6 +186,8 @@ async function handle(req, res) {
     // Groq finto con Qwen che vede le immagini (scenario "bc"): catalogo a parte, così le sostituzioni
     // degli altri scenari non scelgono mai questo modello.
     if (path.startsWith("/qwen/")) return send(res, 200, { object: "list", data: [{ id: QWEN_VISION, object: "model", owned_by: "chaos" }] });
+    // Banco di valutazione (tests/eval): catalogo a parte con i soli modelli finti "eval-*".
+    if (path.startsWith("/eval/")) return send(res, 200, { object: "list", data: (await evalOracle()).MODELS.map((id) => ({ id, object: "model", owned_by: "chaos" })) });
     return send(res, 200, { object: "list", data: [...MODELS, ...GEMINI_MODELS, ...SEARCH_MODELS, "paced", "whoami"].map((id) => ({ id, object: "model", owned_by: "chaos" })) });
   }
   const pm = path.match(/\/prompts\/([\w-]+)$/);
@@ -217,6 +222,12 @@ async function handle(req, res) {
       model, phase: searching ? "research" : phaseOf(system, user), system, user,
       images: images.length, imageUrls: images.map((u) => u.slice(0, 30)), tools: body.tools ?? null, reasoning_effort: body.reasoning_effort ?? null, max_tokens: body.max_tokens ?? null,
     });
+  }
+
+  // Banco di valutazione: risposte giuste o sbagliate prese da tests/eval/questions.json (null = errore 500).
+  if (model.startsWith("eval-")) {
+    const text = (await evalOracle()).reply(model, phaseOf(system, user), user);
+    return text === null ? send(res, 500, err("Internal server error (eval)", "server_error")) : send(res, 200, completion(model, text));
   }
 
   switch (model) {
