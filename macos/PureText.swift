@@ -81,3 +81,22 @@ enum RenameTitle {
     }
 }
 
+/// Giudice che ha davvero scritto il verdetto (`judge_used` sul messaggio del verdetto e sull'evento
+/// `done`): anche una riserva della catena. Assente nelle discussioni vecchie: allora vale il giudice scelto.
+struct JudgeUsed: Equatable {
+    let id: String
+    let label: String
+    /// È anche uno dei partecipanti del dibattito.
+    let participated: Bool
+
+    /// `{id, label, participated}`; nil se manca o se id ed etichetta sono vuoti.
+    init?(_ value: Any?) {
+        guard let o = value as? [String: Any] else { return nil }
+        let id = (o["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let label = (o["label"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !id.isEmpty || !label.isEmpty else { return nil }
+        self.id = id
+        self.label = label.isEmpty ? id : label
+        participated = o["participated"] as? Bool ?? false
+    }
+}

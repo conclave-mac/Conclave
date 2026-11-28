@@ -83,6 +83,12 @@ struct DebateState: Equatable {
     var phases: [PhaseState] = []
     var verdict: String?
     var verdictBy: String?
+    /// Giudice che ha davvero scritto il verdetto (`judge_used`, anche una riserva); nil con motori o
+    /// discussioni vecchie: allora valgono `verdictBy` e `judgeParticipated` come prima.
+    var verdictJudge: JudgeUsed?
+    /// Il giudice del verdetto ha anche partecipato: quello vero se noto, altrimenti quello scelto (solo
+    /// nel dibattito originale: per i turni il dato c'è solo con `judge_used`).
+    var verdictJudgeParticipated: Bool { verdictJudge?.participated ?? (turn == 0 && judgeParticipated) }
     /// Streaming: verdetto mentre il giudice lo scrive (senza righe TITOLO/AFFIDABILITÀ); nil quando
     /// arriva `verdict`. La sintesi del dibattito si sposta in fondo solo nel testo definitivo.
     var verdictDraft: String?
@@ -113,7 +119,7 @@ struct DebateState: Equatable {
         a.id == b.id && a.status == b.status && a.phases == b.phases && a.verdict == b.verdict
             && a.statusText == b.statusText && a.question == b.question && a.title == b.title && a.finishedAt == b.finishedAt
             && a.judging == b.judging && a.attachments == b.attachments && a.webSearch == b.webSearch
-            && a.verdictBy == b.verdictBy && a.verdictDraft == b.verdictDraft && a.confidence == b.confidence && a.turn == b.turn && a.mode == b.mode && a.answer == b.answer && a.turns == b.turns
+            && a.verdictBy == b.verdictBy && a.verdictJudge == b.verdictJudge && a.verdictDraft == b.verdictDraft && a.confidence == b.confidence && a.turn == b.turn && a.mode == b.mode && a.answer == b.answer && a.turns == b.turns
     }
 }
 
@@ -854,6 +860,7 @@ final class CouncilStore: ObservableObject {
                 d.verdictDraft = nil
                 d.verdict = text
                 d.verdictBy = judgeName(modelId.replacingOccurrences(of: "judge:", with: ""), in: d)
+                Self.applyJudgeUsed(e["judge_used"], into: &d)
                 if let c = e["confidence"] as? String { d.confidence = c }
             } else if phase == "answer" {
                 setAnswer(&d, modelId: modelId) {
@@ -903,6 +910,7 @@ final class CouncilStore: ObservableObject {
             d.judging = false
             d.finishedAt = .now
             if let c = e["confidence"] as? String { d.confidence = c }
+            Self.applyJudgeUsed(e["judge_used"], into: &d)
             Self.clearPartials(&d)
             let failure = (e["error"] as? String).map { ErrorText.text(code: e["error_code"] as? String, raw: $0) }
             d.statusText = status == "done" ? Self.statusText("done") : (failure ?? Self.statusText(status))
@@ -1065,6 +1073,14 @@ final class CouncilStore: ObservableObject {
         }
     }
 
+    /// `judge_used` del verdetto (messaggio o evento `done`): il nome nell'intestazione diventa quello del
+    /// giudice che ha scritto davvero, anche se è una riserva. Assente: resta il comportamento di prima.
+    private static func applyJudgeUsed(_ value: Any?, into d: inout DebateState) {
+        guard let j = JudgeUsed(value) else { return }
+        d.verdictJudge = j
+        d.verdictBy = j.label
+    }
+
     /// Nome del giudice nell'intestazione: "Claude Sonnet" (o solo "Claude" senza modello), altrimenti la voce.
     private func judgeLabel(_ id: String, claudeModel: String?) -> String {
         if id == "claude" { return claudeModel.map { "Claude \($0.capitalized)" } ?? "Claude" }
@@ -1136,6 +1152,7 @@ final class CouncilStore: ObservableObject {
             if phase == "verdict" {
                 if let v = m["content"] as? String {
                     d.verdictBy = judgeName(mid.replacingOccurrences(of: "judge:", with: ""), in: d)
+                    Self.applyJudgeUsed(m["judge_used"], into: &d)
                     // Il verdetto del dibattito originale arriva da `debates.verdict`.
                     if d.turn > 0 { d.verdict = v }
                     if let c = m["confidence"] as? String { d.confidence = c }

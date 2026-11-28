@@ -788,9 +788,9 @@ struct DebateView: View {
                     // pila pigra aveva due righe con lo stesso id nello stesso aggiornamento e restava
                     // bloccata sul segnaposto (e con lei la vista).
                     if debate.verdict != nil || (debate.isRunning && debate.judging) {
-                        DebateResult(store: store, debate: debate, text: debate.verdict, draft: debate.verdictDraft, verdictBy: debate.verdictBy,
-                                     judgeParticipated: debate.judgeParticipated,
-                                     confidence: debate.confidence, key: "verdict", copiedKey: $copiedKey, saveFile: saveFile)
+                        DebateResult(debate: debate, text: debate.verdict, draft: debate.verdictDraft, verdictBy: debate.verdictBy,
+                                     judgeParticipated: debate.verdictJudgeParticipated,
+                                     confidence: debate.confidence, key: "verdict", copiedKey: $copiedKey)
                             .accessibilityRotorEntry(id: "phase-verdict", in: rotorNS)
                             .readingRow("phase-verdict", reading)
                             .id("phase-verdict")
@@ -1406,8 +1406,8 @@ extension DebateView {
             }
             // Segnaposto e verdetto in una sola riga con un solo id (vedi il verdetto del dibattito).
             if t.verdict != nil || (t.isRunning && t.judging) {
-                DebateResult(store: store, debate: debate, text: t.verdict, draft: t.verdictDraft, verdictBy: t.verdictBy,
-                             confidence: t.confidence, key: "turn-\(n)", copiedKey: $copiedKey, saveFile: saveFile)
+                DebateResult(debate: debate, text: t.verdict, draft: t.verdictDraft, verdictBy: t.verdictBy,
+                             judgeParticipated: t.verdictJudgeParticipated, confidence: t.confidence, key: "turn-\(n)", copiedKey: $copiedKey)
                     .accessibilityElement(children: .contain)
                     .accessibilityLabel(String(format: L("Verdetto della domanda di seguito %d"), n))
                     .accessibilityRotorEntry(id: "turn-\(n)-verdict", in: rotorNS)
