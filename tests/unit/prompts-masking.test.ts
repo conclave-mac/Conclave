@@ -80,3 +80,14 @@ test("isTruncated: solo l'avviso in fondo al testo", () => {
   assert.ok(isTruncated(`testo\n\n${TRUNCATION_MARK}\n`));
   assert.ok(!isTruncated(`La risposta B finiva con «${TRUNCATION_MARK}», ma la mia è completa.`));
 });
+
+test("niente falso positivo su aziende citate in prima persona", () => {
+  for (const t of [
+    "Sono convinto che il chip progettato da NVIDIA sia il più veloce.",
+    "I am sure the H100 built by Nvidia is faster.",
+    "Io sono d'accordo con un modello di Google su questo punto.",
+    "Mi chiamo Luca e uso un assistente di Google.",
+  ]) assert.equal(maskSelfIds(t), t);
+  // Le autoidentificazioni vere restano mascherate.
+  assert.equal(maskSelfIds("I was trained by Google."), `I was trained by ${HIDDEN_NAME}.`);
+});

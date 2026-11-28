@@ -331,8 +331,17 @@ final class SettingsModel: ObservableObject {
         councilModels = cm
     }
 
+    /// Vero quando i valori del Portachiavi dell'ultima `reload()` sono arrivati.
+    private(set) var keysLoaded = false
+    private var loadedWaiters: [() -> Void] = []
+    /// Esegue `f` quando le chiavi sono lette (subito se lo sono già): `configuredCount` prima non vale.
+    func whenLoaded(_ f: @escaping () -> Void) {
+        if keysLoaded { f() } else { loadedWaiters.append(f) }
+    }
+
     func reload() {
         loadCouncilModels()
+        keysLoaded = false
         // Campi vuoti e "non cambiati" finché la lettura (fuori dal main actor) non arriva.
         keys = Dictionary(uniqueKeysWithValues: providers.keys.map { ($0, "") })
         loadedKeys = keys
@@ -353,6 +362,10 @@ final class SettingsModel: ObservableObject {
                 if !self.touched.contains(id) { self.keys[id] = value }
             }
             self.dirty = providers.keys.contains { self.isChanged($0) }
+            self.keysLoaded = true
+            let waiters = self.loadedWaiters
+            self.loadedWaiters = []
+            waiters.forEach { $0() }
         }
     }
 
@@ -1270,6 +1283,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     /// Come nei documenti delle app Mac: chiudendo con modifiche si chiede se salvarle.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // Salvataggio in corso (può attendere la password del Portachiavi): si chiude solo a scrittura finita.
+        if model.saving || ui.modelsSaving { NSSound.beep(); return false }
         guard hasUnsavedChanges else { return true }
         askToSave { [weak self] ok in if ok { self?.window?.close() } }   // close() non ripassa da qui
         return false
@@ -1278,6 +1293,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// ⌘Q con modifiche non salvate: la stessa domanda della chiusura, sulla finestra delle
     /// Impostazioni. Con `.terminateLater` sarà `reply` a dire se uscire (sempre dopo il ritorno).
     func shouldTerminate(reply: @escaping (Bool) -> Void) -> NSApplication.TerminateReply {
+        if model.saving || ui.modelsSaving {
+            window?.makeKeyAndOrderFront(nil)
+            NSSound.beep()
+            return .terminateCancel
+        }
         guard hasUnsavedChanges, let w = window, w.isVisible || w.isMiniaturized else { return .terminateNow }
         if w.isMiniaturized { w.deminiaturize(nil) }
         w.makeKeyAndOrderFront(nil)
@@ -1370,4 +1390,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     var hasAnyKey: Bool { model.configuredCount > 0 }
+    /// `f(hasAnyKey)` quando la lettura del Portachiavi è finita.
+    func whenKeysLoaded(_ f: @escaping (Bool) -> Void) {
+        model.whenLoaded { [weak self] in f(self?.hasAnyKey ?? false) }
+    }
 }
