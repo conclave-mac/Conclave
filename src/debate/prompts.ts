@@ -140,7 +140,9 @@ const SELF_ID: RegExp[] = [
   // In prima persona, nella stessa frase: «Sono [nome nascosto], addestrato da Google», «I'm an assistant from
   // Anthropic», «sono un modello di OpenAI». Per «di/from» serve un articolo indeterminativo davanti al modello
   // («sono d'accordo col modello di Google» non è un'autoidentificazione).
-  new RegExp(`()(${FIRST_PERSON}[^.:;!?\\n]{0,60}?(?:\\b${MADE_BY}|\\b(?:un|una|an|a)\\s+(?:[\\p{L}-]+\\s+){0,2}?(?:modello|model|assistente|assistant|IA|AI|LLM)(?:\\s+[\\p{L}-]+){0,2}?\\s+(?:di|from|of|by))\\s+)${COMPANY}`, "gu"),
+  // Tra la prima persona e l'azienda solo il nome del modello (anche già mascherato) e una virgola: «Sono convinto che
+  // il chip progettato da NVIDIA…» o «Mi chiamo Luca e uso un assistente di Google» non sono autoidentificazioni.
+  new RegExp(`()(${FIRST_PERSON}(?:\\s+(?:\\[nome nascosto\\]|${MODEL_NAME}${MODEL_TIER}))?,?(?:\\s+(?:stat[oa]|been))?\\s+(?:${MADE_BY}|(?:un|una|an|a)\\s+(?:[\\p{L}-]+\\s+){0,2}?(?:modello|model|assistente|assistant|IA|AI|LLM)(?:\\s+[\\p{L}-]+){0,2}?\\s+(?:di|from|of|by))\\s+)${COMPANY}`, "gu"),
   // Firma su una riga a sé: «— Claude».
   new RegExp(`^([ \\t]*)([-—–]+[ \\t]*)${MODEL_NAME}${MODEL_TIER}[ \\t]*$`, "gmu"),
 ];
