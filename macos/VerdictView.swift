@@ -1,11 +1,10 @@
 // Risultato di un dibattito o di un turno del consiglio: verdetto del giudice con affidabilità, azioni
-// (copia, esporta, condividi) e la sintesi del dibattito in fondo; segnaposto mentre il giudice scrive.
+// (copia e condividi: esporta e stampa stanno nella toolbar e nel menu File) e la sintesi del dibattito in fondo; segnaposto mentre il giudice scrive.
 
 import AppKit
 import SwiftUI
 
 struct DebateResult: View {
-    @ObservedObject var store: CouncilStore
     let debate: DebateState
     let text: String?
     /// Verdetto in arrivo (streaming): si mostra al posto del segnaposto finché non arriva `text`.
@@ -18,7 +17,6 @@ struct DebateResult: View {
     let key: String
     /// Verdetto appena copiato, per la spunta sul pulsante (stato della vista del dibattito).
     @Binding var copiedKey: String?
-    var saveFile: (_ filename: String, _ text: String) -> Void
     /// Zoom del testo (⌘+ ⌘-): le intestazioni della sintesi crescono con il testo del Markdown.
     @AppStorage(TextZoom.key) private var zoom = 1.0
 
@@ -41,9 +39,6 @@ struct DebateResult: View {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
                     .foregroundStyle(copied ? AnyShapeStyle(Brand.success) : AnyShapeStyle(Brand.secondaryText))
                     .contentTransition(.symbolEffect(.replace))
-            }
-            IconButton(L("Esporta come Markdown…"), symbol: "arrow.down.doc") {
-                if let e = store.exportMarkdown() { saveFile(e.filename, e.text) }
             }
             ShareLink(item: verdict, subject: Text(debate.displayTitle)) {
                 Image(systemName: "square.and.arrow.up")

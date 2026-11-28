@@ -71,6 +71,29 @@ check(MachineLine.value("Confidence: High", keys: "FIDUCIA|CONFIDENCE", map: tru
 check(MachineLine.value("FIDUCIA: bassa\n…\nFIDUCIA: media", keys: "FIDUCIA|CONFIDENCE", map: trust), "media", "vale l'ultima")
 check(MachineLine.value("nessuna riga", keys: "FIDUCIA|CONFIDENCE", map: trust), nil, "assente")
 
+// MARK: RenameTitle
+
+check(RenameTitle.clean("  Titolo  "), "Titolo", "spazi ai lati tolti")
+check(RenameTitle.clean("riga uno\nriga due"), "riga uno riga due", "a capo diventa spazio")
+check(RenameTitle.clean("a\r\nb\n\nc"), "a b c", "a capo di Windows e righe vuote")
+check(RenameTitle.clean(" \n "), "", "solo spazi e a capo: vuoto")
+check(RenameTitle.clean("\tTab\t"), "Tab", "tabulazioni ai lati tolte")
+check(RenameTitle.clean("Città è già"), "Città è già", "accenti invariati")
+check(RenameTitle.maxLength, 120, "limite uguale al motore")
+
+// MARK: JudgeUsed
+
+check(JudgeUsed(["id": "gemini", "label": "Gemini", "participated": true]),
+      JudgeUsed(["id": "gemini", "label": "Gemini", "participated": true]), "campi letti")
+check(JudgeUsed(["id": "gemini", "label": "Gemini 3.5 Flash", "participated": true])?.label, "Gemini 3.5 Flash", "etichetta")
+check(JudgeUsed(["id": "gemini", "label": "Gemini", "participated": true])?.participated, true, "ha partecipato")
+check(JudgeUsed(["id": "gpt-oss", "label": "GPT-OSS"])?.participated, false, "participated assente = false")
+check(JudgeUsed(["id": "qwen"])?.label, "qwen", "senza etichetta: l'id")
+check(JudgeUsed(["id": "", "label": " "]) == nil, true, "vuoto: nessun giudice")
+check(JudgeUsed(nil) == nil, true, "assente (discussioni vecchie)")
+check(JudgeUsed(NSNull()) == nil, true, "null")
+check(JudgeUsed("gemini") == nil, true, "tipo sbagliato")
+
 if failures.isEmpty {
     print("swift: \(total) prove, tutte passate")
 } else {
