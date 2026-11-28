@@ -282,6 +282,18 @@ final class SettingsModel: ObservableObject {
     private var loadedKeys: [String: String] = [:]
     @Published var tests: [String: TestState] = [:]
     @Published var dirty = false
+    /// Salvataggio in corso (il Portachiavi può aspettare la password fino a 120 s): l'interfaccia resta libera.
+    @Published var saving = false
+    /// Chiavi modificate dall'utente dopo l'ultimo reload(): una lettura lenta non le sovrascrive.
+    private var touched: Set<String> = []
+    private var reloadGeneration = 0
+    /// Sessione effimera senza cache su disco per le prove verso i provider.
+    private static let session: URLSession = {
+        let c = URLSessionConfiguration.ephemeral
+        c.requestCachePolicy = .reloadIgnoringLocalCacheData
+        c.urlCache = nil
+        return URLSession(configuration: c)
+    }()
     let providers: [String: ProviderConfig]
     var councilModels: [String: [CouncilModel]] = [:]   // per provider id
     var onSaved: (() -> Void)?
@@ -321,11 +333,27 @@ final class SettingsModel: ObservableObject {
 
     func reload() {
         loadCouncilModels()
-        let stored = KeyStore.read(providers.values.map(\.keyEnv))
-        keys = Dictionary(uniqueKeysWithValues: providers.map { ($0.key, stored[$0.value.keyEnv] ?? "") })
+        // Campi vuoti e "non cambiati" finché la lettura (fuori dal main actor) non arriva.
+        keys = Dictionary(uniqueKeysWithValues: providers.keys.map { ($0, "") })
         loadedKeys = keys
+        touched = []
         tests = [:]
         dirty = false
+        reloadGeneration += 1
+        let generation = reloadGeneration
+        let names = providers.values.map(\.keyEnv)
+        let providers = self.providers
+        Task { [weak self] in
+            let stored = await Task.detached { KeyStore.read(names) }.value
+            guard let self, generation == self.reloadGeneration else { return }
+            for (id, p) in providers {
+                let value = stored[p.keyEnv] ?? ""
+                self.loadedKeys[id] = value
+                // Quello che l'utente ha già scritto nel frattempo non si tocca.
+                if !self.touched.contains(id) { self.keys[id] = value }
+            }
+            self.dirty = providers.keys.contains { self.isChanged($0) }
+        }
     }
 
     var configuredCount: Int { keys.values.filter { !$0.isEmpty }.count }
@@ -341,6 +369,7 @@ final class SettingsModel: ObservableObject {
             // I campi riscrivono lo stesso valore quando compaiono: conta solo un cambiamento vero.
             guard v != (self.keys[id] ?? "") else { return }
             self.keys[id] = v
+            self.touched.insert(id)
             self.tests[id] = .idle
             self.dirty = true
         })
@@ -357,7 +386,7 @@ final class SettingsModel: ObservableObject {
         req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         Task {
             do {
-                let (_, resp) = try await URLSession.shared.data(for: req)
+                let (_, resp) = try await Self.session.data(for: req)
                 let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
                 if code == 200 {
                     tests[id] = await probeModels(id, p, key)
@@ -390,7 +419,7 @@ final class SettingsModel: ObservableObject {
                     "model": name, "max_tokens": 200,
                     "messages": [["role": "user", "content": "Scrivi solo: OK"]],
                 ])
-                let code = ((try? await URLSession.shared.data(for: req))?.1 as? HTTPURLResponse)?.statusCode ?? 0
+                let code = ((try? await Self.session.data(for: req))?.1 as? HTTPURLResponse)?.statusCode ?? 0
                 codes.append(code)
                 if code == 200 { break }
             }
@@ -410,12 +439,18 @@ final class SettingsModel: ObservableObject {
         return .ok(working.isEmpty ? L("Funziona: la chiave è valida.") : String(format: L("Funziona: rispondono %@."), list(working)))
     }
 
-    func save() throws {
+    func save() async throws {
+        guard !saving else { return }
         var values: [String: String] = [:]
-        for (id, p) in providers where (keys[id] ?? "") != (loadedKeys[id] ?? "") { values[p.keyEnv] = keys[id] ?? "" }
-        try KeyStore.write(values)
-        loadedKeys = keys
-        dirty = false
+        var savedIDs: [String: String] = [:]
+        for (id, p) in providers where isChanged(id) { values[p.keyEnv] = keys[id] ?? ""; savedIDs[id] = keys[id] ?? "" }
+        saving = true
+        defer { saving = false }
+        let toWrite = values
+        try await Task.detached { try KeyStore.write(toWrite) }.value
+        // Si segna salvato solo ciò che è stato scritto: una modifica fatta durante il salvataggio resta da salvare.
+        for (id, v) in savedIDs { loadedKeys[id] = v }
+        dirty = providers.keys.contains { isChanged($0) }
         onSaved?()
     }
 }
@@ -943,12 +978,19 @@ struct SettingsView: View {
                 }
                 Spacer()
                 // Senza Esc: nei campi Esc deve solo annullare la modifica, non chiudere e perdere tutto.
+                if model.saving {
+                    ProgressView().controlSize(.small)
+                    Text(L("Salvataggio…")).foregroundStyle(Brand.secondaryText)
+                }
                 Button("Annulla") { model.reload(); close() }
+                    .disabled(model.saving)
                 Button("Salva e attiva") {
-                    do { try model.save(); ui.keysError = nil; close() } catch { ui.keysError = error.localizedDescription }
+                    Task {
+                        do { try await model.save(); ui.keysError = nil; close() } catch { ui.keysError = error.localizedDescription }
+                    }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(!model.dirty)
+                .disabled(!model.dirty || model.saving)
             }
         }
     }
@@ -1271,19 +1313,19 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// Salva le pagine con modifiche; se un salvataggio non riesce la finestra resta aperta
     /// sulla pagina dell'errore.
     private func save(_ done: @escaping (Bool) -> Void) {
-        if model.dirty {
-            do {
-                try model.save()
-                ui.keysError = nil
-            } catch {
-                ui.keysError = error.localizedDescription
-                nav.tab = .keys
-                return done(false)
-            }
-        }
-        guard models.dirty else { return done(true) }
-        ui.modelsSaving = true
         Task {
+            if model.dirty {
+                do {
+                    try await model.save()
+                    ui.keysError = nil
+                } catch {
+                    ui.keysError = error.localizedDescription
+                    nav.tab = .keys
+                    return done(false)
+                }
+            }
+            guard models.dirty else { return done(true) }
+            ui.modelsSaving = true
             do {
                 try await models.save()
                 ui.modelsError = nil
