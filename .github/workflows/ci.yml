@@ -36,6 +36,8 @@ jobs:
       - name: Prove Swift
         run: tests/swift/run.sh
       - run: npm run test:chaos
+      # Banco di valutazione col mock (prova di struttura, ~20 s): mai provider veri in CI.
+      - run: npm run eval
 
       - name: Compilazione dell'app
         # Le PR non hanno i secrets del certificato: firma ad-hoc dichiarata.

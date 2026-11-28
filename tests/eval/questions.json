@@ -1,0 +1,666 @@
+[
+  {
+    "id": "ue-stati-2024",
+    "kind": "fatto-datato",
+    "question": "Al 1° gennaio 2024, quanti Stati membri aveva l'Unione Europea?",
+    "answer": "27",
+    "check": {
+      "type": "number",
+      "value": 27
+    },
+    "mock": {
+      "right": "27 Stati membri.",
+      "wrong": "28 Stati membri, Regno Unito compreso."
+    }
+  },
+  {
+    "id": "euro-paesi-2024",
+    "kind": "fatto-datato",
+    "question": "Al 1° gennaio 2024, quanti Paesi dell'Unione Europea usavano l'euro come moneta ufficiale?",
+    "answer": "20 (la Croazia dal 2023)",
+    "check": {
+      "type": "number",
+      "value": 20
+    },
+    "mock": {
+      "right": "20 Paesi: l'ultima ad aderire è stata la Croazia.",
+      "wrong": "19 Paesi dell'eurozona."
+    }
+  },
+  {
+    "id": "onu-membri-2024",
+    "kind": "fatto-datato",
+    "question": "Al 1° gennaio 2024, quanti Stati membri aveva l'ONU?",
+    "answer": "193",
+    "check": {
+      "type": "number",
+      "value": 193
+    },
+    "mock": {
+      "right": "193 Stati membri.",
+      "wrong": "195 Stati membri."
+    }
+  },
+  {
+    "id": "presidente-italia-2024",
+    "kind": "fatto-datato",
+    "question": "Chi era il Presidente della Repubblica Italiana il 1° gennaio 2024?",
+    "answer": "Sergio Mattarella",
+    "check": {
+      "type": "regex",
+      "pattern": "mattarella"
+    },
+    "mock": {
+      "right": "Sergio Mattarella, rieletto nel 2022.",
+      "wrong": "Giorgio Napolitano."
+    }
+  },
+  {
+    "id": "mondiali-2022",
+    "kind": "fatto-datato",
+    "question": "Quale nazionale ha vinto i Mondiali di calcio maschili del 2022?",
+    "answer": "Argentina",
+    "check": {
+      "type": "regex",
+      "pattern": "argentin",
+      "not": "^\\W*(?:la )?francia\\b"
+    },
+    "mock": {
+      "right": "L'Argentina, battendo la Francia ai rigori.",
+      "wrong": "La Francia."
+    }
+  },
+  {
+    "id": "pianeti-2006",
+    "kind": "fatto-datato",
+    "question": "Dopo la decisione dell'Unione Astronomica Internazionale del 2006, quanti pianeti ha il Sistema solare?",
+    "answer": "8",
+    "check": {
+      "type": "number",
+      "value": 8
+    },
+    "mock": {
+      "right": "8 pianeti: Plutone è un pianeta nano.",
+      "wrong": "9 pianeti, Plutone compreso."
+    }
+  },
+  {
+    "id": "everest-2020",
+    "kind": "fatto-datato",
+    "question": "Secondo la misurazione congiunta di Cina e Nepal del 2020, quanto è alto l'Everest in metri?",
+    "answer": "8848,86 m",
+    "check": {
+      "type": "number",
+      "value": 8848.86,
+      "tol": 0.5
+    },
+    "mock": {
+      "right": "8848,86 metri.",
+      "wrong": "8850 metri."
+    }
+  },
+  {
+    "id": "muro-berlino",
+    "kind": "fatto-datato",
+    "question": "In che anno è caduto il Muro di Berlino (scrivi l'anno, es. 1975)?",
+    "answer": "1989",
+    "check": {
+      "type": "number",
+      "value": 1989
+    },
+    "mock": {
+      "right": "Nel 1989, il 9 novembre.",
+      "wrong": "Nel 1991."
+    }
+  },
+  {
+    "id": "euro-banconote",
+    "kind": "fatto-datato",
+    "question": "In che anno sono entrate in circolazione le banconote in euro (scrivi l'anno, es. 1995)?",
+    "answer": "2002",
+    "check": {
+      "type": "number",
+      "value": 2002
+    },
+    "mock": {
+      "right": "Nel 2002, il 1° gennaio.",
+      "wrong": "Nel 1999."
+    }
+  },
+  {
+    "id": "capitale-australia",
+    "kind": "fatto",
+    "question": "Qual è la capitale dell'Australia?",
+    "answer": "Canberra",
+    "check": {
+      "type": "regex",
+      "pattern": "canberra"
+    },
+    "mock": {
+      "right": "Canberra.",
+      "wrong": "Sydney."
+    }
+  },
+  {
+    "id": "simbolo-w",
+    "kind": "fatto",
+    "question": "Quale elemento chimico ha il simbolo W?",
+    "answer": "tungsteno (wolframio)",
+    "check": {
+      "type": "any",
+      "patterns": [
+        "tungst",
+        "wolfram"
+      ]
+    },
+    "mock": {
+      "right": "Il tungsteno, detto anche wolframio.",
+      "wrong": "L'osmio."
+    }
+  },
+  {
+    "id": "promessi-sposi",
+    "kind": "fatto",
+    "question": "Chi ha scritto «I promessi sposi»?",
+    "answer": "Alessandro Manzoni",
+    "check": {
+      "type": "regex",
+      "pattern": "manzoni"
+    },
+    "mock": {
+      "right": "Alessandro Manzoni.",
+      "wrong": "Giovanni Verga."
+    }
+  },
+  {
+    "id": "oceano-grande",
+    "kind": "fatto",
+    "question": "Qual è l'oceano più grande della Terra?",
+    "answer": "Pacifico",
+    "check": {
+      "type": "regex",
+      "pattern": "pacific"
+    },
+    "mock": {
+      "right": "L'oceano Pacifico.",
+      "wrong": "L'oceano Atlantico."
+    }
+  },
+  {
+    "id": "luce-velocita",
+    "kind": "fatto",
+    "question": "Quanto vale esattamente la velocità della luce nel vuoto in metri al secondo?",
+    "answer": "299 792 458 m/s",
+    "check": {
+      "type": "number",
+      "value": 299792458
+    },
+    "mock": {
+      "right": "299.792.458 m/s, valore esatto per definizione.",
+      "wrong": "300.000.000 m/s esatti."
+    }
+  },
+  {
+    "id": "ebollizione-f",
+    "kind": "fatto",
+    "question": "A quanti gradi Fahrenheit bolle l'acqua al livello del mare?",
+    "answer": "212 °F",
+    "check": {
+      "type": "number",
+      "value": 212
+    },
+    "mock": {
+      "right": "212 °F.",
+      "wrong": "100 °F."
+    }
+  },
+  {
+    "id": "primi-100",
+    "kind": "fatto",
+    "question": "Quanti numeri primi ci sono minori di 100?",
+    "answer": "25",
+    "check": {
+      "type": "number",
+      "value": 25
+    },
+    "mock": {
+      "right": "25 numeri primi.",
+      "wrong": "24 numeri primi."
+    }
+  },
+  {
+    "id": "molt-17-23",
+    "kind": "calcolo",
+    "question": "Quanto fa 17 × 23?",
+    "answer": "391",
+    "check": {
+      "type": "number",
+      "value": 391
+    },
+    "mock": {
+      "right": "391.",
+      "wrong": "381."
+    }
+  },
+  {
+    "id": "perc-15-240",
+    "kind": "calcolo",
+    "question": "Quanto è il 15% di 240?",
+    "answer": "36",
+    "check": {
+      "type": "number",
+      "value": 36
+    },
+    "mock": {
+      "right": "36.",
+      "wrong": "32."
+    }
+  },
+  {
+    "id": "interesse-composto",
+    "kind": "calcolo",
+    "question": "1000 € al 5% annuo di interesse composto per 3 anni: quanto diventano (in euro, con due decimali)?",
+    "answer": "1157,63 €",
+    "check": {
+      "type": "number",
+      "value": 1157.63,
+      "tol": 0.01
+    },
+    "mock": {
+      "right": "1157,63 €.",
+      "wrong": "1150,00 € (interesse semplice)."
+    }
+  },
+  {
+    "id": "velocita-media",
+    "kind": "calcolo",
+    "question": "Un treno percorre 150 km in 1 ora e 30 minuti. Qual è la sua velocità media in km/h?",
+    "answer": "100 km/h",
+    "check": {
+      "type": "number",
+      "value": 100
+    },
+    "mock": {
+      "right": "100 km/h.",
+      "wrong": "115 km/h."
+    }
+  },
+  {
+    "id": "potenza-2-10",
+    "kind": "calcolo",
+    "question": "Quanto fa 2 elevato alla decima?",
+    "answer": "1024",
+    "check": {
+      "type": "number",
+      "value": 1024
+    },
+    "mock": {
+      "right": "1024.",
+      "wrong": "1000."
+    }
+  },
+  {
+    "id": "giorni-marzo-2024",
+    "kind": "calcolo",
+    "question": "Quanti giorni ci sono dal 1° marzo 2024 al 1° aprile 2024 (escluso il giorno di partenza)?",
+    "answer": "31",
+    "check": {
+      "type": "number",
+      "value": 31
+    },
+    "mock": {
+      "right": "31 giorni.",
+      "wrong": "30 giorni."
+    }
+  },
+  {
+    "id": "febbraio-2100",
+    "kind": "calcolo",
+    "question": "Quanti giorni avrà febbraio nell'anno 2100?",
+    "answer": "28 (il 2100 non è bisestile)",
+    "check": {
+      "type": "number",
+      "value": 28
+    },
+    "mock": {
+      "right": "28 giorni: il 2100 non è bisestile.",
+      "wrong": "29 giorni, perché è divisibile per 4."
+    }
+  },
+  {
+    "id": "miglia-km",
+    "kind": "calcolo",
+    "question": "Quanti chilometri sono 5 miglia terrestri (con due decimali)?",
+    "answer": "8,05 km",
+    "check": {
+      "type": "number",
+      "value": 8.05,
+      "tol": 0.02
+    },
+    "mock": {
+      "right": "8,05 km.",
+      "wrong": "8,00 km."
+    }
+  },
+  {
+    "id": "area-cerchio",
+    "kind": "calcolo",
+    "question": "Qual è l'area di un cerchio di raggio 3 cm, in cm² con due decimali?",
+    "answer": "28,27 cm²",
+    "check": {
+      "type": "number",
+      "value": 28.27,
+      "tol": 0.02
+    },
+    "mock": {
+      "right": "28,27 cm².",
+      "wrong": "18,85 cm²."
+    }
+  },
+  {
+    "id": "base-3",
+    "kind": "calcolo",
+    "question": "Quanto fa 2 + 2 scritto in base 3?",
+    "answer": "11",
+    "check": {
+      "type": "number",
+      "value": 11
+    },
+    "mock": {
+      "right": "11 in base 3.",
+      "wrong": "4 anche in base 3."
+    }
+  },
+  {
+    "id": "mazza-palla",
+    "kind": "trappola",
+    "question": "Una mazza e una palla costano in tutto 1,10 €. La mazza costa 1 € più della palla. Quanto costa la palla?",
+    "answer": "0,05 €",
+    "check": {
+      "type": "number",
+      "value": 0.05,
+      "tol": 0.001
+    },
+    "mock": {
+      "right": "0,05 €: la mazza costa 1,05 €.",
+      "wrong": "0,10 €."
+    }
+  },
+  {
+    "id": "macchine-pezzi",
+    "kind": "trappola",
+    "question": "Se 5 macchine producono 5 pezzi in 5 minuti, quanti minuti servono a 100 macchine per produrre 100 pezzi?",
+    "answer": "5 minuti",
+    "check": {
+      "type": "number",
+      "value": 5
+    },
+    "mock": {
+      "right": "5 minuti.",
+      "wrong": "100 minuti."
+    }
+  },
+  {
+    "id": "ninfee",
+    "kind": "trappola",
+    "question": "Le ninfee di uno stagno raddoppiano ogni giorno e coprono tutto lo stagno in 48 giorni. In quanti giorni ne coprono metà?",
+    "answer": "47",
+    "check": {
+      "type": "number",
+      "value": 47
+    },
+    "mock": {
+      "right": "47 giorni.",
+      "wrong": "24 giorni."
+    }
+  },
+  {
+    "id": "mesi-28",
+    "kind": "trappola",
+    "question": "Quanti mesi dell'anno hanno 28 giorni?",
+    "answer": "tutti e 12",
+    "check": {
+      "type": "any",
+      "patterns": [
+        "\\b12\\b",
+        "\\btutti\\b",
+        "\\bdodici\\b"
+      ]
+    },
+    "mock": {
+      "right": "Tutti e 12: ogni mese ha almeno 28 giorni.",
+      "wrong": "Uno solo, febbraio."
+    }
+  },
+  {
+    "id": "sopravvissuti",
+    "kind": "trappola",
+    "question": "Un aereo precipita esattamente sul confine tra Italia e Francia. In quale Paese si seppelliscono i sopravvissuti?",
+    "answer": "in nessuno: i sopravvissuti non si seppelliscono",
+    "check": {
+      "type": "any",
+      "patterns": [
+        "non si seppellisc",
+        "non vanno sepolti",
+        "sono vivi",
+        "\\bnessun"
+      ]
+    },
+    "mock": {
+      "right": "In nessuno: i sopravvissuti sono vivi e non si seppelliscono.",
+      "wrong": "In Italia, perché vale la nazionalità della compagnia."
+    }
+  },
+  {
+    "id": "strawberry-r",
+    "kind": "trappola",
+    "question": "Quante volte compare la lettera «r» nella parola inglese «strawberry»?",
+    "answer": "3",
+    "check": {
+      "type": "number",
+      "value": 3
+    },
+    "mock": {
+      "right": "3 volte.",
+      "wrong": "2 volte."
+    }
+  },
+  {
+    "id": "piume-ferro",
+    "kind": "trappola",
+    "question": "Pesa di più un chilo di piume o un chilo di ferro?",
+    "answer": "pesano uguale",
+    "check": {
+      "type": "any",
+      "patterns": [
+        "stesso",
+        "uguale",
+        "ugual",
+        "identic",
+        "nessuno dei due"
+      ],
+      "not": "^\\W*(?:pesa di piu )?(?:un chilo di |il )?ferro\\b"
+    },
+    "mock": {
+      "right": "Pesano uguale: un chilo è un chilo.",
+      "wrong": "Il ferro."
+    }
+  },
+  {
+    "id": "quinta-figlia",
+    "kind": "trappola",
+    "question": "Il padre di Maria ha cinque figlie: Lala, Lele, Lili, Lolo. Come si chiama la quinta?",
+    "answer": "Maria",
+    "check": {
+      "type": "regex",
+      "pattern": "\\bmaria\\b",
+      "not": "^\\W*lulu\\b"
+    },
+    "mock": {
+      "right": "Maria.",
+      "wrong": "Lulu."
+    }
+  },
+  {
+    "id": "monty-hall",
+    "kind": "trappola",
+    "question": "Al gioco di Monty Hall (tre porte, il conduttore apre una porta vuota tra le due non scelte), conviene cambiare porta? Rispondi sì o no e dai la probabilità di vincere cambiando.",
+    "answer": "sì, 2/3",
+    "check": {
+      "type": "all",
+      "patterns": [
+        "\\bsi\\b|conviene cambiare",
+        "2/3|66[,.]6|67 ?%"
+      ],
+      "not": "^\\W*no\\b"
+    },
+    "mock": {
+      "right": "Sì: cambiando si vince con probabilità 2/3.",
+      "wrong": "No: è indifferente, 50% in entrambi i casi."
+    }
+  },
+  {
+    "id": "decimali-9-11",
+    "kind": "trappola",
+    "question": "Quale numero è più grande: 9,11 o 9,9?",
+    "answer": "9,9",
+    "check": {
+      "type": "regex",
+      "pattern": "^\\W*9[,.]9\\b|piu grande e 9[,.]9\\b|9[,.]9 e (?:il )?piu grande",
+      "not": "^\\W*9[,.]11\\b"
+    },
+    "mock": {
+      "right": "9,9 è più grande di 9,11.",
+      "wrong": "9,11, perché 11 è più di 9."
+    }
+  },
+  {
+    "id": "sorpasso-secondo",
+    "kind": "trappola",
+    "question": "In una corsa sorpassi il secondo classificato. In che posizione sei?",
+    "answer": "secondo",
+    "check": {
+      "type": "regex",
+      "pattern": "second",
+      "not": "^\\W*(?:sei )?(?:il )?prim[oa]\\b"
+    },
+    "mock": {
+      "right": "Sei secondo: hai preso il suo posto.",
+      "wrong": "Primo."
+    }
+  },
+  {
+    "id": "mose-arca",
+    "kind": "trappola",
+    "question": "Quanti animali di ogni specie portò Mosè sull'arca?",
+    "answer": "nessuno: fu Noè",
+    "check": {
+      "type": "regex",
+      "pattern": "\\bnoe\\b"
+    },
+    "mock": {
+      "right": "Nessuno: sull'arca, secondo la Bibbia, c'era Noè, non Mosè.",
+      "wrong": "Due per ogni specie."
+    }
+  },
+  {
+    "id": "millennio",
+    "kind": "trappola",
+    "question": "In che anno è cominciato il terzo millennio dell'era cristiana (scrivi l'anno)?",
+    "answer": "2001",
+    "check": {
+      "type": "number",
+      "value": 2001
+    },
+    "mock": {
+      "right": "Nel 2001: non esiste l'anno zero.",
+      "wrong": "Nel 2000."
+    }
+  },
+  {
+    "id": "ordine-operazioni",
+    "kind": "ambigua",
+    "question": "Quanto fa 6/2(1+2)?",
+    "answer": "ambigua: 9 con la convenzione standard, 1 se la moltiplicazione implicita ha la precedenza",
+    "check": {
+      "type": "all",
+      "patterns": [
+        "\\b9\\b",
+        "ambigu|\\bfa 1\\b|\\b1 se\\b|\\bvale 1\\b"
+      ]
+    },
+    "mock": {
+      "right": "Con la convenzione standard fa 9; se la moltiplicazione implicita ha la precedenza fa 1: l'espressione è ambigua.",
+      "wrong": "Fa 1."
+    }
+  },
+  {
+    "id": "data-4-7",
+    "kind": "ambigua",
+    "question": "Che giorno è il 4/7/2024?",
+    "answer": "ambiguo: 4 luglio 2024 (formato europeo) o 7 aprile 2024 (formato statunitense)",
+    "check": {
+      "type": "all",
+      "patterns": [
+        "4 luglio|july 4",
+        "7 aprile|april 7"
+      ]
+    },
+    "mock": {
+      "right": "Nel formato europeo è il 4 luglio 2024; in quello statunitense il 7 aprile 2024.",
+      "wrong": "Il 4 luglio 2024."
+    }
+  },
+  {
+    "id": "miglio",
+    "kind": "ambigua",
+    "question": "Quanto è lungo un miglio in metri?",
+    "answer": "dipende: terrestre ~1609 m, nautico 1852 m",
+    "check": {
+      "type": "all",
+      "patterns": [
+        "1[.,]?609",
+        "1[.,]?852"
+      ]
+    },
+    "mock": {
+      "right": "Il miglio terrestre è circa 1609 m, quello nautico 1852 m.",
+      "wrong": "1609 metri."
+    }
+  },
+  {
+    "id": "billion",
+    "kind": "ambigua",
+    "question": "Un «billion» inglese a quanto corrisponde in italiano?",
+    "answer": "di solito un miliardo (10^9, scala corta); nella vecchia scala lunga britannica mille miliardi",
+    "check": {
+      "type": "all",
+      "patterns": [
+        "miliard",
+        "scala|britannic|un tempo|storic|10\\^12|mille miliardi"
+      ]
+    },
+    "mock": {
+      "right": "Oggi un miliardo (10^9, scala corta); nella vecchia scala lunga britannica valeva mille miliardi (10^12).",
+      "wrong": "Un bilione."
+    }
+  },
+  {
+    "id": "mercurio-tossico",
+    "kind": "ambigua",
+    "question": "Mercurio è tossico?",
+    "answer": "il metallo sì (soprattutto vapori e composti organici); il pianeta non è una sostanza",
+    "check": {
+      "type": "all",
+      "patterns": [
+        "metall|elemento|vapor",
+        "\\bsi\\b|tossic"
+      ],
+      "not": "^\\W*no\\b"
+    },
+    "mock": {
+      "right": "Sì, il metallo mercurio è tossico, soprattutto i vapori e i composti organici (il pianeta è un'altra cosa).",
+      "wrong": "No."
+    }
+  }
+]
