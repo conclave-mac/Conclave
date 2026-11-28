@@ -2977,6 +2977,235 @@ SCENARIOS.tm4 = async function tm4() {
 };
 DESCR.tm4 = "ricercatore: Claude solo se scelto, altrimenti GPT-OSS, altrimenti nota";
 
+
+// ---------- za: selezione, coda del giudice, rinomina ----------
+
+/**
+ * Provider finto per gli scenari za: models() dà la risposta di GET /models (null = HTTP 500), reply(model, user,
+ * system) il copione di una chat { text, delay } (risposta intera, non in streaming). Le prove "OK" rispondono subito.
+ */
+async function zaProvider(models, reply) {
+  const { createServer } = await import("node:http");
+  const timers = new Set();
+  const srv = createServer(async (req, res) => {
+    let s = "";
+    for await (const c of req) s += c;
+    const send = (status, body) => { if (!res.destroyed) { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(body)); } };
+    if (req.method === "GET" && req.url.endsWith("/models")) {
+      const list = models();
+      return list ? send(200, { data: list.map((id) => ({ id })) }) : send(500, { error: { message: "catalogo non disponibile" } });
+    }
+    let body = {};
+    try { body = JSON.parse(s || "{}"); } catch { /* corpo non JSON */ }
+    const system = String(body.messages?.find((m) => m.role === "system")?.content ?? "");
+    const user = String(body.messages?.find((m) => m.role === "user")?.content ?? "");
+    const done = (text) => send(200, { choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: text } }] });
+    if (user.trim() === "Scrivi solo: OK") return done("OK");
+    const p = reply(body.model, user, system);
+    const t = setTimeout(() => { timers.delete(t); done(p.text); }, p.delay ?? 300);
+    timers.add(t);
+  });
+  await new Promise((ok) => srv.listen(0, "127.0.0.1", ok));
+  return {
+    url: "http://127.0.0.1:" + srv.address().port,
+    close() { timers.forEach(clearTimeout); srv.closeAllConnections?.(); srv.close(); },
+  };
+}
+const zaVoice = (id, provider, model, family = id) => ({ id, label: id, kind: "openai", provider, family, model, default: false });
+const zaJudgeText = (title = "Titolo del giudice") => "TITOLO: " + title + "\nAFFIDABILITÀ: alta\n\nVerdetto di prova.";
+const zaReply = (judgeDelay = 300) => (model, user, system) =>
+  /giudice/i.test(system) ? { text: zaJudgeText(), delay: judgeDelay } : { text: "Risposta di prova.", delay: 300 };
+const zaIdle = async (call) => {
+  for (let i = 0; i < 150; i++) {
+    const r = await call("GET", "/api/models");
+    if (r.status === 200 && !r.body.checking) return true;
+    await new Promise((ok) => setTimeout(ok, 200));
+  }
+  return false;
+};
+
+// Task 1: una selezione salvata con PUT (in attesa del riavvio) non viene sovrascritta dal controllo dei modelli
+// che sostituisce un modello ritirato; la sostituzione si applica alla selezione nuova se contiene la stessa voce.
+SCENARIOS.za1 = async function za1() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const { readFile } = await import("node:fs/promises");
+  // All'avvio il catalogo non risponde (nessun ritiro rilevabile); poi m1 sparisce dall'elenco.
+  let listed = null;
+  const prov = await zaProvider(() => listed, zaReply());
+  try {
+    const { e, call } = await moEngine({
+      providers: { za: { name: "Za", baseUrl: prov.url + "/v1", keyEnv: "CHAOS_KEY" } },
+      judge: zaVoice("g", "za", "x2", "famg"),
+      models: [zaVoice("v1", "za", "m1", "fam1"), zaVoice("v2", "za", "x2", "fam2")],
+    });
+    const wanted = { auto: true, models: [
+      { id: "v1", label: "V1 scelta", kind: "openai", provider: "za", model: "m1", family: "fam1" },
+      { id: "v3", label: "V3 nuova", kind: "openai", provider: "za", model: "x2", family: "fam3" },
+    ] };
+    const put = await call("PUT", "/api/selection", wanted);
+    if (put.status !== 200) return [false, "PUT → " + put.status + " " + JSON.stringify(put.body), secs()];
+    const bad = await call("PUT", "/api/selection", { models: "niente" });
+    if (bad.status !== 400) return [false, "PUT non valido → " + bad.status + " (atteso 400)", secs()];
+    listed = ["x2"];
+    const h = await call("POST", "/api/health", {});
+    if (h.status !== 202) return [false, "POST /api/health → " + h.status, secs()];
+    if (!(await zaIdle(call))) return [false, "controllo dei modelli mai finito", secs()];
+    const saved = JSON.parse(await readFile(join(e.dir, "selection.json"), "utf8"));
+    const ids = saved.models.map((m) => m.id).join(",");
+    if (ids !== "v1,v3") return [false, "selection.json sovrascritta: voci " + ids + " invece di v1,v3", secs()];
+    const v1 = saved.models.find((m) => m.id === "v1");
+    if (v1.model !== "auto") return [false, "ritiro di m1 non applicato alla selezione nuova (v1 = " + v1.model + ")", secs()];
+    // La selezione attiva resta quella di prima fino al riavvio.
+    const active = (await call("GET", "/api/selection")).body;
+    if (active?.models?.map((m) => m.id).join(",") !== "v1,v2") return [false, "selezione attiva cambiata prima del riavvio", secs()];
+    return [true, "PUT conservata (v1,v3), ritiro di m1 applicato a v1, attiva invariata fino al riavvio", secs()];
+  } finally {
+    prov.close();
+  }
+};
+DESCR.za1 = "selezione salvata non sovrascritta dal controllo dei modelli";
+
+// Task 5: giudice e risposta rapida in coda sul provider (limite 1, posto occupato 20 s da un altro dibattito):
+// l'attesa non conta nel loro tempo (abbreviato a 6 s), quindi rispondono loro e non una riserva.
+SCENARIOS.za2 = async function za2() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const prov = await zaProvider(() => ["m-fa", "m-fb", "slow20", "m-j"], (model, user, system) =>
+    model === "slow20" ? { text: "Risposta lenta.", delay: 20_000 }
+      : /giudice/i.test(system) ? { text: zaJudgeText(), delay: 300 } : { text: "Risposta di prova.", delay: 300 });
+  try {
+    const { call, waitDone } = await moEngine({
+      providers: {
+        uno: { name: "Uno alla volta", baseUrl: prov.url + "/a", keyEnv: "CHAOS_KEY", maxConcurrent: 1 },
+        libero: { name: "Libero", baseUrl: prov.url + "/b", keyEnv: "CHAOS_KEY" },
+      },
+      judge: zaVoice("g", "libero", "m-fa", "famg"),
+      models: [zaVoice("fa", "libero", "m-fa"), zaVoice("fb", "libero", "m-fb"), zaVoice("slowv", "uno", "slow20"), zaVoice("jq", "uno", "m-j")],
+    }, { COUNCIL_JUDGE_BUDGET_MS: "6000" });
+    const occupy = (tag) => call("POST", "/api/debates", { question: QUESTION(tag), models: ["slowv", "fb"], rounds: 0, judge: "fa", claudeModel: "sonnet" });
+    const wrong = [];
+    // 1. Verdetto: jq aspetta che slowv liberi il posto (~19 s).
+    const b = await occupy("za2b");
+    await new Promise((ok) => setTimeout(ok, 1000));
+    const a = await call("POST", "/api/debates", { question: QUESTION("za2a"), models: ["fa", "fb"], rounds: 0, judge: "jq", claudeModel: "sonnet" });
+    if (a.status !== 201 || b.status !== 201) return [false, "POST → " + a.status + "/" + b.status + " " + a.text + b.text, secs()];
+    const [sa, sb] = await Promise.all([waitDone(a.body.id, 90), waitDone(b.body.id, 90)]);
+    if (sa?.status !== "done" || sb?.status !== "done") return [false, "stati " + sa?.status + "/" + sb?.status, secs()];
+    const verdicts = (sa.messages ?? []).filter((m) => m.phase === "verdict");
+    if (verdicts.some((m) => m.error)) wrong.push("giudice: " + verdicts.filter((m) => m.error).map((m) => m.model_id + " (" + m.error + ")").join(", "));
+    if (!verdicts.some((m) => m.model_id === "judge:jq" && m.content)) wrong.push("verdetto non di jq");
+    // 2. Risposta rapida: jq di nuovo in coda dietro slowv.
+    const c = await occupy("za2c");
+    await new Promise((ok) => setTimeout(ok, 1000));
+    const f = await call("POST", "/api/debates/" + a.body.id + "/followups", { question: FQ("za2a", "E di notte?"), mode: "quick", responder: "jq", claudeModel: "sonnet" });
+    if (c.status !== 201 || f.status !== 201) return [false, "POST seguito → " + c.status + "/" + f.status, secs()];
+    const [sf] = await Promise.all([waitDone(a.body.id, 90), waitDone(c.body.id, 90)]);
+    const answers = turnMsgs(sf, 1).filter((m) => m.phase === "answer");
+    if (answers.some((m) => m.error)) wrong.push("risposta rapida: " + answers.filter((m) => m.error).map((m) => m.model_id + " (" + m.error + ")").join(", "));
+    if (!answers.some((m) => m.model_id === "jq" && m.content)) wrong.push("risposta rapida non di jq");
+    if (wrong.length) return [false, wrong.slice(0, 4).join("; "), secs()];
+    return [true, "giudice e risposta rapida in coda ~19 s rispondono loro (tempo di 6 s fermo in coda)", secs()];
+  } finally {
+    prov.close();
+  }
+};
+DESCR.za2 = "giudice e risposta rapida in coda sul provider non scadono";
+
+// Task 6: PATCH /api/debates/:id rinomina (valido, 400, 404, 415), anche durante il dibattito; il verdetto, i seguiti
+// e il riavvio non cambiano il titolo; updated_at fermo; lista e dettaglio con il titolo nuovo.
+SCENARIOS.za3 = async function za3() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const prov = await zaProvider(() => ["m-a", "m-b", "m-j"], zaReply(4000));
+  const cfg = {
+    providers: { za: { name: "Za", baseUrl: prov.url + "/v1", keyEnv: "CHAOS_KEY" } },
+    judge: zaVoice("g", "za", "m-a", "famg"),
+    models: [zaVoice("ra", "za", "m-a"), zaVoice("rb", "za", "m-b"), zaVoice("rj", "za", "m-j")],
+  };
+  const tok = randomBytes(32).toString("hex");
+  const hello = JSON.stringify({ token: tok, keys: { CHAOS_KEY } });
+  const headers = authed(tok);
+  try {
+    const e = await startExtraEngine(cfg, hello);
+    let port = e.port;
+    const call = (method, path, body, extra = {}) => api(method, path, { port, headers: { ...headers, ...extra }, body });
+    await zaIdle(call);
+    const waitDone = async (id, maxS) => {
+      for (let i = 0; i < maxS * 4; i++) {
+        const r = await call("GET", "/api/debates/" + id);
+        if (r.body?.status && r.body.status !== "running") return r.body;
+        await new Promise((ok) => setTimeout(ok, 250));
+      }
+      return null;
+    };
+    const wrong = [];
+    const patch = (id, title, extra) => call("PATCH", "/api/debates/" + id, title === undefined ? {} : { title }, extra);
+    // 1. Rinomina durante il dibattito (il giudice impiega 4 s): il verdetto non la sostituisce, nemmeno nel done.
+    const d = await call("POST", "/api/debates", { question: QUESTION("za3"), models: ["ra", "rb"], rounds: 0, judge: "rj", claudeModel: "sonnet" });
+    if (d.status !== 201) return [false, "POST → " + d.status, secs()];
+    const id = d.body.id;
+    const sse = followOn(port, headers, id, 60_000);
+    await new Promise((ok) => setTimeout(ok, 1500));
+    const p1 = await patch(id, "  Nome scelto  ");
+    if (p1.status !== 200 || p1.body?.ok !== true || p1.body?.title !== "Nome scelto") wrong.push("PATCH valido → " + p1.status + " " + p1.text);
+    const ev = await sse;
+    const done = ev.events.find((x) => x.type === "done");
+    if (done?.status !== "done") return [false, "dibattito: " + JSON.stringify(done ?? null).slice(0, 120), secs()];
+    if (done.title !== "Nome scelto") wrong.push("evento done con titolo " + JSON.stringify(done.title));
+    let st = await waitDone(id, 30);
+    if (st?.title !== "Nome scelto") wrong.push("dopo il verdetto: titolo " + JSON.stringify(st?.title));
+    // 2. Richieste non valide.
+    const cases = [["", 400], ["   ", 400], ["a\nb", 400], ["a\rb", 400], ["x".repeat(121), 400], ["😀".repeat(61), 400], [5, 400], [undefined, 400]];
+    for (const [t, want] of cases) {
+      const r = await patch(id, t);
+      if (r.status !== want) wrong.push("titolo " + JSON.stringify(t)?.slice(0, 20) + " → " + r.status);
+    }
+    const r415 = await call("PATCH", "/api/debates/" + id, undefined, {});
+    const r415b = await api("PATCH", "/api/debates/" + id, { port, headers: { ...headers, "Content-Type": "text/plain" }, body: "{\"title\":\"x\"}", raw: true });
+    if (r415b.status !== 415) wrong.push("senza JSON → " + r415b.status);
+    if (r415.status === 200) wrong.push("PATCH senza corpo accettato");
+    const r404 = await patch(999_999, "Nessuno");
+    if (r404.status !== 404) wrong.push("id sconosciuto → " + r404.status);
+    // 3. Limite esatto (120 unità UTF-16) e updated_at fermo.
+    const before = (await call("GET", "/api/debates/" + id)).body;
+    await new Promise((ok) => setTimeout(ok, 1100));
+    const long = "😀".repeat(60);
+    const p2 = await patch(id, long);
+    if (p2.status !== 200) wrong.push("120 unità UTF-16 → " + p2.status);
+    const p3 = await patch(id, "Nome scelto");
+    if (p3.status !== 200) wrong.push("rinomina di nuovo → " + p3.status);
+    st = (await call("GET", "/api/debates/" + id)).body;
+    if (st?.updated_at !== before?.updated_at) wrong.push("updated_at cambiato: " + before?.updated_at + " → " + st?.updated_at);
+    // 4. Seguito rapido e consiglio rilanciato: il titolo resta.
+    const q = await call("POST", "/api/debates/" + id + "/followups", { question: FQ("za3", "E di sera?"), mode: "quick", responder: "ra", claudeModel: "sonnet" });
+    if (q.status !== 201) wrong.push("seguito rapido → " + q.status + " " + q.text);
+    st = await waitDone(id, 30);
+    const c = await call("POST", "/api/debates/" + id + "/followups", { question: FQ("za3", "Rifate il punto"), mode: "council", models: ["ra", "rb"], rounds: 0, judge: "rj", claudeModel: "sonnet" });
+    if (c.status !== 201) wrong.push("consiglio rilanciato → " + c.status);
+    st = await waitDone(id, 30);
+    if (st?.status !== "done") wrong.push("dopo i seguiti: stato " + st?.status);
+    if (st?.title !== "Nome scelto") wrong.push("dopo i seguiti: titolo " + JSON.stringify(st?.title));
+    const listed = (await call("GET", "/api/debates")).body?.find((x) => x.id === id);
+    if (listed?.title !== "Nome scelto") wrong.push("lista: titolo " + JSON.stringify(listed?.title));
+    // 5. Riavvio sulla stessa cartella dati.
+    e.proc.kill("SIGTERM");
+    await new Promise((ok) => (e.proc.exitCode !== null ? ok() : e.proc.once("exit", ok)));
+    const again = await startProcess(process.execPath, ["--disable-warning=ExperimentalWarning", "src/server.ts"],
+      cleanEnv({ COUNCIL_DATA: e.dir, COUNCIL_MODELS: join(e.dir, "models.json") }), "COUNCIL_PORT", hello);
+    extraProcs.push(again.proc);
+    again.proc.removeAllListeners("exit");
+    port = again.port;
+    const after = (await call("GET", "/api/debates/" + id)).body;
+    if (after?.title !== "Nome scelto") wrong.push("dopo il riavvio: titolo " + JSON.stringify(after?.title));
+    if (wrong.length) return [false, wrong.slice(0, 4).join("; "), secs()];
+    return [true, "rinomina durante il dibattito, 400/404/415, limite 120 UTF-16, updated_at fermo, titolo dopo seguiti e riavvio", secs()];
+  } finally {
+    prov.close();
+  }
+};
+DESCR.za3 = "rinomina di una discussione (PATCH /api/debates/:id)";
+
 // ---------- main ----------
 
 async function main() {
