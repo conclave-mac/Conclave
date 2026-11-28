@@ -39,6 +39,8 @@ enum ErrorText {
             return Info(message: L("Il modello ha restituito una risposta vuota."), action: L("Riprova o scegli un altro modello."))
         case "claude_unavailable":
             return Info(message: L("Claude non si avvia."), action: L("Controlla che Claude Code sia installato e collegato al tuo account."))
+        case "claude_credits":
+            return Info(message: L("Claude chiede un credito o un piano a parte per l'uso da altre app."), action: L("Usa un altro giudice o un'altra voce al posto di Claude."))
         case "provider_error":
             return Info(message: L("Errore del provider."), action: L("Riprova più tardi."))
         case "no_answer":
