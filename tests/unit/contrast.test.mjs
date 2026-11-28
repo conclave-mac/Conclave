@@ -51,7 +51,8 @@ function gray(name) {
 // Fondi su cui compaiono i testi: contenuto, riquadri, barre laterali/Impostazioni, verdetto.
 const BACKGROUNDS = ["BrandCanvas", "BrandSurface", "BrandSidebarTintOpaque", "BrandVerdictSurface"].map((n) => [n, background(n)]);
 
-for (const name of ["BrandWarning", "BrandDanger"]) {
+// BrandAccentText: l'accento come testo (link del Markdown, pulsanti a link), stesse soglie degli stati.
+for (const name of ["BrandWarning", "BrandDanger", "BrandAccentText"]) {
   test(`${name}: ≥ 4,5:1 e ≥ 7:1 con Aumenta contrasto`, () => {
     const c = status(name);
     for (const [bg, { dark, light }] of BACKGROUNDS) {
@@ -84,6 +85,19 @@ test("BrandText (chip selezionate): ≥ 7:1", () => {
     for (const [label, v, base] of [["chiaro", light, bgs.light], ["scuro", dark, bgs.dark]]) {
       const r = ratio(over(v.rgb, v.a, base), base);
       assert.ok(r >= 7, `testo ${label} su ${bg}: ${r.toFixed(2)}:1`);
+    }
+  }
+});
+
+test("BrandText sulla chip selezionata (accento al 10% sopra il fondo): ≥ 7:1", () => {
+  const accent = background("BrandAccent");
+  const b = block("BrandText");
+  const [dark, light] = [...b.matchAll(/NSColor\(white: ([\d.]+), alpha: ([\d.]+)\)/g)].map((x) => ({ rgb: Array(3).fill(Math.round(+x[1] * 255)), a: +x[2] }));
+  for (const [bg, bgs] of BACKGROUNDS) {
+    for (const [label, v, acc, base] of [["chiaro", light, accent.light, bgs.light], ["scuro", dark, accent.dark, bgs.dark]]) {
+      const fill = over(acc, 0.1, base);
+      const r = ratio(over(v.rgb, v.a, fill), fill);
+      assert.ok(r >= 7, `chip selezionata ${label} su ${bg}: ${r.toFixed(2)}:1`);
     }
   }
 });
