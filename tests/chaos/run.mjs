@@ -3206,6 +3206,44 @@ SCENARIOS.za3 = async function za3() {
 };
 DESCR.za3 = "rinomina di una discussione (PATCH /api/debates/:id)";
 
+// ---------- gruppo qualità: note per lettera nel prompt del giudice ----------
+
+// Ruolo scelto (verificatore), avvocato estratto a caso, round di critica saltato (flaky-critique) e risposta
+// troncata (length): il prompt del giudice ricevuto dal provider ha una riga per lettera con il fatto giusto,
+// e nessuna riga per chi non ha nulla da segnalare.
+SCENARIOS.zc1 = async function zc1() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const models = ["ok-a", "ok-b", "flaky-critique", "length"];
+  const r = await debate("zc1-notes", models, 2, "ok-a", 90_000, { extra: { roles: { "ok-b": "checker" } } });
+  const bad = expectDone(r, 90);
+  if (bad) return [false, bad, secs()];
+  let meta = [];
+  try { meta = JSON.parse((r.state?.messages ?? []).find((m) => m.model_id === "_meta" && m.phase === "start")?.content ?? "[]"); } catch { /* sotto */ }
+  const letter = Object.fromEntries(meta.map((p) => [p.id, p.letter]));
+  if (models.some((id) => !letter[id])) return [false, `lettere mancanti in _meta: ${JSON.stringify(letter)}`, secs()];
+  const judge = (await promptsOf("zc1-notes")).filter((x) => x.phase === "verdict");
+  if (judge.length !== 1) return [false, `${judge.length} prompt del giudice invece di 1`, secs()];
+  const user = judge[0].user;
+  const at = user.indexOf("NOTE SUI MEMBRI");
+  if (at < 0) return [false, "sezione NOTE SUI MEMBRI assente nel prompt del giudice", secs()];
+  const lines = user.slice(at).split("\n\n")[0].split("\n").slice(1);
+  const line = (id) => lines.find((l) => l.startsWith(`- Risposta ${letter[id]}:`)) ?? "";
+  const wrong = [];
+  if (!/verificatore di fatti/.test(line("ok-b"))) wrong.push(`verificatore: «${line("ok-b").slice(0, 80)}»`);
+  if (!/ha saltato il round 1 \(critica\)/.test(line("flaky-critique"))) wrong.push(`round saltato: «${line("flaky-critique").slice(0, 80)}»`);
+  if (!/troncata/.test(line("length"))) wrong.push(`troncata: «${line("length").slice(0, 80)}»`);
+  const devils = lines.filter((l) => /avvocato del diavolo/.test(l));
+  if (devils.length !== 1 || /verificatore/.test(devils[0] ?? "")) wrong.push(`avvocato: ${devils.length} righe`);
+  // Righe solo per chi ha un fatto: ok-a ne ha una solo se è l'avvocato estratto.
+  const expected = 3 + (/avvocato/.test(line("ok-a")) ? 1 : 0);
+  if (lines.length !== expected) wrong.push(`${lines.length} righe invece di ${expected}`);
+  if (lines.some((l) => !/^- Risposta [A-J]: /.test(l))) wrong.push("riga fuori formato");
+  if (wrong.length) return [false, wrong.slice(0, 4).join("; "), secs()];
+  return [true, "verificatore, avvocato estratto, round 1 saltato e troncatura nelle righe giuste del giudice", secs()];
+};
+DESCR.zc1 = "note sui membri nel prompt del giudice: ruolo, round saltato, troncatura";
+
 // ---------- main ----------
 
 async function main() {

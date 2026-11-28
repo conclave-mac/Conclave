@@ -36,7 +36,7 @@ const probes = Object.create(null);  // prove del controllo d'avvio per modello
 const auths = Object.create(null);   // intestazione Authorization ricevuta per modello ("whoami")
 const seenPhase = new Set();         // "ratelimit": prima chiamata per fase già vista
 let hanging = 0;                     // connessioni "hang" ancora aperte
-/** Prompt ricevuti per scenario (solo scenari "web…", "att…", "conv…" e "mo…" del gruppo motore): /prompts/<scenario>. */
+/** Prompt ricevuti per scenario (solo scenari "web…", "att…", "conv…", "mo…" del gruppo motore e "zc…" del gruppo qualità): /prompts/<scenario>. */
 const prompts = Object.create(null);
 
 /** Fase del dibattito ricavata dal prompt. */
@@ -212,7 +212,7 @@ async function handle(req, res) {
   calls[model] = (calls[model] ?? 0) + 1;
   const searching = Array.isArray(body.tools) && body.tools.some((t) => t?.type === "browser_search");
   const scenario = scenarioOf(user);
-  if (/^(web|att|conv|mo\d)/.test(scenario)) {
+  if (/^(web|att|conv|mo\d|zc\d)/.test(scenario)) {
     (prompts[scenario] ??= []).push({
       model, phase: searching ? "research" : phaseOf(system, user), system, user,
       images: images.length, imageUrls: images.map((u) => u.slice(0, 30)), tools: body.tools ?? null, reasoning_effort: body.reasoning_effort ?? null, max_tokens: body.max_tokens ?? null,
