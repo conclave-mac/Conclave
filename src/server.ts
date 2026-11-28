@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { config, isAvailable, findModel, PORT, selection, validateSelection, saveSelection, type ModelDef } from "./config.ts";
-import { medianMsByModel, JUDGE_KEY, createDebate, listDebates, getDebate, deleteDebate, saveAttachments, saveMessage, nextTurn, hasTurnZeroContent, startTurn, finishTurn, finishDebate } from "./db.ts";
+import { medianMsByModel, JUDGE_KEY, createDebate, listDebates, getDebate, deleteDebate, renameDebate, saveAttachments, saveMessage, nextTurn, hasTurnZeroContent, startTurn, finishTurn, finishDebate } from "./db.ts";
 import { ROLES, type Role } from "./debate/prompts.ts";
 import { runDebate, runQuickAnswer, type DebateEvent, type Rounds } from "./debate/orchestrator.ts";
 import { buildConversation, discussionRoles } from "./debate/followup.ts";
@@ -39,6 +39,8 @@ const MAX_PARTICIPANTS = 10;
 const SSE_PING_MS = 10_000;
 /** Corpo massimo di una richiesta: domanda + testo degli allegati (60.000) + immagini ridotte (600.000) con il margine dell'escape JSON. */
 const MAX_BODY = 1_000_000;
+/** Titolo scelto dall'utente con Rinomina: caratteri UTF-16 (`length` di JS, `utf16.count` in Swift). */
+const MAX_TITLE = 120;
 
 const CLAUDE_MODELS = ["sonnet", "opus", "haiku"];
 const DEFAULT_ROUNDS: Rounds = 3;
@@ -349,13 +351,20 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
 
   if (req.method === "PUT" && path === "/api/selection") {
     if (!isJsonPost()) return json(res, 415, { error: "serve JSON" });
+    // JSON non valido o troppo grande: 400/413 dal gestore generale (BadRequest).
+    const body = await readBody(req);
+    let s: ReturnType<typeof validateSelection>;
+    try { s = validateSelection(body); } catch (e) { return json(res, 400, { error: (e as Error).message }); }
     try {
-      // Salvata su disco: diventa attiva al riavvio del motore (l'app lo fa subito dopo).
-      saveSelection(validateSelection(await readBody(req)));
-      return json(res, 200, { ok: true });
+      // Salvata su disco: diventa attiva al riavvio del motore (l'app lo fa subito dopo, o al termine dei
+      // dibattiti in corso). Fino ad allora il controllo dei modelli non la sovrascrive (saveReplacement).
+      saveSelection(s);
     } catch (e) {
-      return json(res, 400, { error: (e as Error).message });
+      // Disco pieno, permessi: è un errore del motore, non della richiesta.
+      logError("salvataggio della selezione")(e);
+      return json(res, 500, { error: redact(`selezione non salvata: ${(e as Error).message}`) });
     }
+    return json(res, 200, { ok: true });
   }
 
   if (req.method === "POST" && path === "/api/health") {
@@ -474,6 +483,20 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     if (req.method === "GET" && !sub) {
       const d = getDebate(id);
       return d ? json(res, 200, { ...d, live: running.has(id) && d.status === "running" }) : json(res, 404, { error: "non trovato" });
+    }
+
+    // Rinomina dalla cronologia: `{title}` → `{ok, title}`. Non cambia `updated_at` (la cronologia non si riordina)
+    // e segna il titolo come scelto dall'utente: il verdetto non lo sostituisce più.
+    if (req.method === "PATCH" && !sub) {
+      if (!isJsonPost()) return json(res, 415, { error: "serve JSON" });
+      const b = await readObject(req);
+      if (typeof b.title !== "string") return json(res, 400, { error: "titolo mancante" });
+      const title = b.title.trim();
+      if (!title) return json(res, 400, { error: "titolo vuoto" });
+      if (title.length > MAX_TITLE) return json(res, 400, { error: `titolo troppo lungo (max ${MAX_TITLE} caratteri)` });
+      if (/[\r\n\u2028\u2029]/.test(title)) return json(res, 400, { error: "il titolo non può andare a capo" });
+      if (!renameDebate(id, title)) return json(res, 404, { error: "non trovato" });
+      return json(res, 200, { ok: true, title });
     }
 
     if (req.method === "DELETE" && !sub) {
