@@ -631,3 +631,37 @@
 "Rinomina…" = "Rename…";
 "Titolo" = "Title";
 "Titolo della discussione" = "Discussion title";
+
+/* Primo avvio guidato */
+"Benvenuto in Conclave" = "Welcome to Conclave";
+"Passo %d di %d" = "Step %d of %d";
+"Claude, con il tuo abbonamento" = "Claude, with your subscription";
+"Conclave mette a confronto più modelli AI sulla stessa domanda; alla fine un giudice scrive il verdetto. Claude partecipa tramite Claude Code e il tuo abbonamento Claude, senza chiavi." = "Conclave puts several AI models side by side on the same question; at the end a judge writes the verdict. Claude takes part through Claude Code and your Claude subscription, with no keys.";
+"Cerco Claude Code…" = "Looking for Claude Code…";
+"Claude trovato ✓" = "Claude found ✓";
+"Claude Code è installato e collegato: Claude può partecipare e fare da giudice." = "Claude Code is installed and signed in: Claude can take part and act as the judge.";
+"Claude Code non è collegato" = "Claude Code is not signed in";
+"Apri il Terminale, scrivi claude e accedi con il tuo account Claude, poi premi Controlla di nuovo." = "Open Terminal, type claude and sign in with your Claude account, then press Check Again.";
+"Claude Code non è installato" = "Claude Code is not installed";
+"È facoltativo: serve un abbonamento Claude (Pro o superiore). Senza Claude bastano le chiavi gratuite del passo successivo." = "It's optional: it needs a Claude subscription (Pro or higher). Without Claude, the free keys in the next step are enough.";
+"Come installare Claude Code…" = "How to Install Claude Code…";
+"Controlla di nuovo" = "Check Again";
+"Aggiungi una chiave gratuita" = "Add a free key";
+"Con Claude basta una chiave: Gemini è la più semplice, gratis e senza carta di credito (circa 2 minuti)." = "With Claude, one key is enough: Gemini is the easiest, free and with no credit card (about 2 minutes).";
+"Un consiglio vuole almeno due voci. Gemini è consigliata (gratis, circa 2 minuti); Groq, anche lei gratuita, aggiunge GPT-OSS e Qwen." = "A council needs at least two voices. Gemini is recommended (free, about 2 minutes); Groq, also free, adds GPT-OSS and Qwen.";
+"Altri provider…" = "Other Providers…";
+"Apri Impostazioni ▸ Chiavi API" = "Open Settings ▸ API Keys";
+"Impossibile salvare la chiave: %@" = "Couldn't save the key: %@";
+"Fai la prima domanda" = "Ask your first question";
+"Premendo Inizia trovi una domanda d'esempio già scritta nel campo: scegli chi partecipa e premi Avvia (⌘↩), oppure scrivi la tua. Niente parte finché non premi Avvia." = "When you press Get Started, a sample question is already in the field: choose who takes part and press Start (⌘↩), or write your own. Nothing starts until you press Start.";
+"Per avviare un consiglio servono almeno due voci: aggiungi un'altra chiave gratuita in Impostazioni ▸ Chiavi API." = "To start a council you need at least two voices: add another free key in Settings ▸ API Keys.";
+"Apri Chiavi API…" = "Open API Keys…";
+"Questa guida resta in Aiuto ▸ Guida al primo avvio…" = "This guide stays in Help ▸ Getting Started Guide…";
+"Salta" = "Skip";
+"Chiudi la guida; la ritrovi in Aiuto ▸ Guida al primo avvio…" = "Close the guide; you'll find it again in Help ▸ Getting Started Guide…";
+"Indietro" = "Back";
+"Inizia" = "Get Started";
+"Avanti" = "Continue";
+"%@ (consigliata)" = "%@ (recommended)";
+"Per una famiglia di quattro persone conviene di più un'auto elettrica o una ibrida?" = "For a family of four, is an electric car or a hybrid the better choice?";
+"Guida al primo avvio…" = "Getting Started Guide…";

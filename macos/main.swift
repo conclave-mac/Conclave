@@ -270,7 +270,7 @@ final class ServerController {
     /// PATH letto l'ultima volta dalla shell di login: il motore parte subito con quello invece di
     /// aspettare `zsh -ilc` (~0,9 s), e la shell si rilegge in background una volta per sessione.
     /// Il PATH aggiornato vale dal prossimo avvio del motore (come per una nuova finestra di Terminale).
-    private static let pathKey = "LoginShellPath"
+    static let pathKey = "LoginShellPath"
     private var pathRefreshed = false
 
     var onReady: ((Int) -> Void)?
@@ -303,7 +303,7 @@ final class ServerController {
 
     /// Cartelle dove di solito stanno `node` e `claude`, rilette a ogni avvio (costa poco): con il
     /// PATH salvato si trova anche una CLI installata o spostata qui dopo l'ultima lettura della shell.
-    private static func fallbackPath() -> String {
+    static func fallbackPath() -> String {
         let home = NSHomeDirectory()
         var fallback = ["\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
         let nvm = URL(fileURLWithPath: "\(home)/.nvm/versions/node")
@@ -313,7 +313,12 @@ final class ServerController {
         return fallback.joined(separator: ":")
     }
 
-    private static func find(_ name: String, in path: String) -> String? {
+    /// PATH salvato della shell di login più le cartelle solite, senza rileggere la shell (primo avvio guidato).
+    static func searchPath() -> String {
+        UserDefaults.standard.string(forKey: pathKey).map { $0 + ":" + fallbackPath() } ?? fallbackPath()
+    }
+
+    static func find(_ name: String, in path: String) -> String? {
         for dir in path.split(separator: ":") {
             let candidate = "\(dir)/\(name)"
             if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
@@ -565,14 +570,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         AppAppearance.apply()
         buildMenu()
         buildWindow()
-        // Primo avvio senza chiavi: apre le impostazioni con la guida. Dopo applicationDidFinishLaunching:
-        // creare le Impostazioni e leggere le chiavi costa fino a 1–2 s su un Mac lento (il motore
-        // intanto le legge in background, quindi qui di solito arrivano dalla cache).
+        // Primo avvio senza chiavi e senza Claude: foglio di primo avvio (Onboarding.swift), mai più dopo "Salta".
+        // Dopo applicationDidFinishLaunching: creare le Impostazioni e leggere le chiavi costa fino a 1–2 s su
+        // un Mac lento (il motore intanto le legge in background, quindi qui di solito arrivano dalla cache).
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, !Onboarding.isDone else { return }
             // La lettura delle chiavi è asincrona: si decide solo quando è finita.
             self.settings.whenKeysLoaded { [weak self] hasKey in
-                if !hasKey { self?.settings.show(tab: .keys) }
+                guard !hasKey else { return }
+                Task { @MainActor [weak self] in
+                    let claude = await ClaudeDetector.detect()
+                    guard let self, claude != .ready, !Onboarding.isDone, self.window.isVisible else { return }
+                    self.onboardingSheet.present(over: self.window, claude: claude)
+                }
             }
         }
 
@@ -591,6 +601,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { !MenuBarPreference.enabled }
 
     // ⌘Q con modifiche non salvate nelle Impostazioni: si chiede prima, come per la chiusura della finestra.
+    // Con un foglio attaccato a una finestra AppKit rifiuta l'uscita (⌘Q e Dock) senza chiamare questo metodo:
+    // per questo l'avanzamento dell'aggiornamento è una finestra a sé e `quit(_:)` chiude prima il primo avvio.
+    // Un aggiornamento ancora in preparazione si annulla in `applicationWillTerminate` (launchIfStaged).
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // Chiusura annullata: un aggiornamento pronto non deve riaprire l'app alla prossima; si rimanda.
         // Lo stesso per il riavvio chiesto dalla lingua.
@@ -812,8 +825,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         }
         menu.addItem(.separator())
         menu.addItem(item(L("Impostazioni…"), #selector(openSettings(_:)), ""))
-        let quit = NSMenuItem(title: L("Esci da Conclave"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
-        menu.addItem(quit)
+        menu.addItem(item(L("Esci da Conclave"), #selector(quit(_:)), ""))
     }
 
     @objc func showMainWindow(_ sender: Any?) {
@@ -905,7 +917,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
             .keyEquivalentModifierMask = [.command, .option]
         app.addItem(withTitle: L("Mostra tutte"), action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
         app.addItem(.separator())
-        app.addItem(withTitle: L("Esci da Conclave"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        app.addItem(item(L("Esci da Conclave"), #selector(quit(_:)), "q"))
 
         // Nomi e posizioni delle voci come in Note e Mail (letti dai loro MainMenu.nib).
         let file = NSMenu(title: L("File"))
@@ -973,6 +985,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
 
         let help = NSMenu(title: L("Aiuto"))
         help.addItem(item(L("Aiuto di Conclave"), #selector(showHelp(_:)), "?"))
+        help.addItem(item(L("Guida al primo avvio…"), #selector(showOnboarding(_:)), ""))
         help.addItem(.separator())
         help.addItem(item(L("Mostra registro del motore"), #selector(openLog(_:)), ""))
         NSApp.helpMenu = help
@@ -1198,6 +1211,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
 
     @objc func openSettings(_ sender: Any?) {
         settings.show()
+    }
+
+    /// Foglio del primo avvio, creato alla prima richiesta (legge le chiavi come le Impostazioni).
+    private var onboarding: Onboarding?
+    private var onboardingSheet: Onboarding {
+        if let onboarding { return onboarding }
+        let o = Onboarding(keys: SettingsModel())
+        o.keys.onSaved = { [weak self] in self?.settingsSaved() }
+        o.openKeySettings = { [weak self] in self?.settings.show(tab: .keys) }
+        o.fillExample = { [weak self] text in
+            guard let self else { return }
+            if self.store.current != nil { self.newDebate(nil) }
+            if self.store.question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { self.store.question = text }
+        }
+        onboarding = o
+        return o
+    }
+
+    @objc func showOnboarding(_ sender: Any?) {
+        if !window.isVisible { showMainWindow(nil) }
+        onboardingSheet.present(over: window)
+    }
+
+    /// Esci (⌘Q, menu della barra dei menu): il foglio del primo avvio si chiude prima, altrimenti AppKit
+    /// rifiuterebbe l'uscita; mai durante il salvataggio di una chiave (Portachiavi).
+    @objc func quit(_ sender: Any?) {
+        if let o = onboarding, o.isShown {
+            guard !o.keys.saving else { NSSound.beep(); return }
+            o.close(done: false)
+        }
+        NSApp.terminate(sender)
     }
 
     // MARK: Ponte: salvataggio e notifiche
