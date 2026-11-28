@@ -148,8 +148,30 @@ export function validateSelection(input: unknown): Selection {
   return { auto: s.auto !== false, models: toVoices(models).models };
 }
 
+/**
+ * Selezione scritta su disco. Coincide con quella attiva finché `PUT /api/selection` non ne salva una nuova:
+ * quella diventa attiva solo al riavvio del motore, che l'app può rimandare ("Applica al termine").
+ */
+let saved: Selection = selection;
+
 export function saveSelection(s: Selection): void {
   writeFileAtomic(SELECTION_FILE, JSON.stringify(s, null, 2) + "\n");
+  saved = s;
+}
+
+/**
+ * Rende permanente la sostituzione di un modello ritirato (`m` è la voce attiva, già aggiornata; `oldModel` il
+ * modello di prima). Se nel frattempo è stata salvata una selezione nuova, la si corregge solo se contiene ancora
+ * la stessa voce con lo stesso modello: riscrivere quella attiva cancellerebbe la scelta appena fatta dall'utente.
+ */
+export function saveReplacement(m: ModelDef, oldModel: string): void {
+  if (saved === selection) return saveSelection(selection);
+  const t = saved.models.find((x) => x.id === m.id && x.provider === m.provider && x.model === oldModel);
+  if (!t) return;
+  t.model = m.model;
+  t.label = m.label;
+  t.fallback = undefined;
+  saveSelection(saved);
 }
 
 /** Un modello è utilizzabile se è Claude (abbonamento) o se la chiave del suo provider è impostata. */

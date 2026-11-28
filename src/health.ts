@@ -2,9 +2,10 @@
 // automatica attiva, sostituisce quelli fuori uso con il migliore disponibile dello stesso provider.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { config, selection, isAvailable, DATA_DIR, saveSelection, writeFileAtomic, type ModelDef } from "./config.ts";
+import { config, isAvailable, DATA_DIR, saveReplacement, writeFileAtomic, type ModelDef } from "./config.ts";
 import { listCatalog, probe, familyChain } from "./catalog.ts";
 import { AUTO, familyOf } from "./family.ts";
+import { redact } from "./redact.ts";
 
 export interface Health {
   status: "checking" | "ok" | "busy" | "down" | "nokey" | "unchecked";
@@ -67,10 +68,12 @@ const MAX_REPLACEMENT_PROBES = 4;
 
 /** Aggiorna in modo permanente un membro del consiglio il cui modello è stato ritirato. */
 function replaceForever(m: ModelDef, model: string, label: string): void {
+  const old = m.model;
   m.model = model;
   m.label = label;
   m.fallback = undefined;
-  try { saveSelection(selection); } catch { /* resta valido almeno per questa sessione */ }
+  // Su disco può esserci già una selezione nuova (in attesa del riavvio): saveReplacement non la sovrascrive.
+  try { saveReplacement(m, old); } catch { /* resta valido almeno per questa sessione */ }
 }
 
 async function checkOne(m: ModelDef): Promise<void> {
@@ -81,12 +84,18 @@ async function checkOne(m: ModelDef): Promise<void> {
 
   // Catena della voce: modello scelto (se fisso), poi le varianti della famiglia dalla migliore.
   let chain: string[] = [];
+  // Catalogo letto una volta sola, dentro il try: un errore (rete, cache scaduta tra due letture) vale come
+  // catalogo non raggiungibile e non lascia la voce in "checking".
+  let catalog: Awaited<ReturnType<typeof listCatalog>> = [];
   let catalogOk = true;
-  try { chain = await familyChain(provider, voiceFamily(m), fixed); } catch { catalogOk = false; }
+  try {
+    catalog = await listCatalog(provider);
+    chain = await familyChain(provider, voiceFamily(m), fixed);
+  } catch { catalogOk = false; }
   chain = [...new Set([...(fixed ? [fixed] : []), ...chain, ...(m.fallback ?? [])])];
   // Modello fisso non più elencato dal provider: ritirato. La voce passa ad "Automatico".
   if (fixed && catalogOk) {
-    const listed = (await listCatalog(provider)).some((c) => c.id === fixed);
+    const listed = catalog.some((c) => c.id === fixed);
     if (!listed) {
       const old = m.label;
       replaceForever(m, AUTO, familyOf(voiceFamily(m)).label);
@@ -97,7 +106,7 @@ async function checkOne(m: ModelDef): Promise<void> {
   if (chain.length === 0) {
     // Famiglia rimasta solo a pagamento (es. DeepSeek tra i ":free" di OpenRouter, nov 2026): lo si dice,
     // così l'utente sa che deve sostituire la voce. La voce salvata resta com'è: cambiarla è una sua scelta.
-    const paidOnly = catalogOk && (await listCatalog(provider).catch(() => [])).some((c) => c.family === voiceFamily(m));
+    const paidOnly = catalogOk && catalog.some((c) => c.family === voiceFamily(m));
     health.set(m.id, { status: "down", note: paidOnly
       ? "questa famiglia non ha più modelli gratuiti presso il provider: sostituisci la voce nelle Impostazioni"
       : "nessun modello di questa famiglia disponibile" });
@@ -123,6 +132,16 @@ async function checkOne(m: ModelDef): Promise<void> {
   health.set(m.id, lastBusy
     ? { status: "busy", chain, note: "tutte le varianti sono sovraccariche: durante il dibattito riproverà" }
     : { status: "down", chain, note: `non risponde nessuna variante (${notes.slice(0, 3).join(", ")})` });
+}
+
+/**
+ * Controllo di una voce che non lascia mai eccezioni: un errore imprevisto diventa "down" con la sua nota,
+ * così la voce non resta in "checking", le altre del provider vengono controllate e la cache si scrive.
+ */
+export async function checkGuarded(m: ModelDef, check: (m: ModelDef) => Promise<void> = checkOne): Promise<void> {
+  try { await check(m); } catch (e) {
+    health.set(m.id, { status: "down", note: `controllo non riuscito: ${redact((e as Error)?.message ?? String(e)).slice(0, 200)}` });
+  }
 }
 
 /**
@@ -191,7 +210,7 @@ export function runHealthCheck(force = false): Promise<void> {
     byProvider.set(m.provider!, list);
   }
   running = Promise.all(
-    [...byProvider.values()].map(async (list) => { for (const m of list) await checkOne(m); }),
+    [...byProvider.values()].map(async (list) => { for (const m of list) await checkGuarded(m); }),
   ).then(writeCache).finally(() => { running = null; });
   return running;
 }
