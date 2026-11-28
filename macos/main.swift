@@ -677,6 +677,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
             self?.restartIfPending()
         }
         sidebar.onExport = { [weak self] id in self?.exportDiscussion(id) }
+        sidebar.onRenamed = { [weak self] id, title in self?.store.renamed(id, title: title) }
         sidebar.onNew = { [weak self] in self?.newDebate(nil) }
         sidebar.onSettings = { [weak self] in self?.openSettings(nil) }
         sidebarItem = NSSplitViewItem(sidebarWithViewController: NSHostingController(rootView: SidebarView(model: sidebar).background(Brand.sidebarTint.ignoresSafeArea())))
@@ -912,6 +913,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         file.addItem(.separator())
         file.addItem(withTitle: L("Chiudi"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         file.addItem(.separator())
+        file.addItem(item(L("Rinomina…"), #selector(renameDiscussion(_:)), ""))
+        file.addItem(.separator())
         file.addItem(item(L("Esporta come Markdown…"), #selector(exportDebate(_:)), "e", [.command, .shift]))
         file.addItem(item(L("Esporta come PDF…"), #selector(exportPDF(_:)), ""))
         file.addItem(.separator())
@@ -1020,6 +1023,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
         sidebar.focusSearch()
     }
 
+    /// Campo del titolo nella barra laterale per la discussione aperta (o quella selezionata).
+    @objc func renameDiscussion(_ sender: Any?) {
+        guard let id = store.current?.id ?? sidebar.selected else { NSSound.beep(); return }
+        revealSidebar()
+        sidebar.beginRename(id)
+    }
+
     @objc func deleteDiscussion(_ sender: Any?) {
         revealSidebar()
         sidebar.requestDelete()
@@ -1067,6 +1077,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSM
             return true
         case #selector(deleteDiscussion(_:)):
             return NSApp.keyWindow === window && focusInSidebar && sidebar.selected != nil
+        case #selector(renameDiscussion(_:)):
+            return NSApp.keyWindow === window && store.engineReady && (store.current != nil || sidebar.selected != nil)
         case #selector(findDiscussions(_:)):
             return NSApp.keyWindow === window && store.engineReady
         case #selector(startDebate(_:)):

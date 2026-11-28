@@ -621,3 +621,13 @@
 "Il riavvio interrompe la discussione in corso." = "Restarting interrupts the discussion in progress.";
 "security non ha risposto entro %d s" = "security did not respond within %d s";
 "Salvataggio…" = "Saving…";
+
+/* Rifiniture dell'interfaccia e Rinomina */
+"%d in arrivo · %d di %d complete" = "%d incoming · %d of %d complete";
+"Senza Claude la ricerca sul web non è disponibile: scegli Claude come partecipante o come giudice." = "Without Claude, web search isn't available: choose Claude as a participant or as the judge.";
+"Senza Claude la ricerca sul web la fa %@." = "Without Claude, %@ does the web search.";
+"Il titolo può avere al massimo %d caratteri." = "The title can be at most %d characters long.";
+"Impossibile rinominare la discussione" = "Couldn't rename the discussion";
+"Rinomina…" = "Rename…";
+"Titolo" = "Title";
+"Titolo della discussione" = "Discussion title";
