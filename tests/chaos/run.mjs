@@ -3056,9 +3056,12 @@ SCENARIOS.za1 = async function za1() {
     if (ids !== "v1,v3") return [false, "selection.json sovrascritta: voci " + ids + " invece di v1,v3", secs()];
     const v1 = saved.models.find((m) => m.id === "v1");
     if (v1.model !== "auto") return [false, "ritiro di m1 non applicato alla selezione nuova (v1 = " + v1.model + ")", secs()];
-    // La selezione attiva resta quella di prima fino al riavvio.
-    const active = (await call("GET", "/api/selection")).body;
+    // La selezione attiva resta quella di prima fino al riavvio (GET /api/models); GET /api/selection mostra quella
+    // salvata in attesa (gruppo motore, 28 nov 2026: riaprendo le Impostazioni si vede l'ultima scelta).
+    const active = (await call("GET", "/api/models")).body;
     if (active?.models?.map((m) => m.id).join(",") !== "v1,v2") return [false, "selezione attiva cambiata prima del riavvio", secs()];
+    const shown = (await call("GET", "/api/selection")).body;
+    if (shown?.models?.map((m) => m.id).join(",") !== "v1,v3" || shown.pending !== true) return [false, "GET /api/selection non mostra la selezione in attesa", secs()];
     return [true, "PUT conservata (v1,v3), ritiro di m1 applicato a v1, attiva invariata fino al riavvio", secs()];
   } finally {
     prov.close();
@@ -3243,6 +3246,106 @@ SCENARIOS.zc1 = async function zc1() {
   return [true, "verificatore, avvocato estratto, round 1 saltato e troncatura nelle righe giuste del giudice", secs()];
 };
 DESCR.zc1 = "note sui membri nel prompt del giudice: ruolo, round saltato, troncatura";
+
+// ---------- gruppo motore: troncatura dall'adattatore, giudice usato, selezione in attesa ----------
+
+// La nota "troncata" per il giudice viene dall'adattatore (finish_reason "length"), non dal testo: "tailmark" risponde
+// per intero (finish_reason "stop") ma finisce citando l'avviso, e non deve avere la nota; "length" sì.
+SCENARIOS.zd1 = async function zd1() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const models = ["ok-a", "length", "tailmark"];
+  const r = await debate("zd1-trunc", models, 0, "ok-b", 60_000);
+  const bad = expectDone(r, 60);
+  if (bad) return [false, bad, secs()];
+  const mark = "[…risposta troncata dal limite di lunghezza]";
+  const tail = okMsgs(r.state, "tailmark", "initial")[0]?.content ?? "";
+  if (!tail.trimEnd().endsWith(mark)) return [false, "la risposta di tailmark non finisce con l'avviso (scenario inutile)", secs()];
+  if (!(okMsgs(r.state, "length", "initial")[0]?.content ?? "").trimEnd().endsWith(mark)) return [false, "avviso mancante nel testo di length", secs()];
+  let meta = [];
+  try { meta = JSON.parse((r.state?.messages ?? []).find((m) => m.model_id === "_meta" && m.phase === "start")?.content ?? "[]"); } catch { /* sotto */ }
+  const letter = Object.fromEntries(meta.map((p) => [p.id, p.letter]));
+  if (models.some((id) => !letter[id])) return [false, `lettere mancanti in _meta: ${JSON.stringify(letter)}`, secs()];
+  const judge = (await promptsOf("zd1-trunc")).filter((x) => x.phase === "verdict");
+  if (judge.length !== 1) return [false, `${judge.length} prompt del giudice invece di 1`, secs()];
+  const user = judge[0].user;
+  const at = user.indexOf("NOTE SUI MEMBRI");
+  if (at < 0) return [false, "sezione NOTE SUI MEMBRI assente nel prompt del giudice", secs()];
+  const lines = user.slice(at).split("\n\n")[0].split("\n").slice(1);
+  const line = (id) => lines.find((l) => l.startsWith(`- Risposta ${letter[id]}:`)) ?? "";
+  const wrong = [];
+  if (!/troncata/.test(line("length"))) wrong.push(`length senza nota: «${line("length").slice(0, 80)}»`);
+  if (line("tailmark")) wrong.push(`tailmark con nota: «${line("tailmark").slice(0, 80)}»`);
+  if (line("ok-a")) wrong.push(`ok-a con nota: «${line("ok-a").slice(0, 80)}»`);
+  if (wrong.length) return [false, wrong.join("; "), secs()];
+  return [true, "nota di troncatura solo per finish_reason length, non per chi cita l'avviso", secs()];
+};
+DESCR.zd1 = "troncatura per il giudice dall'adattatore, non dal testo";
+
+// judge_used: il giudice scelto ("empty") fallisce, scrive una riserva; il campo descrive la riserva sul messaggio del
+// verdetto (GET) e sull'evento done, la riga _judge non compare. Poi un consiglio rilanciato (turno 1) con un giudice
+// esterno che risponde subito: judge_used sul verdetto del turno 1, participated false.
+SCENARIOS.zd2 = async function zd2() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const r = await debate("zd2-judge", ["ok-a", "ok-b"], 0, "empty", 120_000);
+  const bad = expectDone(r, 120);
+  if (bad) return [false, bad, secs()];
+  const wrong = [];
+  const v = verdictRow(r.state);
+  const id = v?.model_id?.replace(/^judge:/, "");
+  if (!v || id === "empty") return [false, `verdetto non da una riserva (${v?.model_id})`, secs()];
+  const failed = (r.state.messages ?? []).some((m) => m.model_id === "judge:empty" && m.error);
+  if (!failed) wrong.push("nessun errore registrato per il giudice scelto");
+  const expected = { id, label: id === "chaos-judge" ? "Chaos giudice predefinito" : `Chaos ${id}`, participated: ["ok-a", "ok-b"].includes(id) };
+  if (JSON.stringify(v.judge_used) !== JSON.stringify(expected)) wrong.push(`judge_used nel GET: ${JSON.stringify(v.judge_used)} invece di ${JSON.stringify(expected)}`);
+  const done = doneEvent(r.events);
+  if (JSON.stringify(done?.judge_used) !== JSON.stringify(expected)) wrong.push(`judge_used nel done: ${JSON.stringify(done?.judge_used)}`);
+  if ((r.state.messages ?? []).some((m) => m.model_id === "_judge")) wrong.push("riga _judge visibile nel GET");
+  if ((r.state.messages ?? []).some((m) => m.judge_used && m !== v)) wrong.push("judge_used su un messaggio che non è il verdetto");
+  // Turno 1 con consiglio: giudice ok-b esterno al consiglio (ok-a e length).
+  const t = await turnOf(r.id, { question: FQ("zd2-judge", "E di notte?"), mode: "council", models: ["ok-a", "length"], rounds: 0, judge: "ok-b" }, 90_000);
+  if (t.post.status !== 201) return [false, `followup → ${t.post.status} ${JSON.stringify(t.post.body).slice(0, 120)}`, secs()];
+  const tv = turnMsgs(t.state, t.turn).find((m) => m.phase === "verdict" && m.content && !m.error);
+  const te = { id: "ok-b", label: "Chaos ok-b", participated: false };
+  if (JSON.stringify(tv?.judge_used) !== JSON.stringify(te)) wrong.push(`turno 1: judge_used ${JSON.stringify(tv?.judge_used)}`);
+  const td = t.events.find((e) => e.type === "done" && e.turn === t.turn);
+  if (JSON.stringify(td?.judge_used) !== JSON.stringify(te)) wrong.push(`turno 1: done con judge_used ${JSON.stringify(td?.judge_used)}`);
+  // Il turno 0 conserva il suo.
+  const v0 = turnMsgs(t.state, 0).find((m) => m.phase === "verdict" && m.content && !m.error);
+  if (JSON.stringify(v0?.judge_used) !== JSON.stringify(expected)) wrong.push("turno 0: judge_used cambiato dopo il turno 1");
+  if (wrong.length) return [false, wrong.slice(0, 4).join("; "), secs()];
+  return [true, `riserva ${id} (participated ${expected.participated}) nel GET e nel done, turno 1 con ok-b esterno`, secs()];
+};
+DESCR.zd2 = "judge_used: giudice che ha scritto davvero il verdetto (riserva, turni ≥ 1)";
+
+// GET /api/selection con un riavvio rimandato: dopo PUT mostra la selezione salvata con pending: true (la attiva resta in
+// /api/models); prima di ogni PUT niente pending; un secondo PUT sostituisce quella mostrata.
+SCENARIOS.zd3 = async function zd3() {
+  const started = Date.now();
+  const secs = () => (Date.now() - started) / 1000;
+  const voice = (id, model) => ({ id, label: `Voce ${id}`, kind: "openai", provider: "chaos", model, family: `fam-${id}`, default: false });
+  const { call } = await moEngine({
+    providers: { chaos: { name: "Chaos", baseUrl: `http://127.0.0.1:${mockPort}/v1`, keyEnv: "CHAOS_KEY" } },
+    judge: voice("g", "ok-a"),
+    models: [voice("s1", "ok-a"), voice("s2", "ok-b")],
+  });
+  const ids = (s) => (s?.models ?? []).map((m) => m.id).join(",");
+  const wrong = [];
+  const before = (await call("GET", "/api/selection")).body;
+  if (ids(before) !== "s1,s2" || "pending" in (before ?? {})) wrong.push(`prima del PUT: ${ids(before)} pending=${before?.pending}`);
+  for (const want of [["s1", "s3"], ["s3"]]) {
+    const put = await call("PUT", "/api/selection", { auto: false, models: want.map((id) => voice(id, "ok-b")) });
+    if (put.status !== 200) return [false, `PUT → ${put.status}`, secs()];
+    const shown = (await call("GET", "/api/selection")).body;
+    if (ids(shown) !== want.join(",") || shown?.pending !== true || shown?.auto !== false) wrong.push(`dopo PUT ${want}: ${ids(shown)} pending=${shown?.pending} auto=${shown?.auto}`);
+    const active = (await call("GET", "/api/models")).body;
+    if (ids(active) !== "s1,s2") wrong.push(`attiva cambiata prima del riavvio: ${ids(active)}`);
+  }
+  if (wrong.length) return [false, wrong.slice(0, 4).join("; "), secs()];
+  return [true, "selezione salvata con pending: true dopo ogni PUT, attiva invariata, niente pending prima", secs()];
+};
+DESCR.zd3 = "GET /api/selection con un riavvio rimandato";
 
 // ---------- main ----------
 
