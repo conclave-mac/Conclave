@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { ChatRequest, ChatResult } from "./types.ts";
 import { redact } from "../redact.ts";
 import { appKeyNames } from "../bootstrap.ts";
+import { config } from "../config.ts";
 import { CodedError } from "../errors.ts";
 
 /** Streaming: tempo massimo senza alcuna riga dalla CLI (vedi STREAM_IDLE_MS in openai-compat.ts). */
@@ -32,11 +33,13 @@ export function chatClaude(model: string, req: ChatRequest): Promise<ChatResult>
   const env = { ...process.env };
   // Se fosse impostata una API key, Claude Code la userebbe al posto dell'abbonamento.
   delete env.ANTHROPIC_API_KEY;
-  // Claude è un processo esterno: non gli servono le chiavi degli altri provider (da .env o
-  // dall'app) né le variabili del motore. Restano quelle di Claude stesso (CLAUDE_CODE_*).
+  // Claude è un processo esterno: non gli servono le chiavi degli altri provider (da .env, dall'app o con il
+  // nome scelto in models.json), altri segreti (`*_KEY`, `*_TOKEN`) né le variabili del motore. Restano quelle
+  // di Claude stesso (CLAUDE_CODE_*, es. CLAUDE_CODE_OAUTH_TOKEN) e quelle normali (PATH, HOME…).
+  const providerKeys = new Set(Object.values(config.providers).map((p) => p.keyEnv));
   for (const k of Object.keys(env)) {
     if (k.startsWith("CLAUDE_CODE_")) continue;
-    if (/_API_KEY$/.test(k) || k.startsWith("COUNCIL_") || appKeyNames.includes(k)) delete env[k];
+    if (/_KEY$|_TOKEN$/.test(k) || k.startsWith("COUNCIL_") || appKeyNames.includes(k) || providerKeys.has(k)) delete env[k];
   }
 
   // Streaming (`stream-json` con i pezzi del messaggio): eventi `stream_event` con i `content_block_delta`
@@ -57,6 +60,8 @@ export function chatClaude(model: string, req: ChatRequest): Promise<ChatResult>
   ];
 
   return new Promise((resolve, reject) => {
+    // Già annullato (dibattito fermato prima di arrivare qui): `claude` non parte, l'abbonamento non si consuma.
+    if (req.signal?.aborted) return reject(req.signal.reason ?? Object.assign(new Error("annullato"), { name: "AbortError" }));
     const child = spawn("claude", args, { cwd: SANDBOX_DIR, env, stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
     let err = "";
