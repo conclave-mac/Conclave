@@ -79,7 +79,7 @@ func renderInlineMarkdown(_ raw: String) -> AttributedString {
             var links: [Range<AttributedString.Index>] = []
             for (link, range) in result.runs[\.link] where link != nil { links.append(range) }
             for range in links {
-                result[range].foregroundColor = Brand.accent
+                result[range].foregroundColor = Brand.accentText
                 result[range].underlineStyle = .single
             }
             var codes: [Range<AttributedString.Index>] = []
@@ -101,18 +101,18 @@ func renderInlineMarkdown(_ raw: String) -> AttributedString {
 
 struct MarkdownView: View {
     let text: String
-    var baseFont: Font = .system(size: Brand.bodySize)
+    var baseFont: Font = Brand.Fonts.body
     private let blocks: [MarkdownBlock]
     @AppStorage(TextZoom.key) private var zoom = 1.0
 
-    init(_ text: String, baseFont: Font = .system(size: Brand.bodySize)) {
+    init(_ text: String, baseFont: Font = Brand.Fonts.body) {
         self.text = text
         self.baseFont = baseFont
         self.blocks = cachedMarkdownBlocks(text)
     }
 
     var body: some View {
-        MarkdownBlocksStack(blocks: blocks, baseFont: zoom == 1 ? baseFont : .system(size: Brand.bodySize * zoom))
+        MarkdownBlocksStack(blocks: blocks, baseFont: zoom == 1 ? baseFont : Brand.Fonts.body(zoom: zoom))
             .foregroundStyle(Brand.text)
             // Interlinea di Claude: 1,4 volte il corpo (14 pt → ~19,6 pt, cioè ~3 pt oltre quella naturale).
             .lineSpacing(3 * zoom)
@@ -201,8 +201,8 @@ private struct MarkdownBlockView: View {
     /// 15 pt): # e ## a 15 pt semibold, ### e oltre come il corpo (semibold); la gerarchia la dà
     /// la spaziatura. Con il testo ingrandito crescono nella stessa proporzione.
     private func headingFont(_ level: Int) -> Font {
-        if level <= 2 { return .system(size: 15 * zoom, weight: .semibold) }
-        return .system(size: Brand.bodySize * zoom, weight: .semibold)
+        if level <= 2 { return Brand.Fonts.section(zoom: zoom) }
+        return Brand.Fonts.bodySemibold(zoom: zoom)
     }
 
     private func accessibilityLevel(_ level: Int) -> AccessibilityHeadingLevel {

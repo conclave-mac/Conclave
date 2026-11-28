@@ -15,6 +15,11 @@ enum Brand {
             : NSColor(srgbRed: 0x52 / 255, green: 0x7e / 255, blue: 0xcc / 255, alpha: 1)
     })
 
+    /// L'accento usato come **testo** (link del Markdown e pulsanti a link): più scuro in chiaro, dove
+    /// `accent` arriva solo a ~3,4:1. ≥ 4,5:1 su tutti i fondi, ≥ 7:1 con "Aumenta contrasto"
+    /// (tests/unit/contrast.test.mjs). Per riempimenti, bordi e spunte resta `accent`.
+    static let accentText = status("BrandAccentText", light: 0x4469A9, lightMore: 0x324D7C, dark: 0x9DBBEC, darkMore: 0xBCD1F2)
+
     // Colori di stato, pastello e in tinta col logo (mai i verdi/rossi accesi di sistema).
     /// Riuscito, funziona, gratuito.
     static let success = Color(nsColor: NSColor(name: "BrandSuccess") { a in
@@ -145,7 +150,27 @@ enum Brand {
         static let small = Font.system(size: 12)
         static let smallMedium = Font.system(size: 12, weight: .medium)
         static let smallSemibold = Font.system(size: 12, weight: .semibold)
+        /// Saluto del composer: l'unico testo più grande del titolo di pagina.
+        static let hero = Font.system(size: 34, weight: .semibold)
+        /// Testo in evidenza a 15 pt senza grassetto: campi della domanda e frase sotto il saluto.
+        static let lead = Font.system(size: 15)
+
+        // Gli stessi livelli ingranditi dallo zoom del testo (Vista ▸ ⌘+ ⌘-): a zoom 1 sono identici.
+        static func body(zoom: CGFloat) -> Font { .system(size: Brand.bodySize * zoom) }
+        static func bodySemibold(zoom: CGFloat) -> Font { .system(size: Brand.bodySize * zoom, weight: .semibold) }
+        static func section(zoom: CGFloat) -> Font { .system(size: 15 * zoom, weight: .semibold) }
+        static func smallSemibold(zoom: CGFloat) -> Font { .system(size: 12 * zoom, weight: .semibold) }
     }
+
+    /// Fondo neutro al 10% (il vecchio `Color.primary.opacity(0.12)`: `primary` è già all'85%): pulsante
+    /// premuto, pulsante d'invio spento.
+    static let pressedFill = Color(nsColor: NSColor(name: "BrandPressedFill") { a in
+        NSColor(white: a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? 1 : 0, alpha: 0.10)
+    })
+    /// Fondo neutro appena visibile (3,5%): chip dei partecipanti non scelti.
+    static let chipFill = Color(nsColor: NSColor(name: "BrandChipFill") { a in
+        NSColor(white: a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? 1 : 0, alpha: 0.035)
+    })
 
     /// Fondo tenue del verdetto: superficie appena tinta dell'accento.
     static let verdictSurface = Color(nsColor: NSColor(name: "BrandVerdictSurface") { a in

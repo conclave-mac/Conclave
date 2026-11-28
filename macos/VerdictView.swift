@@ -130,7 +130,7 @@ struct DebateResult: View {
                     VStack(alignment: .leading, spacing: 4) {
                         if let title = s.title {
                             Text(title)
-                                .font(zoom == 1 ? Brand.Fonts.smallSemibold : .system(size: 12 * zoom, weight: .semibold))
+                                .font(Brand.Fonts.smallSemibold(zoom: zoom))
                                 .foregroundStyle(Brand.secondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .accessibilityAddTraits(.isHeader)
