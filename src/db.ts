@@ -46,7 +46,7 @@ db.exec(`
 // Migrazione per DB esistenti: aggiunge le colonne mancanti.
 {
   const cols = new Set((db.prepare(`PRAGMA table_info(debates)`).all() as { name: string }[]).map((c) => c.name));
-  const add: [string, string][] = [["options", "TEXT"], ["parent_id", "INTEGER"], ["finished_at", "TEXT"], ["title", "TEXT"], ["updated_at", "TEXT"], ["confidence", "TEXT"], ["debate_finished_at", "TEXT"]];
+  const add: [string, string][] = [["options", "TEXT"], ["parent_id", "INTEGER"], ["finished_at", "TEXT"], ["title", "TEXT"], ["updated_at", "TEXT"], ["confidence", "TEXT"], ["debate_finished_at", "TEXT"], ["title_custom", "INTEGER"]];
   for (const [name, type] of add) if (!cols.has(name)) db.exec(`ALTER TABLE debates ADD COLUMN ${name} ${type}`);
   // Ultima attività (turno nuovo): ordina la cronologia. Le discussioni vecchie partono dalla creazione.
   db.exec(`UPDATE debates SET updated_at = created_at WHERE updated_at IS NULL`);
@@ -109,9 +109,24 @@ export function saveMessage(debateId: number, m: MessageRow): void {
     .run(debateId, m.model_id, m.phase, m.content, m.error, m.ms, m.model_used ?? null, m.replaced ?? null, m.turn ?? 0, m.confidence ?? null, m.error_code ?? null, debateId);
 }
 
+/** Esegue `fn` in una transazione: tutto o niente (un errore a metà annulla anche le scritture già fatte). */
+function transaction<T>(fn: () => T): T {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const r = fn();
+    db.exec("COMMIT");
+    return r;
+  } catch (e) {
+    try { db.exec("ROLLBACK"); } catch { /* transazione già chiusa da SQLite */ }
+    throw e;
+  }
+}
+
 export function saveAttachments(debateId: number, list: { name: string; kind: string; text: string; imageData?: string }[], turn = 0): void {
-  const ins = db.prepare(`INSERT INTO attachments (debate_id, name, kind, text, turn, image) VALUES (?, ?, ?, ?, ?, ?)`);
-  for (const a of list) ins.run(debateId, a.name, a.kind, a.text, turn, a.imageData ?? null);
+  // Come saveMessage: solo se il dibattito esiste ancora (eliminato nel frattempo: nessuna riga orfana).
+  const ins = db.prepare(`INSERT INTO attachments (debate_id, name, kind, text, turn, image)
+                          SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM debates WHERE id = ?)`);
+  transaction(() => { for (const a of list) ins.run(debateId, a.name, a.kind, a.text, turn, a.imageData ?? null, debateId); });
 }
 
 /** Testo completo degli allegati di tutti i turni (solo per i prompt, mai restituito all'app). */
@@ -151,10 +166,20 @@ export function finishTurn(id: number, status: string): void {
   db.prepare(`UPDATE debates SET status = ?, finished_at = datetime('now') WHERE id = ?`).run(status, id);
 }
 
-export function finishDebate(id: number, status: string, verdict: string | null, title: string | null = null, confidence: string | null = null): void {
+export function finishDebate(id: number, status: string, verdict: string | null, title: string | null = null, confidence: string | null = null): string | null {
   // `finished_at` è la fine dell'ultimo turno (la sposta anche `finishTurn`); `debate_finished_at` resta
   // la fine del dibattito originale (turno 0), per la sua durata nell'intestazione.
-  db.prepare(`UPDATE debates SET status = ?, verdict = ?, title = ?, confidence = ?, finished_at = datetime('now'), debate_finished_at = datetime('now') WHERE id = ?`).run(status, verdict, title, confidence, id);
+  // Un titolo scelto dall'utente (Rinomina, `title_custom`) resta: il verdetto non lo sostituisce.
+  // Restituisce il titolo in vigore, che è quello da mandare nell'evento `done`.
+  const r = db.prepare(`UPDATE debates SET status = ?, verdict = ?, title = CASE WHEN title_custom = 1 THEN title ELSE ? END, confidence = ?,
+                          finished_at = datetime('now'), debate_finished_at = datetime('now') WHERE id = ? RETURNING title`)
+    .get(status, verdict, title, confidence, id) as { title: string | null } | undefined;
+  return r?.title ?? null;
+}
+
+/** Rinomina scelta dall'utente: niente `updated_at` (la cronologia non si riordina). false = id sconosciuto. */
+export function renameDebate(id: number, title: string): boolean {
+  return Number(db.prepare(`UPDATE debates SET title = ?, title_custom = 1 WHERE id = ?`).run(title, id).changes) > 0;
 }
 
 export function listDebates(limit = 50, q?: string) {
@@ -187,9 +212,12 @@ export function getDebate(id: number) {
 }
 
 export function deleteDebate(id: number): void {
-  db.prepare(`DELETE FROM messages WHERE debate_id = ?`).run(id);
-  db.prepare(`DELETE FROM attachments WHERE debate_id = ?`).run(id);
-  db.prepare(`DELETE FROM debates WHERE id = ?`).run(id);
+  // In una transazione: un errore a metà non lascia una discussione senza messaggi o allegati senza discussione.
+  transaction(() => {
+    db.prepare(`DELETE FROM messages WHERE debate_id = ?`).run(id);
+    db.prepare(`DELETE FROM attachments WHERE debate_id = ?`).run(id);
+    db.prepare(`DELETE FROM debates WHERE id = ?`).run(id);
+  });
 }
 
 const MEDIAN_SAMPLES = 20;
