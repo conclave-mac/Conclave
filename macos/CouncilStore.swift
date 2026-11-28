@@ -1174,6 +1174,7 @@ final class CouncilStore: ObservableObject {
     func deleted(_ id: Int) {
         watchers.removeValue(forKey: id)?.cancel()
         drafts[id] = nil
+        customTitles[id] = nil
         guard current?.id == id else { return }
         // Niente da seguire in background: la discussione non esiste più.
         stopStream()

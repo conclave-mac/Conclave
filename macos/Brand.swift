@@ -107,13 +107,13 @@ enum Brand {
     /// Corpo del testo della chat e della barra laterale.
     static let bodySize: CGFloat = 14
 
-    /// Testo terziario (orari, suggerimenti): nero al 47%, come gli orari di Claude; al 66% con
-    /// "Aumenta contrasto".
+    /// Testo terziario (orari, suggerimenti): nero al 55% e bianco al 50%, il minimo per 4,5:1 sul fondo
+    /// (decisione del 28 nov 2026: il 47% di claude.ai dava ~3,5:1); al 66%/68% con "Aumenta contrasto".
     static let tertiaryText = Color(nsColor: NSColor(name: "BrandTertiaryText") { a in
         let more = DisplayOptions.increaseContrast
         return a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(white: 1, alpha: more ? 0.68 : 0.45)
-            : NSColor(white: 0, alpha: more ? 0.66 : 0.47)
+            ? NSColor(white: 1, alpha: more ? 0.68 : 0.50)
+            : NSColor(white: 0, alpha: more ? 0.66 : 0.55)
     })
 
     /// Colori caldi della chat (argilla, ambra, oliva, rosa antico, come la palette di Claude): stati,
