@@ -154,6 +154,11 @@ export function validateSelection(input: unknown): Selection {
  */
 let saved: Selection = selection;
 
+/** Selezione salvata con `PUT /api/selection` e non ancora attiva (riavvio del motore rimandato), altrimenti undefined. */
+export function pendingSelection(): Selection | undefined {
+  return saved === selection ? undefined : saved;
+}
+
 export function saveSelection(s: Selection): void {
   writeFileAtomic(SELECTION_FILE, JSON.stringify(s, null, 2) + "\n");
   saved = s;
