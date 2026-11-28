@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-11-28
+
+### Added
+- Rename a discussion from the sidebar (right-click, double-click, Return or File ▸ Rename…); the new title survives
+  restarts and later verdicts.
+- The composer says who runs the web search when Claude is neither a voice nor the judge.
+- `npm run eval`: an offline bench that compares the council's verdict with the best single answer (runs on a mock in CI;
+  real providers only on request, never Claude).
+
+### Changed
+- Steadier composer: the time estimate has its own line, and live progress shows "N writing · M of T done".
+- Better text contrast: links, secondary hints and timestamps now reach at least 4.5:1 in light and dark mode.
+- Time spent waiting in a provider's queue no longer counts against the judge or a quick answer (up to 2 minutes).
+- Settings read and write the Keychain off the main thread; key and model tests use a session without disk cache.
+- Model self-references are masked more precisely, and later turns fence off quoted model text.
+- CI actions are pinned to commit SHAs.
+
+### Fixed
+- A model selection saved while a restart was postponed could be overwritten by the model check.
+- Deleting a discussion is atomic; late attachments can no longer leave orphaned rows.
+- A Claude request cancelled before starting no longer launches `claude`.
+- Closing Settings or quitting while keys are being saved no longer loses the write.
+
 ## [0.5.6] - 2026-11-22
 
 ### Changed
@@ -256,7 +279,8 @@ versions.
 - Data folder `0700`, files `0600`; atomic writes for settings and health cache.
 - Claude CLI run without tools, MCP servers or user settings, and stopped on shutdown.
 
-[Unreleased]: https://github.com/conclave-mac/Conclave/compare/v0.5.6...HEAD
+[Unreleased]: https://github.com/conclave-mac/Conclave/compare/v0.5.7...HEAD
+[0.5.7]: https://github.com/conclave-mac/Conclave/releases/tag/v0.5.7
 [0.5.6]: https://github.com/conclave-mac/Conclave/releases/tag/v0.5.6
 [0.5.5]: https://github.com/conclave-mac/Conclave/releases/tag/v0.5.5
 [0.5.4]: https://github.com/conclave-mac/Conclave/releases/tag/v0.5.4
