@@ -29,6 +29,12 @@ final class SidebarModel: ObservableObject {
     @Published var pendingDelete: DebateSummary?
     /// Discussione con il titolo in modifica (campo in linea nella riga, come nel Finder).
     @Published var renaming: Int?
+    /// Testo attuale del campo aperto (non pubblicato: cambia a ogni tasto). Serve a confermare la modifica
+    /// in corso quando si avvia una rinomina su un'altra riga, come nel Finder.
+    var renameDraft = ""
+    /// Rinomina chiesta (menu File) per una discussione non ancora nella lista: si apre appena la riga compare
+    /// dopo il ricaricamento, altrimenti un beep. Mai un comando che non fa nulla in silenzio.
+    private var pendingRename: Int?
     /// Errore dell'ultima rinomina (il titolo vecchio è già stato rimesso).
     @Published var renameError: String?
     /// true dopo il primo caricamento riuscito: prima non si mostra lo stato vuoto.
@@ -58,9 +64,13 @@ final class SidebarModel: ObservableObject {
             let q = query.trimmingCharacters(in: .whitespaces)
             var path = "/api/debates"
             if !q.isEmpty, let enc = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) { path += "?q=\(enc)" }
-            guard let data = try? await Engine.call(port(), "GET", path),
-                  !Task.isCancelled,
-                  let list = try? JSONDecoder().decode([DebateSummary].self, from: data) else { return }
+            let data = try? await Engine.call(port(), "GET", path)
+            // Superato da un ricaricamento più recente: la rinomina in attesa la gestisce quello.
+            guard !Task.isCancelled else { return }
+            guard let data, let list = try? JSONDecoder().decode([DebateSummary].self, from: data) else {
+                if pendingRename != nil { pendingRename = nil; NSSound.beep() }
+                return
+            }
             // Una discussione con una domanda di seguito nuova sale in cima. Le date del motore sono
             // "yyyy-MM-dd HH:mm:ss": l'ordine del testo è quello cronologico. Ordinamento stabile.
             let sorted = list.enumerated().sorted { a, b in
@@ -75,6 +85,10 @@ final class SidebarModel: ObservableObject {
                 items = sorted
             }
             if let r = renaming, !sorted.contains(where: { $0.id == r }) { renaming = nil }
+            if let p = pendingRename {
+                pendingRename = nil
+                if let d = sorted.first(where: { $0.id == p }) { open(renameOf: d) } else { NSSound.beep() }
+            }
             loaded = true
             onLoaded?(list)
         }
@@ -96,12 +110,23 @@ final class SidebarModel: ObservableObject {
         pendingDelete = d
     }
 
-    /// Apre il campo del titolo nella riga indicata (o in quella selezionata). Se la ricerca la nasconde,
-    /// si torna alla lista intera: la riga compare con il campo già aperto.
+    /// Apre il campo del titolo nella riga indicata (o in quella selezionata). Un campo già aperto su un'altra
+    /// riga si conferma prima, come nel Finder. Se la riga non è nella lista (nascosta dalla ricerca, o
+    /// discussione appena avviata e lista non ancora ricaricata) si ricarica la lista intera e il campo si
+    /// apre quando la riga compare; se non compare, beep.
     func beginRename(_ id: Int? = nil) {
-        guard let id = id ?? selected else { return }
-        if !items.contains(where: { $0.id == id }) { endSearch() }
-        renaming = id
+        guard let id = id ?? selected else { NSSound.beep(); return }
+        if let open = renaming, open != id { commitRename(open, renameDraft) }
+        if let d = items.first(where: { $0.id == id }) { open(renameOf: d); return }
+        pendingRename = id
+        let filtered = !query.isEmpty
+        endSearch()  // con un filtro attivo ricarica già la lista intera
+        if !filtered { reload() }
+    }
+
+    private func open(renameOf d: DebateSummary) {
+        renameDraft = d.displayTitle
+        renaming = d.id
     }
 
     /// Fine della modifica in linea (Invio o fuoco perso). Titolo vuoto o uguale = nessun cambio, come
@@ -133,6 +158,9 @@ final class SidebarModel: ObservableObject {
     }
 
     func cancelRename() { renaming = nil }
+
+    /// Ogni modifica del campo aperto (solo il campo della riga in modifica la manda).
+    func renameEdited(_ id: Int, _ text: String) { if renaming == id { renameDraft = text } }
 
     /// ⌘F o clic su "Cerca": apre il campo di ricerca della barra laterale e ci porta il fuoco.
     func focusSearch() {
@@ -166,6 +194,8 @@ struct SidebarView: View {
     /// tutta la lista (e il `SystemHighlightRemover` di ogni riga), e l'hover arrivava in ritardo.
     @State private var hover = SidebarHover<Int>()
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.sidebarRowSize) private var rowSize
+    private var metrics: SidebarMetrics { SidebarMetrics(rowSize) }
 
     var body: some View {
         content
@@ -197,7 +227,8 @@ struct SidebarView: View {
                     ForEach(model.items) { d in
                         DebateRow(debate: d, selected: model.selected == d.id, hover: hover,
                                   renaming: model.renaming == d.id,
-                                  onRename: { model.commitRename(d.id, $0) }, onCancelRename: model.cancelRename) { model.requestDelete(d.id) }
+                                  onRename: { model.commitRename(d.id, $0) }, onCancelRename: model.cancelRename,
+                                  onRenameEdit: { model.renameEdited(d.id, $0) }) { model.requestDelete(d.id) }
                             .tag(d.id)
                             // Selezione nel colore del marchio al posto dell'accento di sistema.
                             .listRowBackground(SidebarRowBackground(id: d.id, selected: model.selected == d.id, hover: hover))
@@ -254,8 +285,8 @@ struct SidebarView: View {
                 HStack(spacing: 8) {
                     Button { model.onSettings?() } label: {
                         Image(systemName: "gearshape")
-                            .font(Brand.Fonts.body)
-                            .frame(width: 26, height: 26)
+                            .font(metrics.body)
+                            .frame(width: metrics.value(26), height: metrics.value(26))
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.borderless)
@@ -360,20 +391,22 @@ struct SidebarActionRow: View {
     let help: String
     let action: () -> Void
     @State private var hovering = false
+    @Environment(\.sidebarRowSize) private var rowSize
 
     var body: some View {
-        Button(action: action) {
+        let m = SidebarMetrics(rowSize)
+        return Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: systemImage)
-                    .frame(width: 18)
+                    .frame(width: m.value(18))
                     .accessibilityHidden(true)
                 Text(title)
                 Spacer(minLength: 0)
             }
-            // Testo e icona come le righe della cronologia: 14 pt, stesso colore.
-            .font(Brand.Fonts.body)
+            // Testo e icona come le righe della cronologia (14 pt con la dimensione Media), stesso colore.
+            .font(m.body)
             .foregroundStyle(Brand.text)
-            .padding(.horizontal, 8).padding(.vertical, 7)
+            .padding(.horizontal, 8).padding(.vertical, m.value(7))
             .contentShape(Rectangle())
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(hovering ? Brand.hover : .clear))
@@ -396,8 +429,11 @@ struct DebateRow: View {
     var renaming = false
     var onRename: (String) -> Void = { _ in }
     var onCancelRename: () -> Void = {}
+    var onRenameEdit: (String) -> Void = { _ in }
     let onDelete: () -> Void
     @State private var hovering = false
+    @Environment(\.sidebarRowSize) private var rowSize
+    private var metrics: SidebarMetrics { SidebarMetrics(rowSize) }
 
     /// Seconda riga facoltativa: stato non ordinario.
     private var detail: String {
@@ -416,7 +452,7 @@ struct DebateRow: View {
 
     var body: some View {
         if renaming {
-            RenameField(initial: debate.displayTitle, onCommit: onRename, onCancel: onCancelRename)
+            RenameField(initial: debate.displayTitle, onCommit: onRename, onCancel: onCancelRename, onEdit: onRenameEdit)
                 .padding(.vertical, 1)
         } else {
             row
@@ -427,7 +463,7 @@ struct DebateRow: View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(debate.displayTitle)
-                    .font(Brand.Fonts.body)  // mai in grassetto, nemmeno selezionata (come Claude)
+                    .font(metrics.body)  // mai in grassetto, nemmeno selezionata (come Claude)
                     .foregroundStyle(Brand.text)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -441,6 +477,7 @@ struct DebateRow: View {
                     }
                     Button(action: onDelete) {
                         Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: metrics.value(13)))  // 13 pt (corpo di sistema) con Media
                             .symbolRenderingMode(.hierarchical)
                             .foregroundStyle(Brand.secondaryText)
                     }
@@ -455,12 +492,12 @@ struct DebateRow: View {
             }
             if !detail.isEmpty {
                 Text(detail)
-                    .font(Brand.Fonts.small)
+                    .font(metrics.small)
                     .foregroundStyle(Brand.secondaryText)
                     .lineLimit(1)
             }
         }
-        // Con il margine della lista dà righe a passo 34 pt, come Claude.
+        // Con il margine della lista dà righe a passo 34 pt (dimensione Media), come Claude.
         .padding(.vertical, 1)
         .contentShape(Rectangle())
         .help(debate.question)
@@ -478,31 +515,24 @@ struct DebateRow: View {
     }
 }
 
-/// Regole del titolo scelto dall'utente, le stesse del motore (`PATCH /api/debates/:id`): spazi tolti ai
-/// lati, niente a capo (diventano spazi), al massimo 120 caratteri UTF-16.
-enum RenameTitle {
-    static let maxLength = 120
-
-    static func clean(_ text: String) -> String {
-        text.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)
-    }
-}
-
 /// Campo del titolo nella riga della cronologia, come nel Finder e in Note: testo già selezionato,
 /// Invio conferma, Esc annulla, un clic altrove (fuoco perso) conferma.
 struct RenameField: View {
     let initial: String
     let onCommit: (String) -> Void
     let onCancel: () -> Void
+    var onEdit: (String) -> Void = { _ in }
     @State private var text = ""
     @State private var finished = false
     @FocusState private var focused: Bool
+    @Environment(\.sidebarRowSize) private var rowSize
 
     var body: some View {
         TextField(L("Titolo"), text: $text)
             .textFieldStyle(.roundedBorder)
-            .font(Brand.Fonts.body)
+            .font(SidebarMetrics(rowSize).body)
             .focused($focused)
+            .onChange(of: text) { _, now in onEdit(now) }
             .onSubmit { finish(commit: true) }
             .onExitCommand { finish(commit: false) }
             .onChange(of: focused) { _, now in if !now { finish(commit: true) } }
@@ -512,6 +542,12 @@ struct RenameField: View {
                 text = initial
                 try? await Task.sleep(for: .milliseconds(50))
                 focused = true
+                // Testo tutto selezionato come nel Finder, qualunque sia il modo in cui il campo ha preso il
+                // fuoco (doppio clic, Invio, menu File): si seleziona nell'editor di campo appena attivo.
+                try? await Task.sleep(for: .milliseconds(20))
+                if focused, let editor = NSApp.keyWindow?.firstResponder as? NSTextView, editor.isFieldEditor {
+                    editor.selectAll(nil)
+                }
             }
     }
 

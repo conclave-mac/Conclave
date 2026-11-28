@@ -70,3 +70,14 @@ enum ReleaseText {
         return out.joined(separator: "\n")
     }
 }
+
+/// Regole del titolo scelto dall'utente, le stesse del motore (`PATCH /api/debates/:id`): spazi tolti ai
+/// lati, niente a capo (diventano spazi), al massimo 120 caratteri UTF-16.
+enum RenameTitle {
+    static let maxLength = 120
+
+    static func clean(_ text: String) -> String {
+        text.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)
+    }
+}
+

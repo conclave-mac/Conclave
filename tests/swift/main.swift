@@ -71,6 +71,16 @@ check(MachineLine.value("Confidence: High", keys: "FIDUCIA|CONFIDENCE", map: tru
 check(MachineLine.value("FIDUCIA: bassa\n…\nFIDUCIA: media", keys: "FIDUCIA|CONFIDENCE", map: trust), "media", "vale l'ultima")
 check(MachineLine.value("nessuna riga", keys: "FIDUCIA|CONFIDENCE", map: trust), nil, "assente")
 
+// MARK: RenameTitle
+
+check(RenameTitle.clean("  Titolo  "), "Titolo", "spazi ai lati tolti")
+check(RenameTitle.clean("riga uno\nriga due"), "riga uno riga due", "a capo diventa spazio")
+check(RenameTitle.clean("a\r\nb\n\nc"), "a b c", "a capo di Windows e righe vuote")
+check(RenameTitle.clean(" \n "), "", "solo spazi e a capo: vuoto")
+check(RenameTitle.clean("\tTab\t"), "Tab", "tabulazioni ai lati tolte")
+check(RenameTitle.clean("Città è già"), "Città è già", "accenti invariati")
+check(RenameTitle.maxLength, 120, "limite uguale al motore")
+
 if failures.isEmpty {
     print("swift: \(total) prove, tutte passate")
 } else {

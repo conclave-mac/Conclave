@@ -292,3 +292,28 @@ enum AppAppearance: String, CaseIterable, Identifiable {
         }
     }
 }
+
+/// Misure della barra laterale secondo Impostazioni di Sistema ▸ Aspetto ▸ "Dimensione icone della barra
+/// laterale" (`EnvironmentValues.sidebarRowSize`, che SwiftUI aggiorna da solo se l'impostazione cambia ad app
+/// aperta). Media = le misure di sempre (testo 14 pt, righe a passo 34); Piccola e Grande scalano testo, icone e
+/// margini nello stesso rapporto delle barre laterali di sistema (testo 11 / 13 / 15 pt).
+struct SidebarMetrics: Equatable {
+    let scale: CGFloat
+
+    init(_ size: SidebarRowSize) {
+        switch size {
+        case .small: scale = 11.0 / 13.0
+        case .large: scale = 15.0 / 13.0
+        default: scale = 1
+        }
+    }
+
+    /// Valore di Media scalato e arrotondato al punto (Media lo lascia identico).
+    func value(_ medium: CGFloat) -> CGFloat { scale == 1 ? medium : (medium * scale).rounded() }
+
+    /// Testo delle righe: 12 / 14 / 16 pt.
+    var bodySize: CGFloat { value(Brand.bodySize) }
+    var body: Font { .system(size: bodySize) }
+    /// Seconda riga ("In corso", "Affidabilità bassa"): 11 / 12 / 14 pt (mai sotto 11, si leggerebbe a fatica).
+    var small: Font { .system(size: max(11, value(12))) }
+}
