@@ -8,7 +8,7 @@ import SwiftUI
 struct DebateSummary: Decodable, Identifiable, Equatable {
     let id: Int
     let question: String
-    let title: String?
+    var title: String?
     let status: String
     let created_at: String
     /// Ultima attività (una domanda di seguito la aggiorna); assente con motori vecchi.
@@ -27,6 +27,10 @@ final class SidebarModel: ObservableObject {
     @Published var selected: Int?
     /// Discussione per cui è aperta la conferma di eliminazione.
     @Published var pendingDelete: DebateSummary?
+    /// Discussione con il titolo in modifica (campo in linea nella riga, come nel Finder).
+    @Published var renaming: Int?
+    /// Errore dell'ultima rinomina (il titolo vecchio è già stato rimesso).
+    @Published var renameError: String?
     /// true dopo il primo caricamento riuscito: prima non si mostra lo stato vuoto.
     @Published var loaded = false
 
@@ -34,6 +38,8 @@ final class SidebarModel: ObservableObject {
     var onOpen: ((Int) -> Void)?
     var onDeleted: ((Int) -> Void)?
     var onExport: ((Int) -> Void)?
+    /// Titolo salvato dal motore dopo una rinomina riuscita.
+    var onRenamed: ((Int, String) -> Void)?
     var onNew: (() -> Void)?
     var onSettings: (() -> Void)?
     /// Lista appena caricata: l'app segue le discussioni in corso che non ha avviato lei (API, altra finestra).
@@ -57,9 +63,18 @@ final class SidebarModel: ObservableObject {
                   let list = try? JSONDecoder().decode([DebateSummary].self, from: data) else { return }
             // Una discussione con una domanda di seguito nuova sale in cima. Le date del motore sono
             // "yyyy-MM-dd HH:mm:ss": l'ordine del testo è quello cronologico. Ordinamento stabile.
-            items = list.enumerated().sorted { a, b in
+            let sorted = list.enumerated().sorted { a, b in
                 a.element.activity != b.element.activity ? a.element.activity > b.element.activity : a.offset < b.offset
             }.map(\.element)
+            // Stesse discussioni in un altro ordine (una sale in cima dopo una domanda di seguito): la riga
+            // si sposta animata, come in Mail e Messaggi, salvo "Riduci movimento".
+            let reordered = loaded && sorted.map(\.id) != items.map(\.id) && Set(sorted.map(\.id)) == Set(items.map(\.id))
+            if reordered && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                withAnimation(.easeInOut(duration: 0.3)) { items = sorted }
+            } else {
+                items = sorted
+            }
+            if let r = renaming, !sorted.contains(where: { $0.id == r }) { renaming = nil }
             loaded = true
             onLoaded?(list)
         }
@@ -80,6 +95,44 @@ final class SidebarModel: ObservableObject {
         guard let id = id ?? selected, let d = items.first(where: { $0.id == id }) else { return }
         pendingDelete = d
     }
+
+    /// Apre il campo del titolo nella riga indicata (o in quella selezionata). Se la ricerca la nasconde,
+    /// si torna alla lista intera: la riga compare con il campo già aperto.
+    func beginRename(_ id: Int? = nil) {
+        guard let id = id ?? selected else { return }
+        if !items.contains(where: { $0.id == id }) { endSearch() }
+        renaming = id
+    }
+
+    /// Fine della modifica in linea (Invio o fuoco perso). Titolo vuoto o uguale = nessun cambio, come
+    /// nel Finder. Il titolo nuovo si vede subito; se il motore lo rifiuta torna quello vecchio con l'errore.
+    func commitRename(_ id: Int, _ text: String) {
+        guard renaming == id else { return }
+        renaming = nil
+        guard let i = items.firstIndex(where: { $0.id == id }) else { return }
+        let title = RenameTitle.clean(text)
+        guard !title.isEmpty, title != items[i].displayTitle else { return }
+        guard title.utf16.count <= RenameTitle.maxLength else {
+            renameError = String(format: L("Il titolo può avere al massimo %d caratteri."), RenameTitle.maxLength)
+            return
+        }
+        let old = items[i].title
+        items[i].title = title
+        Task {
+            do {
+                let body = try JSONSerialization.data(withJSONObject: ["title": title])
+                let data = try await Engine.call(port(), "PATCH", "/api/debates/\(id)", body: body)
+                let saved = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["title"] as? String ?? title
+                if let j = items.firstIndex(where: { $0.id == id }) { items[j].title = saved }
+                onRenamed?(id, saved)
+            } catch {
+                if let j = items.firstIndex(where: { $0.id == id }), items[j].title == title { items[j].title = old }
+                renameError = error.localizedDescription
+            }
+        }
+    }
+
+    func cancelRename() { renaming = nil }
 
     /// ⌘F o clic su "Cerca": apre il campo di ricerca della barra laterale e ci porta il fuoco.
     func focusSearch() {
@@ -142,20 +195,28 @@ struct SidebarView: View {
                     if let id { model.onOpen?(id) }
                 })) {
                     ForEach(model.items) { d in
-                        DebateRow(debate: d, selected: model.selected == d.id, hover: hover) { model.requestDelete(d.id) }
+                        DebateRow(debate: d, selected: model.selected == d.id, hover: hover,
+                                  renaming: model.renaming == d.id,
+                                  onRename: { model.commitRename(d.id, $0) }, onCancelRename: model.cancelRename) { model.requestDelete(d.id) }
                             .tag(d.id)
                             // Selezione nel colore del marchio al posto dell'accento di sistema.
                             .listRowBackground(SidebarRowBackground(id: d.id, selected: model.selected == d.id, hover: hover))
                             .background(SystemHighlightRemover(selected: model.selected == d.id))
-                            // Solo le azioni più probabili, distruttive in fondo, niente scorciatoie.
-                            .contextMenu {
-                                if d.status == "done" {
-                                    Button("Esporta come Markdown…") { model.onExport?(d.id) }
-                                    Divider()
-                                }
-                                Button("Elimina", role: .destructive) { model.requestDelete(d.id) }
-                            }
                     }
+                }
+                // Solo le azioni più probabili, distruttive in fondo, niente scorciatoie. Doppio clic (e Invio
+                // sulla riga selezionata, come nel Finder) apre il campo del titolo.
+                .contextMenu(forSelectionType: Int.self) { ids in
+                    if ids.count == 1, let id = ids.first, let d = model.items.first(where: { $0.id == id }) {
+                        Button("Rinomina…") { model.beginRename(id) }
+                        if d.status == "done" {
+                            Button("Esporta come Markdown…") { model.onExport?(id) }
+                        }
+                        Divider()
+                        Button("Elimina", role: .destructive) { model.requestDelete(id) }
+                    }
+                } primaryAction: { ids in
+                    if ids.count == 1, let id = ids.first { model.beginRename(id) }
                 }
                 .listStyle(.sidebar)
                 .tint(Brand.accent)
@@ -177,6 +238,10 @@ struct SidebarView: View {
                 // tabella resta ancorata alla riga che era in cima e la nuova finirebbe sopra, fuori vista.
                 .onChange(of: model.items.first?.id) { _, first in
                     if let first { proxy.scrollTo(first, anchor: .top) }
+                }
+                // Rinomina dal menu File: la riga deve essere visibile.
+                .onChange(of: model.renaming) { _, id in
+                    if let id { proxy.scrollTo(id) }
                 }
             }
 
@@ -209,6 +274,13 @@ struct SidebarView: View {
             Button("Annulla", role: .cancel) {}
         } message: { _ in
             Text("Non si può annullare.")
+        }
+        .alert(L("Impossibile rinominare la discussione"), isPresented: Binding(
+            get: { model.renameError != nil }, set: { if !$0 { model.renameError = nil } }
+        )) {
+            Button("OK") {}
+        } message: {
+            Text(model.renameError ?? "")
         }
     }
 
@@ -320,6 +392,10 @@ struct DebateRow: View {
     var selected = false
     /// Riga sotto il puntatore, condivisa con il fondo della riga (`SidebarRowBackground`).
     let hover: SidebarHover<Int>
+    /// Titolo in modifica: al posto della riga c'è il campo in linea.
+    var renaming = false
+    var onRename: (String) -> Void = { _ in }
+    var onCancelRename: () -> Void = {}
     let onDelete: () -> Void
     @State private var hovering = false
 
@@ -339,6 +415,15 @@ struct DebateRow: View {
     }
 
     var body: some View {
+        if renaming {
+            RenameField(initial: debate.displayTitle, onCommit: onRename, onCancel: onCancelRename)
+                .padding(.vertical, 1)
+        } else {
+            row
+        }
+    }
+
+    private var row: some View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(debate.displayTitle)
@@ -390,6 +475,50 @@ struct DebateRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(detail.isEmpty ? debate.displayTitle : "\(debate.displayTitle), \(detail)")
         .accessibilityAction(named: Text("Elimina discussione"), onDelete)
+    }
+}
+
+/// Regole del titolo scelto dall'utente, le stesse del motore (`PATCH /api/debates/:id`): spazi tolti ai
+/// lati, niente a capo (diventano spazi), al massimo 120 caratteri UTF-16.
+enum RenameTitle {
+    static let maxLength = 120
+
+    static func clean(_ text: String) -> String {
+        text.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)
+    }
+}
+
+/// Campo del titolo nella riga della cronologia, come nel Finder e in Note: testo già selezionato,
+/// Invio conferma, Esc annulla, un clic altrove (fuoco perso) conferma.
+struct RenameField: View {
+    let initial: String
+    let onCommit: (String) -> Void
+    let onCancel: () -> Void
+    @State private var text = ""
+    @State private var finished = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField(L("Titolo"), text: $text)
+            .textFieldStyle(.roundedBorder)
+            .font(Brand.Fonts.body)
+            .focused($focused)
+            .onSubmit { finish(commit: true) }
+            .onExitCommand { finish(commit: false) }
+            .onChange(of: focused) { _, now in if !now { finish(commit: true) } }
+            .accessibilityLabel(L("Titolo della discussione"))
+            // Il fuoco va dato quando il campo è già nella finestra: in onAppear andrebbe perso.
+            .task {
+                text = initial
+                try? await Task.sleep(for: .milliseconds(50))
+                focused = true
+            }
+    }
+
+    private func finish(commit: Bool) {
+        guard !finished else { return }
+        finished = true
+        if commit { onCommit(text) } else { onCancel() }
     }
 }
 

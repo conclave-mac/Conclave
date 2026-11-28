@@ -764,7 +764,7 @@ final class CouncilStore: ObservableObject {
             guard d.isRunning else { return }
             applyEvent(type, e, to: &d)
             if type == "done" {
-                if let t = e["title"] as? String { d.title = t }
+                if let t = e["title"] as? String { d.title = customTitles[d.id] ?? t }
                 if d.status == "done" { onVerdictReady?(d.displayTitle) }
                 onHistoryChanged?()
             }
@@ -1158,6 +1158,17 @@ final class CouncilStore: ObservableObject {
         current = nil
         startError = nil
         onCurrentChanged?(nil)
+    }
+
+    /// Titoli dati dall'utente in questa sessione (Rinomina): il `done` di un seguito o di "Rilancia il
+    /// consiglio" porta il titolo del giudice, che non deve sostituirli nella vista. Dopo un riavvio il
+    /// titolo giusto arriva dal motore (`title_custom`).
+    private var customTitles: [Int: String] = [:]
+
+    /// Discussione rinominata dalla barra laterale: aggiorna il titolo mostrato.
+    func renamed(_ id: Int, title: String) {
+        customTitles[id] = title
+        if current?.id == id { current?.title = title }
     }
 
     func deleted(_ id: Int) {
