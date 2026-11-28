@@ -6,7 +6,17 @@ import type { ChatRequest, ChatResult } from "./types.ts";
 import { redact } from "../redact.ts";
 import { appKeyNames } from "../bootstrap.ts";
 import { config } from "../config.ts";
-import { CodedError } from "../errors.ts";
+import { CodedError, isClaudeCreditsMessage } from "../errors.ts";
+
+/** Avviso in fondo a una risposta tagliata dal limite di token (lo stesso dell'adapter OpenAI-compat). */
+const TRUNCATION_NOTE = "\n\n[…risposta troncata dal limite di lunghezza]";
+
+/**
+ * Errore di Claude: se chiede un credito o un piano separato per l'uso programmatico (`claude -p`) ha un codice
+ * suo, così l'app non lo confonde con un errore generico del provider né con il limite di utilizzo di Pro.
+ */
+const claudeError = (message: string): Error =>
+  isClaudeCreditsMessage(message) ? new CodedError("claude_credits", message) : new Error(message);
 
 /** Streaming: tempo massimo senza alcuna riga dalla CLI (vedi STREAM_IDLE_MS in openai-compat.ts). */
 const STREAM_IDLE_MS = 20_000;
@@ -72,7 +82,9 @@ export function chatClaude(model: string, req: ChatRequest): Promise<ChatResult>
     let pending = "";
     let text = "";
     let shown = false;
-    let final: { result?: string; is_error?: boolean } | undefined;
+    let final: { result?: string; is_error?: boolean; stop_reason?: unknown } | undefined;
+    // Limite di token in uscita: `stop_reason: "max_tokens"` nel `message_delta` dell'API (streaming) o nella riga finale.
+    let maxTokens = false;
     const idleMs = req.idleMs ?? STREAM_IDLE_MS;
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
     const touch = () => {
@@ -88,7 +100,8 @@ export function chatClaude(model: string, req: ChatRequest): Promise<ChatResult>
       if (j?.type === "result" || (j && j.type === undefined && "result" in j)) { final = j; return; }
       const ev = j?.type === "stream_event" ? j.event : undefined;
       // Un messaggio nuovo dell'assistente riparte da capo (succede solo con gli strumenti).
-      if (ev?.type === "message_start" && text) { text = ""; req.onText!("", model); }
+      if (ev?.type === "message_start") { maxTokens = false; if (text) { text = ""; req.onText!("", model); } }
+      if (ev?.type === "message_delta" && ev.delta?.stop_reason) maxTokens = ev.delta.stop_reason === "max_tokens";
       if (ev?.type === "content_block_delta" && ev.delta?.type === "text_delta" && typeof ev.delta.text === "string") {
         text += ev.delta.text;
         const vis = text.trimStart();
@@ -129,19 +142,20 @@ export function chatClaude(model: string, req: ChatRequest): Promise<ChatResult>
       if (timedOut) return fail(Object.assign(new Error(`Claude: nessuna risposta entro ${TIMEOUT_MS / 1000} s`), { name: "TimeoutError" }));
       if (stalled && !req.signal?.aborted) return fail(new CodedError("timeout", `Claude: nessun testo da ${Math.round(idleMs / 1000)} s`, "StallError"));
       try {
-        const j = streaming ? final : (JSON.parse(out) as { result?: string; is_error?: boolean });
+        const j = streaming ? final : (JSON.parse(out) as { result?: string; is_error?: boolean; stop_reason?: unknown });
         if (!j) {
           // Flusso finito senza la riga `result`: se era già arrivato del testo, la risposta è interrotta.
           if (text) return fail(new CodedError("interrupted", `Claude: risposta interrotta (exit ${code})`));
           throw new Error("nessun esito");
         }
         if (j.is_error || typeof j.result !== "string") {
-          fail(new Error(`Claude: ${String(j.result ?? "errore sconosciuto").slice(0, 300)}`));
+          fail(claudeError(`Claude: ${redact(String(j.result ?? "errore sconosciuto").slice(0, 300))}`));
           return;
         }
-        resolve({ text: j.result.trim(), ms: Date.now() - started });
+        const truncated = maxTokens || j.stop_reason === "max_tokens";
+        resolve({ text: j.result.trim() + (truncated ? TRUNCATION_NOTE : ""), ms: Date.now() - started, truncated });
       } catch {
-        fail(new Error(`Claude (exit ${code}): ${redact((err || out || pending).slice(0, 300)) || "nessun output"}`));
+        fail(claudeError(`Claude (exit ${code}): ${redact((err || out || pending).slice(0, 300)) || "nessun output"}`));
       }
     });
     // Se claude esce prima di leggere tutto il prompt (annullamento, timeout, errore d'avvio)

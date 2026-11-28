@@ -38,4 +38,9 @@ export interface ChatResult {
   model?: string;
   /** Modello che doveva rispondere e non l'ha fatto, se ha risposto una riserva. */
   replaced?: string;
+  /**
+   * Risposta tagliata dal limite di token in uscita, come la segnala il provider (`finish_reason: "length"`,
+   * Claude CLI `stop_reason: "max_tokens"`). L'avviso resta anche in fondo al testo, per chi legge.
+   */
+  truncated?: boolean;
 }

@@ -1,7 +1,7 @@
 // Mascheramento dei nomi e delimitatori dei testi dei modelli nei turni successivi.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { maskSelfIds, conversationBlock, initialPrompt, judgePrompt, isTruncated, HIDDEN_NAME, TRUNCATION_MARK, SYSTEM_DEBATER, SYSTEM_JUDGE, SYSTEM_RESPONDER } from "../../src/debate/prompts.ts";
+import { maskSelfIds, conversationBlock, initialPrompt, judgePrompt, quickPrompt, HIDDEN_NAME, SYSTEM_DEBATER, SYSTEM_JUDGE, SYSTEM_RESPONDER, type Conversation, type Material } from "../../src/debate/prompts.ts";
 
 const N = "abc123def456";
 /** Testo fuori da tutti i delimitatori con il nonce N. */
@@ -76,9 +76,33 @@ test("i prompt di sistema nominano anche i delimitatori dei testi", () => {
   for (const s of [SYSTEM_DEBATER, SYSTEM_JUDGE, SYSTEM_RESPONDER]) assert.ok(s.includes("<<<TESTO-…>>>"));
 });
 
-test("isTruncated: solo l'avviso in fondo al testo", () => {
-  assert.ok(isTruncated(`testo\n\n${TRUNCATION_MARK}\n`));
-  assert.ok(!isTruncated(`La risposta B finiva con «${TRUNCATION_MARK}», ma la mia è completa.`));
+test("un solo nonce per prompt: conversazione dei turni ≥ 1 e materiale del turno", () => {
+  const conversation: Conversation = {
+    question: "Q", attachments: [{ name: "vecchio.txt", kind: "text", text: "allegato del turno 0" }],
+    research: [{ text: "dossier vecchio", date: "2026-11-20" }], verdict: "Verdetto del turno 0",
+    answers: [], exchanges: [{ question: "Q1", answer: "Risposta 1", council: false }],
+  };
+  const turn = (nonce?: string): Material => ({
+    nonce, attachments: [{ name: "nuovo.txt", kind: "text", text: "allegato del turno" }],
+    research: { text: "dossier nuovo", date: "2026-11-28" }, followup: { conversation, original: "Q" },
+  });
+  const nonces = (p: string) => new Set([...p.matchAll(/<<<(?:ALLEGATO|RICERCA|TESTO|FINE)-([0-9a-f]+)>>>/g)].map((x) => x[1]));
+  for (const nonce of ["abc123def456", undefined]) {
+    const prompts = [
+      initialPrompt("Q2", undefined, turn(nonce)),
+      judgePrompt("Q2", [{ label: "A", text: "x" }], [], undefined, turn(nonce)),
+      quickPrompt("Q2", conversation, turn(nonce)),
+    ];
+    for (const p of prompts) {
+      // Conversazione (allegati, ricerca, verdetto, scambi) e materiale del turno: tutti con lo stesso nonce.
+      assert.ok(p.includes("CONVERSAZIONE FINORA") && p.includes("allegato del turno 0") && p.includes("allegato del turno\n"));
+      const set = nonces(p);
+      assert.equal(set.size, 1, `nonce diversi nello stesso prompt: ${[...set].join(", ")}`);
+      if (nonce) assert.deepEqual([...set], [nonce]);
+    }
+  }
+  // Senza nonce fisso ogni prompt ne ha uno nuovo.
+  assert.notDeepEqual(nonces(initialPrompt("Q2", undefined, turn())), nonces(initialPrompt("Q2", undefined, turn())));
 });
 
 test("niente falso positivo su aziende citate in prima persona", () => {

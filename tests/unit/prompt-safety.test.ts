@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   initialPrompt, critiquePrompt, judgePrompt, quickPrompt, conversationBlock, maskSelfIds, neutralize, newNonce,
-  isTruncated, HIDDEN_NAME, SYSTEM_DEBATER, SYSTEM_JUDGE, SYSTEM_RESPONDER, type Material,
+  HIDDEN_NAME, SYSTEM_DEBATER, SYSTEM_JUDGE, SYSTEM_RESPONDER, type Material,
 } from "../../src/debate/prompts.ts";
 
 const N = "abc123def456";
@@ -60,7 +60,7 @@ test("delimitatori anche nei round intermedi, nel giudice, nella risposta rapida
   const prompts = [
     critiquePrompt("Q", "mia", [{ label: "B", text: "altra" }], null, m, "A"),
     judgePrompt("Q", [{ label: "A", text: "x" }], [], undefined, m),
-    quickPrompt("Q", "CONVERSAZIONE FINORA:", m),
+    quickPrompt("Q", { question: "Q0", attachments: [], research: [], verdict: null, answers: [], exchanges: [] }, m),
   ];
   for (const p of prompts) {
     assert.ok(p.includes("<<<ALLEGATO-abc123def456>>>"));
@@ -112,11 +112,6 @@ test("note per lettera nel prompt del giudice solo con metadati", () => {
   assert.match(notes[0], /^- Risposta A: .*avvocato del diavolo/);
   assert.match(notes[1], /^- Risposta B: ha saltato il round 2 \(revisione\).*troncata/);
   assert.match(notes[2], /^- Risposta C: .*verificatore di fatti.*i round 1 \(critica\), 3 \(posizione finale\)/);
-});
-
-test("isTruncated riconosce l'avviso dell'adattatore", () => {
-  assert.ok(isTruncated("testo\n\n[…risposta troncata dal limite di lunghezza]"));
-  assert.ok(!isTruncated("testo") && !isTruncated(undefined));
 });
 
 test("autoidentificazioni mascherate nei testi citati", () => {

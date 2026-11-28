@@ -67,6 +67,8 @@ interface Debater {
   final?: string;
   /** Round saltati (1 critica, 2 revisione, 3 posizione finale): note per il giudice. */
   skipped?: number[];
+  /** Almeno una risposta tagliata dal limite di token (lo dice l'adattatore, non il testo): nota per il giudice. */
+  truncated?: boolean;
 }
 
 const LETTERS = "ABCDEFGHIJKL";
@@ -421,7 +423,7 @@ export async function runDebate(
   const material: P.Material = {
     attachments: opts.attachments?.length ? opts.attachments : undefined,
     followup: opts.conversation && turn > 0
-      ? { conversation: P.conversationBlock(opts.conversation, false), original: opts.conversation.question }
+      ? { conversation: opts.conversation, original: opts.conversation.question }
       : undefined,
   };
   emit({
@@ -499,6 +501,7 @@ export async function runDebate(
           live.close();
           tm.end("ok", r.model);
           store(d, r.text);
+          if (r.truncated) d.truncated = true;
           save(ctx, { model_id: d.def.id, phase: name, content: r.text, error: null, ms: r.ms, model_used: r.model, replaced: r.replaced });
           emit({ type: "message", phase: name, modelId: d.def.id, text: r.text, ms: r.ms, model: r.model, replaced: r.replaced });
           ok = true;
@@ -603,7 +606,7 @@ export async function runDebate(
     const meta: Record<string, P.MemberMeta> = Object.fromEntries(ds.filter((d) => d.initial).map((d) => [d.letter, {
       role: critiqueHeld ? (d === randomDevil ? "devil" : roles[d.def.id] ?? null) : null,
       skippedRounds: d.skipped ?? [],
-      truncated: [d.initial, d.critique, d.revised, d.final].some(P.isTruncated),
+      truncated: !!d.truncated,
     }]));
     const judgeUser = P.judgePrompt(question, finals, critiques, parent, material, initials, meta);
     let verdict: string | undefined;
@@ -675,7 +678,7 @@ export async function runQuickAnswer(
         { models: opts.fallbacks, judge: chosen });
     }
     emit({ type: "phase", phase: "answer" });
-    const user = P.quickPrompt(question, P.conversationBlock(opts.conversation, true), material);
+    const user = P.quickPrompt(question, opts.conversation, material);
     const chain = chainOf(chosen, opts.fallbacks.map((m) => withClaudeModel(m, opts.claudeModel)), opts.claudeModel);
     const ok = await firstInChain(chain, ctx, async (m, budget, progress, queued) => {
       const live = streamer(ctx, "answer", m.id);

@@ -242,15 +242,20 @@ export function visibleText(raw: string): string {
   return normalizeText(raw.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/<think>[\s\S]*$/, "").replace(/<(t(h(i(nk?)?)?)?)?$/, "")).trimStart();
 }
 
+/** Testo di un tentativo riuscito; `truncated`: il provider l'ha tagliato al limite di token (`finish_reason: "length"`). */
+export interface Reply { text: string; truncated: boolean }
+
 /** Testo finale di una risposta: niente ragionamento, caratteri normalizzati, avviso se troncata. */
-function finalText(content: string, finish: unknown, req: ChatRequest, tools?: unknown): string {
+function finalText(content: string, finish: unknown, req: ChatRequest, tools?: unknown): Reply {
   // Alcuni modelli di ragionamento includono il "pensiero" tra tag <think>.
   let text = normalizeText(content.replace(/<think>[\s\S]*?<\/think>/g, "")).trim();
   if (req.webSearch) text = withSources(stripCitations(text), tools);
   if (!text) throw new CodedError("empty", "risposta vuota dal modello");
-  // Risposta tagliata dal limite di lunghezza: lo si dichiara, così giudice e utente lo sanno.
-  if (finish === "length") text += "\n\n[…risposta troncata dal limite di lunghezza]";
-  return text;
+  // Risposta tagliata dal limite di lunghezza: lo si dichiara nel testo (per chi legge) e nel risultato (per il
+  // giudice: il testo da solo non basta, una risposta può citare l'avviso in fondo).
+  const truncated = finish === "length";
+  if (truncated) text += "\n\n[…risposta troncata dal limite di lunghezza]";
+  return { text, truncated };
 }
 
 /** Messaggio d'errore del provider (Google a volte lo mette in un array: [{ error: {...} }]). */
@@ -270,7 +275,7 @@ function providerMessage(raw: string): string {
  * l'attesa di `touch`. Un errore nel flusso (OpenRouter: chunk con `error` e `finish_reason: "error"` su
  * HTTP 200) o un flusso chiuso prima della fine è un errore: il testo parziale non vale come risposta.
  */
-async function readStream(res: Response, model: string, req: ChatRequest, touch: () => void): Promise<string> {
+async function readStream(res: Response, model: string, req: ChatRequest, touch: () => void): Promise<Reply> {
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let buf = "";
@@ -336,7 +341,7 @@ async function readStream(res: Response, model: string, req: ChatRequest, touch:
   return finalText(content, finish, req);
 }
 
-export async function once(p: Provider, model: string, req: ChatRequest, timeoutMs = TIMEOUT_MS): Promise<string> {
+export async function once(p: Provider, model: string, req: ChatRequest, timeoutMs = TIMEOUT_MS): Promise<Reply> {
   const key = process.env[p.keyEnv]?.trim();
   if (!key) throw new CodedError("missing_key", `chiave ${p.keyEnv} mancante: aggiungila in Impostazioni ▸ Chiavi API`);
   // Il turno si aspetta prima di far partire i tempi del tentativo; l'attesa la ferma il segnale del round.
@@ -348,7 +353,7 @@ export async function once(p: Provider, model: string, req: ChatRequest, timeout
   }
 }
 
-async function attempt(p: Provider, model: string, key: string, req: ChatRequest, timeoutMs: number): Promise<string> {
+async function attempt(p: Provider, model: string, key: string, req: ChatRequest, timeoutMs: number): Promise<Reply> {
 
   // Streaming solo per chi lo chiede; la ricerca sul web resta intera (servono le fonti di `executed_tools`).
   const streaming = !!req.onText && !req.webSearch;
@@ -433,9 +438,9 @@ async function attempt(p: Provider, model: string, key: string, req: ChatRequest
     let j: any;
     try { j = JSON.parse(raw); } catch { throw new Error("risposta non valida dal provider (non è JSON)"); }
     const msg = j.choices?.[0]?.message;
-    const text = finalText(typeof msg?.content === "string" ? msg.content : "", j.choices?.[0]?.finish_reason, req, msg?.executed_tools);
-    if (streaming) r.onText!(visibleText(text), model);
-    return text;
+    const reply = finalText(typeof msg?.content === "string" ? msg.content : "", j.choices?.[0]?.finish_reason, req, msg?.executed_tools);
+    if (streaming) r.onText!(visibleText(reply.text), model);
+    return reply;
   } catch (e) {
     // L'attesa scaduta interrompe il corpo con l'errore del segnale: si riporta quello, non un AbortError generico.
     if (idle.signal.aborted && !req.signal?.aborted) {
@@ -477,11 +482,11 @@ export async function chatOpenAI(p: Provider, models: string[], req: ChatRequest
         // decide l'attesa senza pezzi (`idleMs`): un modello che sta scrivendo non si taglia a metà.
         // Con una riserva il primo testo deve arrivare entro 35 s come prima (un modello in coda su OpenRouter
         // manda solo commenti e terrebbe vivo il tentativo fino al tetto dell'intervento).
-        const text = await once(p, model, { ...r, ...(hasNext && req.onText ? { firstTextMs: ATTEMPT_WITH_RESERVE_MS } : {}) },
+        const { text, truncated } = await once(p, model, { ...r, ...(hasNext && req.onText ? { firstTextMs: ATTEMPT_WITH_RESERVE_MS } : {}) },
           req.timeoutMs ?? (req.onText ? STREAM_TIMEOUT_MS : hasNext ? ATTEMPT_WITH_RESERVE_MS : TIMEOUT_MS));
         // Le immagini erano la causa del 400 solo se il solo testo passa: allora non si riprovano più.
         if (withoutImages && !imagesTooBig) imageRefused.add(model);
-        return { text, ms: Date.now() - started, model };
+        return { text, ms: Date.now() - started, model, truncated };
       } catch (e) {
         lastError = e;
         if (req.signal?.aborted) {

@@ -13,8 +13,35 @@ const envOut = join(dir, "env.json");
 writeFileSync(join(dir, "claude"), `#!${process.execPath}
 require("node:fs").writeFileSync(${JSON.stringify(marker)}, "1");
 require("node:fs").writeFileSync(${JSON.stringify(envOut)}, JSON.stringify(Object.keys(process.env)));
-process.stdin.resume();
-process.stdin.on("end", () => process.stdout.write(JSON.stringify({ result: "ok" })));
+// Modi scelti dal testo del prompt: risposta troncata (streaming o json) ed errore che chiede crediti separati.
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (d) => (input += d));
+process.stdin.on("end", () => {
+  const out = (j) => process.stdout.write(JSON.stringify(j) + "\\n");
+  const streaming = process.argv.includes("stream-json");
+  if (input.includes("CREDITS")) {
+    out({ type: "result", is_error: true, result: "Claude Code programmatic usage (claude -p) now requires Agent SDK credits. Purchase credits or upgrade your plan at claude.ai/settings/billing." });
+    process.exit(1);
+  }
+  if (input.includes("MAXTOK") && streaming) {
+    out({ type: "stream_event", event: { type: "message_start" } });
+    out({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "Risposta lunga" } } });
+    out({ type: "stream_event", event: { type: "message_delta", delta: { stop_reason: "max_tokens" } } });
+    out({ type: "result", result: "Risposta lunga", is_error: false });
+    return;
+  }
+  if (input.includes("MAXTOK")) return out({ result: "Risposta lunga", stop_reason: "max_tokens" });
+  if (input.includes("QUOTE") && streaming) {
+    // Risposta completa che finisce citando l'avviso: non è troncata.
+    const t = "Una risposta finiva con […risposta troncata dal limite di lunghezza]";
+    out({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: t } } });
+    out({ type: "stream_event", event: { type: "message_delta", delta: { stop_reason: "end_turn" } } });
+    out({ type: "result", result: t, is_error: false, stop_reason: "end_turn" });
+    return;
+  }
+  out({ result: "ok" });
+});
 `);
 chmodSync(join(dir, "claude"), 0o755);
 process.env.COUNCIL_DATA = dir;
@@ -52,4 +79,23 @@ test("ambiente del figlio: niente *_KEY, *_TOKEN, keyEnv dei provider né COUNCI
   } finally {
     for (const k of Object.keys(extra)) delete process.env[k];
   }
+});
+
+test("troncatura dalla CLI: stop_reason max_tokens (streaming e json) → truncated e avviso in fondo", async () => {
+  const mark = "[…risposta troncata dal limite di lunghezza]";
+  const streamed = await chatClaude("sonnet", { system: "s", user: "MAXTOK", onText: () => {} });
+  assert.equal(streamed.truncated, true);
+  assert.ok(streamed.text.endsWith(mark));
+  const whole = await chatClaude("sonnet", { system: "s", user: "MAXTOK" });
+  assert.equal(whole.truncated, true);
+  assert.ok(whole.text.endsWith(mark));
+  // Chi cita l'avviso senza essere troncato non lo è.
+  const quoted = await chatClaude("sonnet", { system: "s", user: "QUOTE", onText: () => {} });
+  assert.equal(!!quoted.truncated, false);
+  const plain = await chatClaude("sonnet", { system: "s", user: "u" });
+  assert.equal(!!plain.truncated, false);
+});
+
+test("Claude che chiede crediti separati per claude -p: codice claude_credits", async () => {
+  await assert.rejects(chatClaude("sonnet", { system: "s", user: "CREDITS" }), (e: Error & { code?: string }) => e.code === "claude_credits");
 });
