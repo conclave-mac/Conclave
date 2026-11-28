@@ -100,7 +100,7 @@ struct HoverIconStyle: ButtonStyle {
                 .foregroundStyle(enabled ? AnyShapeStyle(Brand.secondaryText) : AnyShapeStyle(Brand.tertiaryText))
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(configuration.isPressed ? AnyShapeStyle(Color.primary.opacity(0.12))
+                        .fill(configuration.isPressed ? AnyShapeStyle(Brand.pressedFill)
                               : hover && enabled ? AnyShapeStyle(Brand.hover) : AnyShapeStyle(Color.clear))
                 )
                 .onHover { hover = $0 }
@@ -143,7 +143,7 @@ private struct SendButton: View {
     var body: some View {
         Button(action: action) {
             ZStack {
-                Circle().fill(enabled ? AnyShapeStyle(Brand.accent) : AnyShapeStyle(Color.primary.opacity(0.12)))
+                Circle().fill(enabled ? AnyShapeStyle(Brand.accent) : AnyShapeStyle(Brand.pressedFill))
                 if busy {
                     ProgressView().controlSize(.small)
                 } else {
@@ -309,10 +309,10 @@ struct ComposerView: View {
         VStack(spacing: 12) {
             CouncilLogo(size: 48)
             Text(greeting)
-                .font(.system(size: 34, weight: .semibold))
+                .font(Brand.Fonts.hero)
                 .accessibilityAddTraits(.isHeader)
             Text("Fai una domanda: più AI ne discutono e un giudice decide.")
-                .font(.system(size: 15))
+                .font(Brand.Fonts.lead)
                 .foregroundStyle(Brand.secondaryText)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -325,7 +325,7 @@ struct ComposerView: View {
         VStack(alignment: .leading, spacing: 14) {
             TextField("Domanda", text: $store.question, prompt: Text("Cosa vuoi chiedere al consiglio?"), axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 15))
+                .font(Brand.Fonts.lead)
                 .lineLimit(3...12)
                 .lineSpacing(2)
                 .focused($focused)
@@ -397,29 +397,24 @@ struct ComposerView: View {
 
     // MARK: Opzioni sotto il riquadro: menu leggeri e stima
 
-    /// Finestra larga: tutto su una riga. Più stretta: la stima va sotto, poi anche l'interruttore.
+    /// Finestra larga: i controlli su una riga. Più stretta: l'interruttore va sotto, poi anche i ruoli.
+    /// La stima ha una riga tutta sua, sempre presente: la sua larghezza cambia con le scelte e, sulla
+    /// stessa riga dei controlli, faceva cambiare disposizione a `ViewThatFits` mentre si sceglieva.
     /// I controlli tengono sempre la loro larghezza: le etichette non si troncano né si spezzano.
     private var optionsRow: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 14) {
-                roundsMenu; judgeMenu; rolesMenu; webToggle
-                Spacer(minLength: 8)
-                estimate
-            }
-            VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
+            ViewThatFits(in: .horizontal) {
                 HStack(spacing: 14) { roundsMenu; judgeMenu; rolesMenu; webToggle }
-                estimate
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 14) { roundsMenu; judgeMenu; rolesMenu }
+                    webToggle
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 14) { roundsMenu; judgeMenu }
+                    HStack(spacing: 14) { rolesMenu; webToggle }
+                }
             }
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 14) { roundsMenu; judgeMenu; rolesMenu }
-                webToggle
-                estimate
-            }
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 14) { roundsMenu; judgeMenu }
-                HStack(spacing: 14) { rolesMenu; webToggle }
-                estimate
-            }
+            estimate
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .menuStyle(.button)
@@ -507,31 +502,35 @@ struct ComposerView: View {
 
     private var webToggle: some View {
         // Senza modelli che cercano sul web l'interruttore resta spento (la scelta salvata non cambia).
-        Toggle(isOn: Binding(get: { store.webSearch && store.webSearchAvailable }, set: { store.webSearch = $0 })) {
+        // Senza Claude e senza GPT-OSS su Groq resta visibile ma spento, con il motivo nel tooltip e sotto il
+        // riquadro: nasconderlo lo farebbe sparire e ricomparire cambiando il giudice, senza dire perché.
+        Toggle(isOn: Binding(get: { store.webSearchActive }, set: { store.webSearch = $0 })) {
             Label(L("Cerca sul web"), systemImage: "globe")
         }
         .toggleStyle(.switch)
         .controlSize(.mini)
         .fixedSize()
-        .disabled(!store.webSearchAvailable)
+        .disabled(!store.composerWebSearchAvailable)
         .help(store.webSearchHelp)
         .accessibilityLabel(L("Cerca sul web"))
         .accessibilityHint(store.webSearchHelp)
     }
 
-    @ViewBuilder private var estimate: some View {
-        if store.canEstimate {
-            Label(String(format: L("%d chiamate + 1 verdetto"), store.estimatedCalls)
-                    + (store.estimatedTime.map { " · " + $0 } ?? ""),
-                  systemImage: "arrow.left.arrow.right")
-                .monospacedDigit()
-                .lineLimit(1)
-                .fixedSize()
-                .help(store.hint)
-                .accessibilityLabel(store.hint)
-                .contentTransition(.numericText())
-                .animation(.snappy(duration: 0.2), value: store.estimatedCalls)
-        }
+    /// Riga riservata della stima: senza stima resta vuota ma della stessa altezza, così il riquadro
+    /// non salta quando la stima compare o sparisce (la spiegazione va nei messaggi sotto).
+    private var estimate: some View {
+        Label(store.canEstimate ? String(format: L("%d chiamate + 1 verdetto"), store.estimatedCalls)
+                + (store.estimatedTime.map { " · " + $0 } ?? "") : " ",
+              systemImage: "arrow.left.arrow.right")
+            .monospacedDigit()
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .opacity(store.canEstimate ? 1 : 0)
+            .accessibilityHidden(!store.canEstimate)
+            .help(store.canEstimate ? store.hint : "")
+            .accessibilityLabel(store.hint)
+            .contentTransition(.numericText())
+            .animation(.snappy(duration: 0.2), value: store.estimatedCalls)
     }
 
     @ViewBuilder private var messages: some View {
@@ -544,6 +543,13 @@ struct ComposerView: View {
                     .fixedSize(horizontal: false, vertical: true)
             } else if !store.canEstimate {
                 Text(store.hint)
+                    .foregroundStyle(Brand.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // Claude né voce né giudice: chi cercherà sul web (o perché la ricerca è spenta).
+            if let note = store.webSearchNote {
+                Label(note, systemImage: "globe")
                     .foregroundStyle(Brand.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -562,11 +568,15 @@ struct ComposerView: View {
                 }
                 Button("Apri impostazioni…", action: openSettings)
                     .buttonStyle(.link)
+                    .foregroundStyle(Brand.accentText)
+                    .tint(Brand.accentText)
             }
 
             if !hasOtherVoices && store.engineReady {
                 Button("Aggiungi le chiavi API…", action: openSettings)
                     .buttonStyle(.link)
+                    .foregroundStyle(Brand.accentText)
+                    .tint(Brand.accentText)
             }
         }
         .font(Brand.Fonts.small)
@@ -629,7 +639,7 @@ private struct VoiceChipStyle: ToggleStyle {
             .foregroundStyle(on ? AnyShapeStyle(Brand.text) : AnyShapeStyle(Brand.secondaryText))
             .padding(.horizontal, 10)
             .frame(height: 26)
-            .background(Capsule().fill(on ? Brand.accent.opacity(0.10) : Color.primary.opacity(0.04)))
+            .background(Capsule().fill(on ? Brand.accent.opacity(0.10) : Brand.chipFill))
             .overlay(Capsule().strokeBorder(on ? Brand.accent : Brand.hairline, lineWidth: 1))
             .contentShape(Capsule())
         }
@@ -1200,13 +1210,16 @@ struct DebateView: View {
         let current = steps.first { $0.state == .current }
         let label = debate.judging || current?.id == "verdict" ? debate.statusText : (current?.heading ?? debate.statusText)
         return HStack(alignment: .center, spacing: 16) {
+            let count = CouncilStore.progressCount(done: pr.done, total: pr.total, streaming: pr.streaming)
             ProgressView(value: Double(pr.done), total: Double(pr.total)) {
                 Text(label).font(Brand.Fonts.bodyMedium)
             } currentValueLabel: {
-                Text(String(format: L("%d di %d risposte"), pr.done, pr.total)).font(Brand.Fonts.small).foregroundStyle(Brand.secondaryText).monospacedDigit()
+                Text(count).font(Brand.Fonts.small).foregroundStyle(Brand.secondaryText).monospacedDigit()
             }
             .progressViewStyle(.linear)
-            .accessibilityValue(label + ", " + String(format: L("%d di %d risposte"), pr.done, pr.total))
+            // Barra nell'argilla dei marcatori delle fasi, non nell'azzurro di sistema.
+            .tint(Brand.clay)
+            .accessibilityValue(label + ", " + count)
 
             IconButton(L("Interrompi"), symbol: "stop.circle",
                        help: L("Interrompi (⌘.). Le risposte già arrivate restano salvate.")) {
@@ -1335,11 +1348,14 @@ struct DebateView: View {
         return String(format: L("Round %d — %@"), i, name)
     }
 
-    /// "3 di 5 risposte" durante la fase; "5 risposte · fino a 41 s" a fase chiusa.
+    /// "3 di 5 risposte" (o "2 in arrivo · 0 di 5 complete" mentre scrivono) durante la fase;
+    /// "5 risposte · fino a 41 s" a fase chiusa.
     private func phaseMeta(_ p: PhaseState, _ state: StepState) -> String? {
         if p.cards.isEmpty { return nil }
         let arrived = p.cards.filter { !$0.waiting }.count
-        if state == .current { return String(format: L("%d di %d risposte"), arrived, p.cards.count) }
+        if state == .current {
+            return CouncilStore.progressCount(done: arrived, total: p.cards.count, streaming: p.cards.filter(\.streaming).count)
+        }
         let answered = p.cards.filter { $0.text != nil }.count
         var parts = [answered == 1 ? L("1 risposta") : String(format: L("%d risposte"), answered)]
         let missing = p.cards.count - answered
@@ -1520,7 +1536,7 @@ private struct FollowupBar: View {
                       prompt: Text("Chiedi ancora qualcosa su questa discussione…"),
                       axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 15))
+                .font(Brand.Fonts.lead)
                 .lineLimit(1...8)
                 .lineSpacing(2)
                 .focused($focused)
@@ -2211,7 +2227,7 @@ private struct CardView: View {
                     .textSelection(.enabled)
                     .help(info == nil ? "" : err)
                 }
-            } else if let partial = card.partial, !partial.isEmpty {
+            } else if let partial = card.visiblePartial {
                 // Risposta in arrivo (streaming): il testo cresce; la card conta come "risposta" solo con `text`.
                 VStack(alignment: .leading, spacing: 8) {
                     MarkdownView(partial)
@@ -2253,7 +2269,7 @@ private struct CardView: View {
         // sostituisce quelle dei figli: senza il valore il testo della risposta sparirebbe.
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityStatus)
-        .accessibilityValue(card.text.map(Self.spokenText) ?? card.errorText ?? card.partial.map(Self.spokenText) ?? "")
+        .accessibilityValue(card.text.map(Self.spokenText) ?? card.errorText ?? card.visiblePartial.map(Self.spokenText) ?? "")
         .contextMenu {
             if let text = card.text {
                 Button("Copia risposta") {
@@ -2275,7 +2291,7 @@ private struct CardView: View {
         } else if card.error != nil {
             parts.append(card.skipped ? L("ha saltato questo round")
                          : card.id.hasPrefix("research") ? L("Ricerca sul web non riuscita") : L("Non ha risposto"))
-        } else if card.partial?.isEmpty == false, running {
+        } else if card.visiblePartial != nil, running {
             parts.append(L("sta scrivendo"))
         } else {
             parts.append(running ? L("In attesa") : L("Nessuna risposta"))

@@ -44,6 +44,15 @@ struct CardState: Identifiable, Equatable {
     /// Streaming: variante che sta scrivendo (può cambiare se riparte una riserva).
     var partialModel: String?
     var waiting: Bool { text == nil && error == nil }
+    /// Parziale da mostrare: senza gli spazi e gli a capo iniziali che alcuni modelli mandano per primi
+    /// (lasciavano ~80 pt vuoti in testa alla card); nil finché non arriva testo vero. Come in Claude
+    /// desktop, dove il Markdown in arrivo non mostra righe vuote prima del primo carattere.
+    var visiblePartial: String? {
+        guard let p = partial, let i = p.firstIndex(where: { !$0.isWhitespace }) else { return nil }
+        return String(p[i...])
+    }
+    /// Sta scrivendo: testo in arrivo ma risposta non ancora conclusa.
+    var streaming: Bool { waiting && visiblePartial != nil }
     /// Errore da mostrare: tradotto con l'azione da fare se il codice è noto, altrimenti il testo del motore.
     var errorText: String? { error.map { ErrorText.text(code: errorCode, raw: $0) } }
     /// Azione suggerita per l'errore (nil se il codice non è noto).
@@ -126,6 +135,8 @@ final class CouncilStore: ObservableObject {
     /// Ricerca sul web possibile (`GET /api/models` → `webSearch`) e chi la farebbe.
     @Published var webSearchAvailable = false
     @Published var webSearchVia: String?
+    /// Chi cercherebbe quando Claude non è né voce né giudice (`viaWithoutClaude`); nil = nessuno.
+    @Published var webSearchViaWithoutClaude: String?
     /// Tempo tipico del verdetto (ms, `GET /api/models` → `judgeAvgMs`); nil senza dati.
     @Published var judgeAvgMs: Double?
     /// true mentre si allineano le scelte ai modelli disponibili: un modello che all'avvio
@@ -247,6 +258,7 @@ final class CouncilStore: ObservableObject {
         let ws = j["webSearch"] as? [String: Any]
         webSearchAvailable = ws?["available"] as? Bool ?? false
         webSearchVia = ws?["via"] as? String
+        webSearchViaWithoutClaude = ws?["viaWithoutClaude"] as? String
         judgeAvgMs = (j["judgeAvgMs"] as? NSNumber)?.doubleValue
 
         // Le scelte salvate sono la fonte: ogni scelta dell'utente si salva subito, quindi a ogni
@@ -357,17 +369,39 @@ final class CouncilStore: ObservableObject {
                 sent.map { AttachmentMeta(name: $0.0.name, kind: $0.0.kind, chars: $0.0.chars) })
     }
 
+    /// Claude partecipa al dibattito del composer (voce scelta o giudice): solo allora la ricerca la fa
+    /// Claude (`findResearcher` nel motore), altrimenti chi indica `viaWithoutClaude`.
+    var claudeInComposer: Bool {
+        judge == "claude" || voices.contains { $0.isClaude && selected.contains($0.id) }
+    }
+
+    /// Chi farebbe la ricerca con le scelte del composer; nil = nessuno.
+    var composerResearcher: String? { claudeInComposer ? webSearchVia : webSearchViaWithoutClaude }
+
+    /// Ricerca sul web possibile con le scelte del composer.
+    var composerWebSearchAvailable: Bool { composerResearcher != nil }
+
     /// Ricerca sul web richiesta e possibile: è ciò che si invia al motore.
-    var webSearchActive: Bool { webSearch && webSearchAvailable }
+    var webSearchActive: Bool { webSearch && composerWebSearchAvailable }
 
     /// Spiegazione dell'interruttore "Cerca sul web".
     var webSearchHelp: String {
         guard webSearchAvailable else {
             return L("Ricerca sul web non disponibile: nessun modello configurato può cercare sul web.")
         }
-        let via = webSearchVia.map { String(format: L("La ricerca la fa %@"), $0) } ?? ""
+        guard let via = composerResearcher else { return L("Senza Claude la ricerca sul web non è disponibile: scegli Claude come partecipante o come giudice.") }
         return L("Prima del dibattito un modello cerca sul web informazioni aggiornate e le passa a tutti i partecipanti.")
-            + (via.isEmpty ? "" : " " + via + ".")
+            + " " + String(format: L("La ricerca la fa %@"), via) + "."
+    }
+
+    /// Riga sotto il composer quando Claude non c'è: chi cercherà sul web, o perché non si può.
+    /// Solo se l'utente vuole la ricerca (scelta salvata accesa); il tooltip dell'interruttore lo dice sempre.
+    var webSearchNote: String? {
+        guard webSearch, webSearchAvailable, !claudeInComposer else { return nil }
+        guard let via = webSearchViaWithoutClaude else {
+            return L("Senza Claude la ricerca sul web non è disponibile: scegli Claude come partecipante o come giudice.")
+        }
+        return String(format: L("Senza Claude la ricerca sul web la fa %@."), via)
     }
 
     // MARK: Allegati
@@ -797,7 +831,7 @@ final class CouncilStore: ObservableObject {
             let text = e["text"] as? String ?? ""
             let model = e["model"] as? String
             if phase == "verdict" {
-                if d.verdict == nil { d.verdictDraft = text.isEmpty ? nil : text }
+                if d.verdict == nil { d.verdictDraft = text.firstIndex { !$0.isWhitespace }.map { String(text[$0...]) } }
             } else if phase == "answer" {
                 guard d.answer?.text == nil else { break }
                 setAnswer(&d, modelId: modelId) {
@@ -1478,20 +1512,28 @@ extension CouncilStore {
     }
 
     /// Avanzamento complessivo: risposte arrivate (o concluse con errore) su risposte attese, verdetto compreso.
-    func progress(_ d: DebateState) -> (done: Int, total: Int) {
+    func progress(_ d: DebateState) -> (done: Int, total: Int, streaming: Int) {
         let active = activeCount(d)
-        var done = 0, total = 0
+        var done = 0, total = 0, streaming = 0
         for s in steps(d) where s.id != "verdict" {
             if let p = d.phases.first(where: { $0.id == s.id }) {
                 total += p.cards.count
                 done += p.cards.filter { !$0.waiting }.count
+                streaming += p.cards.filter(\.streaming).count
             } else if s.state == .pending {
                 total += s.id == "research" ? 1 : active
             }
         }
         total += 1
         if d.verdict != nil { done += 1 }
-        return (min(done, total), max(total, 1))
+        return (min(done, total), max(total, 1), streaming)
+    }
+
+    /// "3 di 5 risposte"; mentre qualcuno scrive "2 in arrivo · 0 di 5 complete" (con "0 di 5 risposte"
+    /// sembrava che non arrivasse nulla mentre le card stavano già scrivendo).
+    static func progressCount(done: Int, total: Int, streaming: Int) -> String {
+        streaming > 0 ? String(format: L("%d in arrivo · %d di %d complete"), streaming, done, total)
+            : String(format: L("%d di %d risposte"), done, total)
     }
 
     /// Separatore del motore tra verdetto e sintesi del dibattito (`DEBATE_MARKER` in `prompts.ts`).

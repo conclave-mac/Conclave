@@ -8,6 +8,9 @@ struct DebateHeader: View {
     /// Domanda lunga mostrata per intero (stato della vista del dibattito: la riga pigra può essere ricreata).
     @Binding var questionExpanded: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Altezze della domanda intera e limitata a tre righe alla larghezza attuale (misurate sotto).
+    @State private var fullHeight: CGFloat = 0
+    @State private var clampedHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -73,10 +76,10 @@ struct DebateHeader: View {
         }
     }
 
-    /// Domande lunghe: tre righe e "Mostra tutto"; il testo intero resta nel tooltip.
-    private var questionIsLong: Bool {
-        debate.question.count > 240 || debate.question.filter(\.isNewline).count > 2
-    }
+    /// Domande lunghe: tre righe e "Mostra tutto"; il testo intero resta nel tooltip. Lunga vuol dire
+    /// troncata davvero alla larghezza attuale (misurata), non oltre un numero di caratteri: con la
+    /// finestra larga una domanda di 300 caratteri sta tutta in tre righe e il pulsante non serviva.
+    private var questionIsLong: Bool { fullHeight > clampedHeight + 1 }
 
     private func questionText(font: Font, isHeader: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -91,14 +94,34 @@ struct DebateHeader: View {
                 .textSelection(.enabled)
                 .help(questionIsLong && !questionExpanded ? debate.question : "")
                 .accessibilityLabel(L("Domanda") + ": " + debate.question)
+                // Due copie invisibili alla stessa larghezza, intera e a tre righe: se differiscono, è troncata.
+                .background(alignment: .topLeading) {
+                    ZStack(alignment: .topLeading) {
+                        measured(font, lines: nil) { fullHeight = $0 }
+                        measured(font, lines: 3) { clampedHeight = $0 }
+                    }
+                    .hidden()
+                    .accessibilityHidden(true)
+                }
             if questionIsLong {
                 Button(questionExpanded ? L("Mostra meno") : L("Mostra tutta la domanda")) {
                     withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { questionExpanded.toggle() }
                 }
                 .buttonStyle(.link)
+                .foregroundStyle(Brand.accentText)
+                .tint(Brand.accentText)
                 .font(Brand.Fonts.body)
             }
         }
+    }
+
+    private func measured(_ font: Font, lines: Int?, _ set: @escaping (CGFloat) -> Void) -> some View {
+        Text(debate.question)
+            .font(font)
+            .lineSpacing(3)
+            .lineLimit(lines)
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { set($0) }
     }
 
     /// Data, round, giudice e durata: voci separate con il proprio simbolo, su più righe se serve.
