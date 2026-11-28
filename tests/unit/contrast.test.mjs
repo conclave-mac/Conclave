@@ -101,3 +101,13 @@ test("BrandText sulla chip selezionata (accento al 10% sopra il fondo): ≥ 7:1"
     }
   }
 });
+
+test("BrandTertiaryText: ≥ 4,5:1 (decisione del 28 nov 2026)", () => {
+  const g = gray("BrandTertiaryText");
+  for (const [bg, { dark, light }] of BACKGROUNDS) {
+    for (const [label, v, base] of [["chiaro", g.light, light], ["scuro", g.dark, dark]]) {
+      const n = ratio(over(v.rgb, v.normal, base), base);
+      assert.ok(n >= 4.5, `${bg} ${label}: ${n.toFixed(2)}:1`);
+    }
+  }
+});
