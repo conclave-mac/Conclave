@@ -97,7 +97,8 @@ const STRAGGLER_GRACE_MS = 15_000;
 const STRAGGLER_FLOOR_MS = 30_000;
 /** Numero del round per fase, per le note al giudice sui round saltati. */
 const ROUND_OF: Record<string, number> = { critique: 1, revise: 2, final: 3 };
-const JUDGE_BUDGET_MS = 150_000;
+/** Tempo di un giudice o di una risposta rapida (abbreviabile solo per le prove). */
+const JUDGE_BUDGET_MS = testMs("COUNCIL_JUDGE_BUDGET_MS", 150_000);
 /**
  * Giudice e risposta rapida che stanno scrivendo: fino a 240 s, come il tetto della fase del verdetto (che resta
  * il limite vero del giudice) e il tempo massimo della Claude CLI: un tetto più alto non servirebbe a nessuno.
@@ -290,23 +291,33 @@ export function chainOf(chosen: ModelDef, others: ModelDef[], claudeModel: strin
  */
 export async function firstInChain(
   chain: ModelDef[], ctx: TurnCtx,
-  attempt: (m: ModelDef, budget: AbortSignal, progress: (text: string) => void) => Promise<void>,
+  attempt: (m: ModelDef, budget: AbortSignal, progress: (text: string) => void, onQueued: (queued: boolean) => void) => Promise<void>,
   fail: (m: ModelDef, error: string, code: ErrorCode) => void,
   totalMs = Infinity,
 ): Promise<boolean> {
+  // Come per i partecipanti, l'attesa del posto nella coda del provider (`onQueued`) non conta: né nel tempo del
+  // tentativo (`hold` ferma i timer di withBudget) né nel tetto totale (`queuedMs` lo sposta in avanti).
   const until = Date.now() + totalMs;
+  let queuedMs = 0;
+  let queuedSince: number | undefined;
   for (const m of chain) {
     // Tempo totale finito: i giudici restanti non si provano (sotto 1 s non c'è spazio per una risposta).
-    const left = until - Date.now();
+    const left = until + queuedMs - Date.now();
     if (left < 1000) break;
     try {
       // Chi sta scrivendo allo scadere del tetto può finire (fino a JUDGE_HARD_MS), sempre dentro il tetto totale.
-      await withBudget(Math.min(JUDGE_BUDGET_MS, left), ctx.signal, (budget, _hold, progress) => attempt(m, budget, progress),
-        Math.min(JUDGE_HARD_MS, left));
+      await withBudget(Math.min(JUDGE_BUDGET_MS, left), ctx.signal, (budget, hold, progress) => attempt(m, budget, progress, (queued) => {
+        hold(queued);
+        if (queued) queuedSince ??= Date.now();
+        else if (queuedSince !== undefined) { queuedMs += Date.now() - queuedSince; queuedSince = undefined; }
+      }), Math.min(JUDGE_HARD_MS, left));
       return true;
     } catch (e) {
       if (ctx.signal.aborted) throw new Error("cancelled");
       fail(m, (e as Error).message, errorCode(e));
+    } finally {
+      // Tentativo finito mentre era in coda (tempo scaduto, annullato): l'attesa si chiude qui.
+      if (queuedSince !== undefined) { queuedMs += Date.now() - queuedSince; queuedSince = undefined; }
     }
   }
   return false;
@@ -342,9 +353,11 @@ export async function researchPhase(ctx: TurnCtx, question: string, claudeModel:
 }
 
 /** Esito finale di un turno: il turno 0 scrive verdetto e titolo, gli altri solo lo stato. */
-function finish(ctx: TurnCtx, status: "done" | "failed" | "cancelled", verdict: string | null, title: string | null = null, confidence: string | null = null) {
-  if (ctx.turn === 0) finishDebate(ctx.debateId, status, verdict, title, confidence);
-  else finishTurn(ctx.debateId, status);
+/** Chiude il turno; restituisce il titolo in vigore (quello scelto dall'utente con Rinomina resta). */
+function finish(ctx: TurnCtx, status: "done" | "failed" | "cancelled", verdict: string | null, title: string | null = null, confidence: string | null = null): string | null {
+  if (ctx.turn === 0) return finishDebate(ctx.debateId, status, verdict, title, confidence);
+  finishTurn(ctx.debateId, status);
+  return null;
 }
 
 function shuffle<T>(a: T[]): T[] {
@@ -583,11 +596,12 @@ export async function runDebate(
     let verdict: string | undefined;
     let title: string | null = null;
     let confidence: P.Confidence = null;
-    await firstInChain(judges, ctx, async (j, budget, progress) => {
+    await firstInChain(judges, ctx, async (j, budget, progress, queued) => {
       const live = streamer(ctx, "verdict", `judge:${j.id}`, P.draftVerdict);
       const tm = meter("verdict", j.id);
       const onText = (t: string, m: string) => { progress(t); tm.text(t, m); live.onText(t, m); };
-      const r = await chat(j, { system: P.judgeSystem(isParticipant(j, models)), user: judgeUser, images, maxTokens: 8192, signal: budget, onText, idleMs: JUDGE_IDLE_MS })
+      const onQueued = (q: boolean) => { queued(q); tm.queued(q); };
+      const r = await chat(j, { system: P.judgeSystem(isParticipant(j, models)), user: judgeUser, images, maxTokens: 8192, signal: budget, onText, idleMs: JUDGE_IDLE_MS, onQueued })
         .then((x) => { tm.end("ok", x.model); return x; }, (e) => { tm.end(ctx.signal.aborted ? "cancelled" : errorCode(e)); throw e; })
         .finally(live.close);
       // Riga TITOLO e riga AFFIDABILITÀ in qualunque ordine: si tolgono entrambe dal verdetto.
@@ -606,8 +620,9 @@ export async function runDebate(
     }, (j, error, code) => failure(ctx, "verdict", `judge:${j.id}`, error, code), VERDICT_BUDGET_MS);
     if (!verdict) throw new CodedError("no_verdict", "Nessun giudice ha prodotto il verdetto.");
 
-    finish(ctx, "done", verdict, title, confidence);
-    emit({ type: "done", status: "done", verdict, ...(title ? { title } : {}), confidence });
+    // Titolo rinominato dall'utente durante il dibattito: resta quello, anche nell'evento.
+    const shown = finish(ctx, "done", verdict, title, confidence);
+    emit({ type: "done", status: "done", verdict, ...(shown ? { title: shown } : {}), confidence });
   } catch (e) {
     const cancelled = signal.aborted;
     const error = cancelled ? (turn > 0 ? "Turno annullato" : "Dibattito annullato") : redact((e as Error).message);
@@ -649,11 +664,12 @@ export async function runQuickAnswer(
     emit({ type: "phase", phase: "answer" });
     const user = P.quickPrompt(question, P.conversationBlock(opts.conversation, true), material);
     const chain = chainOf(chosen, opts.fallbacks.map((m) => withClaudeModel(m, opts.claudeModel)), opts.claudeModel);
-    const ok = await firstInChain(chain, ctx, async (m, budget, progress) => {
+    const ok = await firstInChain(chain, ctx, async (m, budget, progress, queued) => {
       const live = streamer(ctx, "answer", m.id);
       const tm = meter("answer", m.id);
       const onText = (t: string, model: string) => { progress(t); tm.text(t, model); live.onText(t, model); };
-      const r = await chat(m, { system: P.SYSTEM_RESPONDER, user, images: P.imagesOf(opts.conversation.attachments, opts.attachments), signal: budget, onText, idleMs: JUDGE_IDLE_MS })
+      const onQueued = (q: boolean) => { queued(q); tm.queued(q); };
+      const r = await chat(m, { system: P.SYSTEM_RESPONDER, user, images: P.imagesOf(opts.conversation.attachments, opts.attachments), signal: budget, onText, idleMs: JUDGE_IDLE_MS, onQueued })
         .then((x) => { tm.end("ok", x.model); return x; }, (e) => { tm.end(ctx.signal.aborted ? "cancelled" : errorCode(e)); throw e; })
         .finally(live.close);
       if (!r.text.trim()) throw new Error("risposta vuota");
