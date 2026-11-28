@@ -35,10 +35,11 @@ export function chatClaude(model: string, req: ChatRequest): Promise<ChatResult>
   delete env.ANTHROPIC_API_KEY;
   // Claude è un processo esterno: non gli servono le chiavi degli altri provider (da .env, dall'app o con il
   // nome scelto in models.json), altri segreti (`*_KEY`, `*_TOKEN`) né le variabili del motore. Restano quelle
-  // di Claude stesso (CLAUDE_CODE_*, es. CLAUDE_CODE_OAUTH_TOKEN) e quelle normali (PATH, HOME…).
+  // di Claude stesso (CLAUDE_CODE_*, ANTHROPIC_AUTH_TOKEN, AWS_* per Bedrock) e quelle normali (PATH, HOME…).
   const providerKeys = new Set(Object.values(config.providers).map((p) => p.keyEnv));
   for (const k of Object.keys(env)) {
-    if (k.startsWith("CLAUDE_CODE_")) continue;
+    // Credenziali di Claude Code stesso (abbonamento, gateway, Bedrock): toglierle lo romperebbe.
+    if (k.startsWith("CLAUDE_CODE_") || k.startsWith("AWS_") || k === "ANTHROPIC_AUTH_TOKEN") continue;
     if (/_KEY$|_TOKEN$/.test(k) || k.startsWith("COUNCIL_") || appKeyNames.includes(k) || providerKeys.has(k)) delete env[k];
   }
 
