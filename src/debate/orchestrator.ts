@@ -104,6 +104,8 @@ const JUDGE_BUDGET_MS = testMs("COUNCIL_JUDGE_BUDGET_MS", 150_000);
  * il limite vero del giudice) e il tempo massimo della Claude CLI: un tetto più alto non servirebbe a nessuno.
  */
 const JUDGE_HARD_MS = 240_000;
+/** Attesa nella coda del provider che non conta nel tetto della fase del verdetto o della risposta rapida (in tutto). */
+export const QUEUE_CREDIT_MAX_MS = Number(process.env.COUNCIL_QUEUE_CREDIT_MS) || 120_000;
 /** Tetto della fase del verdetto (tutta la catena) e numero massimo di giudici provati: verdetto entro 4 min
  *  al peggio, invece di 150 s × (partecipanti + 2). Abbreviabile solo per le prove. */
 const VERDICT_BUDGET_MS = (() => {
@@ -297,20 +299,31 @@ export async function firstInChain(
 ): Promise<boolean> {
   // Come per i partecipanti, l'attesa del posto nella coda del provider (`onQueued`) non conta: né nel tempo del
   // tentativo (`hold` ferma i timer di withBudget) né nel tetto totale (`queuedMs` lo sposta in avanti).
+  // L'attesa in coda si scala al più per QUEUE_CREDIT_MAX_MS in tutta la fase: con la coda del provider sempre piena
+  // (altri dibattiti sulla stessa baseUrl) la fase avrebbe altrimenti durata illimitata.
   const until = Date.now() + totalMs;
   let queuedMs = 0;
   let queuedSince: number | undefined;
+  let creditTimer: ReturnType<typeof setTimeout> | undefined;
   for (const m of chain) {
     // Tempo totale finito: i giudici restanti non si provano (sotto 1 s non c'è spazio per una risposta).
-    const left = until + queuedMs - Date.now();
+    const left = until + Math.min(queuedMs, QUEUE_CREDIT_MAX_MS) - Date.now();
     if (left < 1000) break;
     try {
       // Chi sta scrivendo allo scadere del tetto può finire (fino a JUDGE_HARD_MS), sempre dentro il tetto totale.
       await withBudget(Math.min(JUDGE_BUDGET_MS, left), ctx.signal, (budget, hold, progress) => attempt(m, budget, progress, (queued) => {
-        hold(queued);
-        if (queued) queuedSince ??= Date.now();
-        else if (queuedSince !== undefined) { queuedMs += Date.now() - queuedSince; queuedSince = undefined; }
-      }), Math.min(JUDGE_HARD_MS, left));
+        clearTimeout(creditTimer);
+        if (queued) {
+          queuedSince ??= Date.now();
+          const credit = QUEUE_CREDIT_MAX_MS - queuedMs;
+          if (credit <= 0) return;                       // credito finito: l'attesa conta come tempo normale
+          hold(true);
+          creditTimer = setTimeout(() => hold(false), credit);
+        } else {
+          hold(false);
+          if (queuedSince !== undefined) { queuedMs += Date.now() - queuedSince; queuedSince = undefined; }
+        }
+      }), Math.min(JUDGE_HARD_MS, left)).finally(() => clearTimeout(creditTimer));
       return true;
     } catch (e) {
       if (ctx.signal.aborted) throw new Error("cancelled");

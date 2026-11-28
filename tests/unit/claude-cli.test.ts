@@ -35,7 +35,7 @@ test("segnale già annullato: claude non viene avviato", async () => {
 test("ambiente del figlio: niente *_KEY, *_TOKEN, keyEnv dei provider né COUNCIL_*; PATH e HOME restano", async () => {
   const provKey = Object.values(config.providers)[0]?.keyEnv;
   const extra: Record<string, string> = {
-    SOME_SERVICE_KEY: "x", GH_TOKEN: "x", OTHER_API_KEY: "x", COUNCIL_FOO: "x", CLAUDE_CODE_OAUTH_TOKEN: "x",
+    SOME_SERVICE_KEY: "x", GH_TOKEN: "x", OTHER_API_KEY: "x", COUNCIL_FOO: "x", CLAUDE_CODE_OAUTH_TOKEN: "x", ANTHROPIC_AUTH_TOKEN: "x", AWS_SECRET_ACCESS_KEY: "x",
     ...(provKey ? { [provKey]: "x" } : {}),
   };
   Object.assign(process.env, extra);
@@ -43,11 +43,12 @@ test("ambiente del figlio: niente *_KEY, *_TOKEN, keyEnv dei provider né COUNCI
     const r = await chatClaude("sonnet", { system: "s", user: "u" });
     assert.equal(r.text, "ok");
     const names: string[] = JSON.parse(readFileSync(envOut, "utf8"));
-    const leaked = names.filter((k) => /_KEY$|_TOKEN$|^COUNCIL_/.test(k) && !k.startsWith("CLAUDE_CODE_"));
+    const leaked = names.filter((k) => /_KEY$|_TOKEN$|^COUNCIL_/.test(k) && !k.startsWith("CLAUDE_CODE_") && !k.startsWith("AWS_") && k !== "ANTHROPIC_AUTH_TOKEN");
     assert.deepEqual(leaked, []);
     if (provKey) assert.ok(!names.includes(provKey));
     assert.ok(names.includes("PATH") && names.includes("HOME"));
     assert.ok(names.includes("CLAUDE_CODE_OAUTH_TOKEN"), "le variabili di Claude stesso restano");
+    assert.ok(names.includes("ANTHROPIC_AUTH_TOKEN") && names.includes("AWS_SECRET_ACCESS_KEY"), "gateway e Bedrock restano");
   } finally {
     for (const k of Object.keys(extra)) delete process.env[k];
   }

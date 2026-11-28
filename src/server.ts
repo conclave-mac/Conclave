@@ -494,7 +494,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       const title = b.title.trim();
       if (!title) return json(res, 400, { error: "titolo vuoto" });
       if (title.length > MAX_TITLE) return json(res, 400, { error: `titolo troppo lungo (max ${MAX_TITLE} caratteri)` });
-      if (/[\r\n\u2028\u2029]/.test(title)) return json(res, 400, { error: "il titolo non può andare a capo" });
+      if (/[\r\n\v\f\u0085\u2028\u2029]/.test(title)) return json(res, 400, { error: "il titolo non può andare a capo" });
       if (!renameDebate(id, title)) return json(res, 404, { error: "non trovato" });
       return json(res, 200, { ok: true, title });
     }
