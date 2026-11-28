@@ -216,6 +216,8 @@ enum UpdateCheck {
         /// Cartella dell'aggiornamento dal download fino alla consegna allo script: alla chiusura
         /// dell'app (⌘Q a metà, avviso ancora aperto) si smonta il volume e si cancella.
         @MainActor private static var work: UpdateWork?
+        /// Preparazione in corso (download, verifica, copia): ⌘Q la annulla in `launchIfStaged`.
+        @MainActor private static var preparing: Task<Staged, Error>?
 
         static func assetName(_ version: String) -> String {
             #if arch(arm64)
@@ -238,15 +240,18 @@ enum UpdateCheck {
 
         @MainActor
         static func install(_ r: Release, over window: NSWindow?) async {
-            guard !busy else { return }
+            // Già in preparazione (per esempio "Verifica aggiornamenti…" di nuovo): si mostra quella.
+            guard !busy else { progressWindow?.makeKeyAndOrderFront(nil); return }
             busy = true
             let model = UpdateProgress(title: String(format: L("Aggiornamento a Conclave %@"), r.version))
             let w = UpdateWork()
             work = w
             let task = Task { try await prepare(r, model, w) }
+            preparing = task
             model.onCancel = { task.cancel() }
             showProgress(model, over: window)
             let result = await task.result
+            preparing = nil
             closeProgress(over: window)
             busy = false
             switch result {
@@ -314,6 +319,10 @@ enum UpdateCheck {
         @MainActor
         static func launchIfStaged() {
             guard let s = staged ?? waiting ?? deferred else {
+                // ⌘Q durante la preparazione: si ferma il download, si chiudono gli strumenti e si cancella
+                // la cartella. Nulla è stato installato né saltato: al prossimo avvio l'aggiornamento si ripropone.
+                preparing?.cancel()
+                preparing = nil
                 work?.discard()
                 work = nil
                 return
@@ -472,24 +481,33 @@ enum UpdateCheck {
             } onCancel: { task.cancel() }
         }
 
+        /// Finestra a sé, come quella di Sparkle, mai un foglio: con un foglio attaccato AppKit rifiuta
+        /// l'uscita (⌘Q e Dock) senza chiedere nulla al delegate, e l'app non si chiudeva durante il download.
         @MainActor
         private static func showProgress(_ model: UpdateProgress, over window: NSWindow?) {
-            let sheet = NSWindow(contentViewController: NSHostingController(rootView: UpdateProgressView(model: model)))
-            sheet.styleMask = [.titled]
-            progressWindow = sheet
-            if let window, window.isVisible, window.attachedSheet == nil {
-                window.beginSheet(sheet)
+            let progress = NSWindow(contentViewController: NSHostingController(rootView: UpdateProgressView(model: model)))
+            progress.styleMask = [.titled]
+            // Titolo per il menu Finestra; nella finestra lo mostra già la vista.
+            progress.title = model.title
+            progress.titleVisibility = .hidden
+            progress.titlebarAppearsTransparent = true
+            progress.isReleasedWhenClosed = false
+            progressWindow = progress
+            if let window, window.isVisible {
+                // Al centro della finestra principale, verso l'alto come un avviso.
+                let f = window.frame, size = progress.frame.size
+                progress.setFrameOrigin(NSPoint(x: f.midX - size.width / 2, y: f.maxY - size.height - f.height * 0.25))
             } else {
-                sheet.center()
-                sheet.makeKeyAndOrderFront(nil)
+                progress.center()
             }
+            progress.makeKeyAndOrderFront(nil)
         }
 
         @MainActor
         private static func closeProgress(over window: NSWindow?) {
-            guard let sheet = progressWindow else { return }
+            guard let progress = progressWindow else { return }
             progressWindow = nil
-            if let parent = sheet.sheetParent { parent.endSheet(sheet) } else { sheet.orderOut(nil) }
+            progress.orderOut(nil)
         }
 
         /// Poco dopo l'avvio: cartelle di aggiornamenti rimaste nei temporanei (app finita in crash
